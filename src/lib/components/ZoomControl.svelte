@@ -3,6 +3,7 @@
 	import { MinusOutline, PlusOutline } from 'flowbite-svelte-icons';
 	import { boardState } from '$lib/stores/konvaBoardState';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
+	import { MAX_ZOOM } from '$lib/constants';
 
 	let { game } = $props<{
 		game: KonvaGame;
@@ -45,11 +46,11 @@
 		>
 	</div>
 	<ToolbarButton
-		class={zoomLevel >= 300
+		class={zoomLevel >= MAX_ZOOM * 100
 			? 'flex cursor-not-allowed items-center gap-2 px-3 text-sm text-gray-700 opacity-50'
 			: 'flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200'}
 		on:click={zoomIn}
-		disabled={zoomLevel >= 300}
+		disabled={zoomLevel >= MAX_ZOOM * 100}
 	>
 		<PlusOutline />
 	</ToolbarButton>

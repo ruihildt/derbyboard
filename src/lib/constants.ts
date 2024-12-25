@@ -65,6 +65,6 @@ export const colors: Colors = {
 
 // Zoom levels
 export const BASE_ZOOM = 1; // 100% zoom
-export const MIN_ZOOM = 0.1; // 10% minimum zoom
+export const MIN_ZOOM = 0.5; // 10% minimum zoom
 export const ZOOM_INCREMENT = 0.1;
-export const MAX_ZOOM = 3; // 300% maximum zoom
+export const MAX_ZOOM = 4; // 500% maximum zoom
