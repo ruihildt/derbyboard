@@ -24,58 +24,28 @@ export class KonvaRecorder {
 	 * @param stage - The Konva stage to record
 	 * @param recordingArea - Optional recording bounds {x, y, width, height}
 	 */
-	constructor(
-		private stage: Konva.Stage,
-		private recordingArea?: { x: number; y: number; width: number; height: number }
-	) {
-		// Create a temporary layer to merge all visible layers for recording
+	constructor(private stage: Konva.Stage) {
+		// Create a temporary layer for recording
 		const mergedLayer = new Konva.Layer();
 		this.stage.add(mergedLayer);
 		mergedLayer.remove();
 
-		// Animation loop that captures and merges all layers on each frame
+		// Set high resolution canvas size
+		const canvas = mergedLayer.getNativeCanvasElement();
+		canvas.width = stage.width() * 2;
+		canvas.height = stage.height() * 2;
+
 		this.animation = new Konva.Animation(() => {
 			if (this.isRecording) {
 				mergedLayer.clear();
-				const tempCanvas = document.createElement('canvas');
-				const tempCtx = tempCanvas.getContext('2d')!;
+				mergedLayer.getContext().scale(2, 2);
 
-				// Handle recording of specific area
-				if (this.recordingArea) {
-					// Set dimensions for the cropped area
-					tempCanvas.width = this.recordingArea.width;
-					tempCanvas.height = this.recordingArea.height;
+				this.stage.getLayers().forEach((layer) => {
+					const layerCanvas = layer.getNativeCanvasElement();
+					mergedLayer.getContext().drawImage(layerCanvas, 0, 0);
+				});
 
-					// Crop and merge each layer to the specified area
-					this.stage.getLayers().forEach((layer) => {
-						const layerCanvas = layer.getNativeCanvasElement();
-						const area = this.recordingArea as {
-							x: number;
-							y: number;
-							width: number;
-							height: number;
-						};
-						tempCtx.drawImage(
-							layerCanvas,
-							area.x,
-							area.y,
-							area.width,
-							area.height,
-							0,
-							0,
-							area.width,
-							area.height
-						);
-					});
-
-					mergedLayer.getContext().drawImage(tempCanvas, 0, 0);
-				} else {
-					// Merge full canvas layers
-					this.stage.getLayers().forEach((layer) => {
-						const layerCanvas = layer.getNativeCanvasElement();
-						mergedLayer.getContext().drawImage(layerCanvas, 0, 0);
-					});
-				}
+				mergedLayer.getContext().setTransform(1, 0, 0, 1, 0, 0);
 			}
 		}, mergedLayer);
 
@@ -94,14 +64,6 @@ export class KonvaRecorder {
 		}, 1000);
 
 		const canvas = this.layer.getNativeCanvasElement();
-
-		// Configure canvas dimensions for recording area
-		if (this.recordingArea) {
-			canvas.width = this.recordingArea.width;
-			canvas.height = this.recordingArea.height;
-			this.layer.width(this.recordingArea.width);
-			this.layer.height(this.recordingArea.height);
-		}
 
 		// Setup canvas stream with 30fps
 		const stream = canvas.captureStream(30);
