@@ -24,28 +24,85 @@ export class KonvaRecorder {
 	 * @param stage - The Konva stage to record
 	 * @param recordingArea - Optional recording bounds {x, y, width, height}
 	 */
-	constructor(private stage: Konva.Stage) {
-		// Create a temporary layer for recording
-		const mergedLayer = new Konva.Layer();
-		this.stage.add(mergedLayer);
-		mergedLayer.remove();
+	constructor(
+		private stage: Konva.Stage,
+		scalingFactor: number = 2
+	) {
+		// Create a high-res stage for recording
+		const recordingStage = new Konva.Stage({
+			container: document.createElement('div'),
+			width: stage.width() * scalingFactor,
+			height: stage.height() * scalingFactor,
+			scale: stage.scale(),
+			position: {
+				x: stage.position().x * scalingFactor,
+				y: stage.position().y * scalingFactor
+			}
+		});
 
-		// Set high resolution canvas size
-		const canvas = mergedLayer.getNativeCanvasElement();
-		canvas.width = stage.width() * 2;
-		canvas.height = stage.height() * 2;
+		// Clone and scale all layers for the recording stage
+		stage.getLayers().forEach((originalLayer) => {
+			const recordingLayer = originalLayer.clone();
+			recordingLayer.children?.forEach((child) => {
+				// Scale position
+				child.x(child.x() * scalingFactor);
+				child.y(child.y() * scalingFactor);
+
+				// Scale visual properties
+				if (child instanceof Konva.Circle) {
+					child.radius(child.radius() * scalingFactor);
+					child.strokeWidth(child.strokeWidth() * scalingFactor);
+				}
+				if (child instanceof Konva.Line || child instanceof Konva.Path) {
+					child.strokeWidth(child.strokeWidth() * scalingFactor);
+				}
+				child.scale({ x: scalingFactor, y: scalingFactor });
+			});
+			recordingStage.add(recordingLayer);
+		});
+
+		// Create merged layer for recording
+		const mergedLayer = new Konva.Layer();
+		recordingStage.add(mergedLayer);
 
 		this.animation = new Konva.Animation(() => {
 			if (this.isRecording) {
-				mergedLayer.clear();
-				mergedLayer.getContext().scale(2, 2);
-
-				this.stage.getLayers().forEach((layer) => {
-					const layerCanvas = layer.getNativeCanvasElement();
-					mergedLayer.getContext().drawImage(layerCanvas, 0, 0);
+				// Sync scale and position from display stage
+				recordingStage.scale(stage.scale());
+				recordingStage.position({
+					x: stage.position().x * scalingFactor,
+					y: stage.position().y * scalingFactor
 				});
 
-				mergedLayer.getContext().setTransform(1, 0, 0, 1, 0, 0);
+				// Sync positions from display stage to recording stage
+				stage.getLayers().forEach((originalLayer, i) => {
+					const recordingLayer = recordingStage.getLayers()[i];
+					originalLayer.children?.forEach((child, j) => {
+						const recordingChild = recordingLayer.children?.[j];
+						if (recordingChild) {
+							recordingChild.x(child.x() * scalingFactor);
+							recordingChild.y(child.y() * scalingFactor);
+							recordingChild.rotation(child.rotation());
+							recordingChild.visible(child.visible());
+						}
+					});
+				});
+
+				// Draw the recording frame
+				const ctx = mergedLayer.getContext();
+				mergedLayer.clear();
+
+				ctx.save();
+				ctx.fillStyle = '#FFFFFF';
+				ctx.fillRect(0, 0, recordingStage.width(), recordingStage.height());
+				ctx.restore();
+
+				recordingStage.getLayers().forEach((layer) => {
+					if (layer !== mergedLayer) {
+						const layerCanvas = layer.getNativeCanvasElement();
+						ctx.drawImage(layerCanvas, 0, 0);
+					}
+				});
 			}
 		}, mergedLayer);
 
