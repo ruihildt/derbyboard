@@ -41,7 +41,7 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 	 * Used by child classes to access and modify the player's visual representation
 	 */
 	protected get circle(): Konva.Circle {
-		return this.getBaseCircle();
+		return this.baseCircle as Konva.Circle;
 	}
 
 	constructor(

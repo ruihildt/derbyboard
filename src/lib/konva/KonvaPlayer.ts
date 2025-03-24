@@ -30,6 +30,7 @@ interface PlayerCircleConfig {
  */
 export class KonvaPlayer {
 	group: Konva.Group;
+	protected baseCircle: Konva.Circle | null;
 
 	/**
 	 * Creates a new player instance
@@ -58,8 +59,8 @@ export class KonvaPlayer {
 			name: 'baseCircle'
 		};
 
-		const circle = new Konva.Circle(circleConfig);
-		this.group.add(circle);
+		this.baseCircle = new Konva.Circle(circleConfig);
+		this.group.add(this.baseCircle);
 
 		layer.add(this.group);
 		layer.batchDraw();
@@ -98,7 +99,7 @@ export class KonvaPlayer {
 	 * Used by child classes to access and modify the player's visual representation
 	 */
 	protected getBaseCircle(): Konva.Circle {
-		return this.group.findOne('.baseCircle') as Konva.Circle;
+		return this.baseCircle as Konva.Circle;
 	}
 
 	/**
@@ -112,7 +113,10 @@ export class KonvaPlayer {
 	 * Removes the player from the layer and cleans up resources
 	 */
 	destroy() {
-		this.group.off('dragmove');
-		this.group.destroy();
+		if (this.group) {
+			this.group.off();
+			this.group.destroy();
+		}
+		this.baseCircle = null;
 	}
 }
