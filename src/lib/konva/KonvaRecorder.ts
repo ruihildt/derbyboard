@@ -22,11 +22,11 @@ export class KonvaRecorder {
 
 	/**
 	 * @param stage - The Konva stage to record
-	 * @param recordingArea - Optional recording bounds {x, y, width, height}
+	 * @param scalingFactor - The factor to scale the stage for recording
 	 */
 	constructor(
 		private stage: Konva.Stage,
-		scalingFactor: number = 2
+		scalingFactor: number = 1.5
 	) {
 		// Create a high-res stage for recording
 		const recordingStage = new Konva.Stage({
