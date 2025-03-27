@@ -1,64 +1,59 @@
-import type { Game } from '$lib/classes/Game';
-import { boardState, type BoardState } from '$lib/stores/boardState';
+import { get } from 'svelte/store';
+import { boardState, type KonvaBoardState } from '$lib/stores/konvaBoardState';
+import type { KonvaGame } from '$lib/konva/KonvaGame';
 
-export function saveBoardState(game: Game, name?: string): BoardState {
-	const state: BoardState = {
-		version: 2,
-		createdAt: new Date().toISOString(),
-		name,
-		teamPlayers: game.playerManager.players.map((player) => ({
-			absolute: {
-				x: player.x / game.canvas.width,
-				y: player.y / game.canvas.height
-			},
-			role: player.role,
-			team: player.team
-		})),
-		skatingOfficials: game.playerManager.skatingOfficials.map((official) => ({
-			absolute: {
-				x: official.x / game.canvas.width,
-				y: official.y / game.canvas.height
-			},
-			role: official.role
-		})),
-		viewSettings: {
-			zoom: game.scalingManager.zoomLevel,
-			panX: game.scalingManager.panX,
-			panY: game.scalingManager.panY
+/**
+ * Exports the current board state to a downloadable JSON file
+ */
+export function exportBoardToFile() {
+	// Get the current state from the store
+	const state = get(boardState);
+
+	// Create a downloadable JSON file
+	const dataStr = JSON.stringify(state, null, 2);
+	const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
+
+	// Create a filename with current date
+	const exportFileName = `derbyboard-${new Date().toISOString().slice(0, 10)}.json`;
+
+	// Create and trigger download link
+	const linkElement = document.createElement('a');
+	linkElement.setAttribute('href', dataUri);
+	linkElement.setAttribute('download', exportFileName);
+	linkElement.click();
+}
+
+/**
+ * Loads board state from a JSON file
+ * @param file The JSON file to load
+ * @param game The KonvaGame instance to update
+ */
+export async function loadBoardFromFile(file: File, game?: KonvaGame): Promise<void> {
+	try {
+		const fileContent = await file.text();
+		const loadedState = JSON.parse(fileContent) as KonvaBoardState;
+
+		// Validate the loaded state has required properties
+		if (!loadedState.teamPlayers || !loadedState.skatingOfficials) {
+			throw new Error('Invalid board state format');
 		}
-	};
 
-	boardState.set(state);
-	return state;
-}
+		// Update the store with the loaded state
+		boardState.set({
+			...loadedState,
+			// Ensure we have the latest version number
+			version: 3,
+			// Update the timestamp when the state was loaded
+			createdAt: loadedState.createdAt || new Date().toISOString()
+		});
 
-export function exportBoardToFile(game: Game, name?: string) {
-	const state = saveBoardState(game, name);
-	const blob = new Blob([JSON.stringify(state)], { type: 'application/json' });
-	const url = URL.createObjectURL(blob);
-	const link = document.createElement('a');
-	link.href = url;
-	link.download = `derbyboard-${name || new Date().toISOString().slice(0, 10)}.json`;
-	link.click();
-	URL.revokeObjectURL(url);
-}
-
-export async function loadBoardFromFile(jsonFile: File) {
-	const text = await jsonFile.text();
-	const state = JSON.parse(text);
-	if (!hasRequiredBoardStateFields(state)) {
-		throw new Error('Invalid derbyboard file format');
+		// If game instance provided, refresh the board with new state
+		if (game) {
+			game.loadState();
+		}
+	} catch (error) {
+		throw new Error(
+			`Error loading board state: ${error instanceof Error ? error.message : String(error)}`
+		);
 	}
-	boardState.set(state);
-}
-
-function hasRequiredBoardStateFields(obj: unknown): obj is BoardState {
-	const board = obj as BoardState;
-	return (
-		board !== null &&
-		typeof board.version === 'number' &&
-		typeof board.createdAt === 'string' &&
-		Array.isArray(board.teamPlayers) &&
-		Array.isArray(board.skatingOfficials)
-	);
 }

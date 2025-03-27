@@ -40,7 +40,7 @@
 			const file = (e.target as HTMLInputElement).files?.[0];
 			if (file) {
 				try {
-					await loadBoardFromFile(file);
+					await loadBoardFromFile(file, game);
 				} catch (error) {
 					errorMessage = 'Invalid board file format. Please select a valid JSON file.';
 					showErrorModal = true;
@@ -58,7 +58,7 @@
 	}
 
 	function handleSave() {
-		exportBoardToFile(game);
+		exportBoardToFile();
 		dropdownOpen = false;
 	}
 </script>
@@ -111,14 +111,25 @@
 		<h3 class="mb-4 text-lg font-normal text-gray-500">
 			{errorMessage}
 		</h3>
-		<Button
-			class="mt-3 bg-primary-200 !p-2 text-sm text-gray-700 hover:bg-primary-300"
-			onclick={() => {
-				showErrorModal = false;
-				handleOpen();
-			}}
-		>
-			Select another file
-		</Button>
+		<div class="flex justify-center space-x-3">
+			<Button
+				class="mt-3 bg-primary-200 !p-2 text-sm text-gray-700 hover:bg-primary-300"
+				onclick={() => {
+					showErrorModal = false;
+					handleOpen();
+				}}
+			>
+				Select another file
+			</Button>
+			<Button
+				class="mt-3 bg-red-100 !p-2 text-sm text-gray-700 hover:bg-red-200"
+				onclick={() => {
+					showErrorModal = false;
+					handleReset();
+				}}
+			>
+				Reset board
+			</Button>
+		</div>
 	</div>
 </Modal>

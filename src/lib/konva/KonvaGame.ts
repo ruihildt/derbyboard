@@ -336,6 +336,37 @@ export class KonvaGame {
 		}
 	}
 
+	loadState() {
+		// Clear existing players and layers
+		this.playersLayer.destroyChildren();
+		this.engagementZoneLayer.destroyChildren();
+
+		// Load view settings
+		this.loadViewSettings();
+
+		// Create a new player manager and load players from state
+		this.playerManager = new KonvaPlayerManager(this.playersLayer, this.trackGeometry);
+		this.playerManager.initialLoad();
+
+		// Update pack manager with new player manager
+		this.packManager = new KonvaPackManager(
+			this.playerManager,
+			this.playersLayer,
+			this.engagementZoneLayer,
+			this.trackGeometry
+		);
+
+		// Recalculate pack and engagement zone
+		this.packManager.determinePack();
+
+		// Redraw all layers
+		this.trackSurfaceLayer.batchDraw();
+		this.trackLinesLayer.batchDraw();
+		this.engagementZoneLayer.batchDraw();
+		this.playersLayer.batchDraw();
+		this.stage.batchDraw();
+	}
+
 	resetBoard() {
 		// Clear existing players and layers
 		this.playersLayer.destroyChildren();
