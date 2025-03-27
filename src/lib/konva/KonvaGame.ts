@@ -392,4 +392,8 @@ export class KonvaGame {
 	stopRecording(): Promise<Blob> {
 		return this.recorder.stopRecording();
 	}
+
+	exportAsImage(pixelRatio = 2): string {
+		return this.stage.toDataURL({ pixelRatio });
+	}
 }
