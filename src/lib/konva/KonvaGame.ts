@@ -427,4 +427,8 @@ export class KonvaGame {
 	exportAsImage(pixelRatio = 2): string {
 		return this.stage.toDataURL({ pixelRatio });
 	}
+
+	getStage(): Konva.Stage {
+		return this.stage;
+	}
 }

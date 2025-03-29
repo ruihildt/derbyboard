@@ -3,13 +3,14 @@ import fixWebmDuration from 'fix-webm-duration';
 
 /**
  * KonvaRecorder handles video recording of Konva canvas animations
- * Supports recording specific areas or full canvas
+ * Supports recording specific areas or full canvas with optional audio
  */
 export class KonvaRecorder {
 	// Core recording components
 	private mediaRecorder: MediaRecorder | null = null;
 	private recordedChunks: Blob[] = [];
 	private isRecording = false;
+	private audioStream: MediaStream | null = null;
 
 	// Time tracking for recording duration
 	private recordingStartTime: number = 0;
@@ -110,10 +111,21 @@ export class KonvaRecorder {
 	}
 
 	/**
+	 * Sets the audio stream to be used for recording
+	 * Must be called before startRecording()
+	 */
+	setAudioStream(stream: MediaStream | null) {
+		this.audioStream = stream;
+	}
+
+	/**
 	 * Initiates video recording of the canvas
 	 * Sets up MediaRecorder with optimal codec support
 	 */
 	startRecording() {
+		// Reset chunks from previous recordings
+		this.recordedChunks = [];
+
 		// Initialize recording time tracking
 		this.recordingStartTime = Date.now();
 		this.timeInterval = window.setInterval(() => {
@@ -123,24 +135,32 @@ export class KonvaRecorder {
 		const canvas = this.layer.getNativeCanvasElement();
 
 		// Setup canvas stream with 30fps
-		const stream = canvas.captureStream(30);
-		// Define supported video formats in order of preference
-		const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
-		const supportedMimeType = mimeTypes.find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+		const videoStream = canvas.captureStream(30);
 
-		// Initialize MediaRecorder with supported format
-		this.mediaRecorder = new MediaRecorder(stream, {
-			mimeType: supportedMimeType || 'video/webm'
+		// Combine video and audio streams if audio is available
+		let combinedStream: MediaStream;
+		if (this.audioStream) {
+			combinedStream = new MediaStream([
+				...videoStream.getVideoTracks(),
+				...this.audioStream.getAudioTracks()
+			]);
+		} else {
+			combinedStream = videoStream;
+		}
+
+		// Initialize MediaRecorder with simple configuration like in the previous implementation
+		this.mediaRecorder = new MediaRecorder(combinedStream, {
+			mimeType: 'video/webm'
 		});
 
 		// Collect video data chunks
 		this.mediaRecorder.ondataavailable = (event) => {
 			if (event.data.size > 0) {
-				this.recordedChunks = [...this.recordedChunks, event.data];
+				this.recordedChunks.push(event.data);
 			}
 		};
 
-		this.mediaRecorder.start();
+		this.mediaRecorder.start(1000); // Collect data every second
 		this.isRecording = true;
 		this.animation.start();
 	}
@@ -151,7 +171,10 @@ export class KonvaRecorder {
 	 */
 	stopRecording(): Promise<Blob> {
 		return new Promise((resolve) => {
-			if (!this.mediaRecorder) return;
+			if (!this.mediaRecorder) {
+				resolve(new Blob([]));
+				return;
+			}
 
 			// Clean up time tracking
 			if (this.timeInterval) {
@@ -160,10 +183,11 @@ export class KonvaRecorder {
 			}
 
 			this.mediaRecorder.onstop = async () => {
-				// Create final video blob and fix duration metadata
+				// Create final video blob with explicit codec information like in the working implementation
 				const blob = new Blob(this.recordedChunks, {
-					type: 'video/webm'
+					type: 'video/webm; codecs=vp8,opus'
 				});
+
 				const duration = Date.now() - this.recordingStartTime;
 				const fixedBlob = await fixWebmDuration(blob, duration);
 
@@ -186,6 +210,10 @@ export class KonvaRecorder {
 	destroy() {
 		if (this.isRecording) {
 			this.stopRecording();
+		}
+		if (this.audioStream) {
+			this.audioStream.getTracks().forEach((track) => track.stop());
+			this.audioStream = null;
 		}
 		this.animation.stop();
 	}

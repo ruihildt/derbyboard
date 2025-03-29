@@ -16,15 +16,13 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="absolute inset-0 z-[10]">
-	<div class="h-full w-full">
-		<!-- svelte-ignore a11y_media_has_caption -->
-		<video
-			controls={true}
-			src={videoUrl}
-			preload="auto"
-			playsinline
-			class="h-full w-full object-contain"
-		></video>
-	</div>
+<div class="h-full w-full">
+	<!-- svelte-ignore a11y_media_has_caption -->
+	<video
+		controls={true}
+		src={videoUrl}
+		preload="auto"
+		playsinline
+		class="h-full w-full object-contain"
+	></video>
 </div>
