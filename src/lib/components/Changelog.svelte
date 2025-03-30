@@ -26,6 +26,14 @@
 				<CloseOutline class="h-5 w-5" />
 			</button>
 		</div>
+		<TimelineItem title="Same same but different" date="2025 April 1st" classLi="!mb-7">
+			<p>
+				This is the Track of Theseus, where everything is progressively being replaced over time.
+				But you can feel differences. An infinite canvas ready to be explored. A window of
+				opportunity when recording. A different approach to a start. And a refined design coming to
+				an end.
+			</p>
+		</TimelineItem>
 		<TimelineItem title="Fingerplay" date="2024 December 2nd" classLi="!mb-7">
 			<p>
 				If you have multiple fingers you can now move multiple players around simultaneously. If you
