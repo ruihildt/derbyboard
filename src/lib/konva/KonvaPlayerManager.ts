@@ -21,9 +21,26 @@ export class KonvaPlayerManager {
 		this.trackGeometry = trackGeometry;
 		this.collisionSystem = new CollisionSystem(layer);
 
+		// Set up a single layer-level event listener for all player movements
+		this.layer.on('dragmove', (e) => {
+			// Only process if the target is a player group
+			if (e.target.hasName('playerGroup')) {
+				// Resolve collisions after any player moves
+				this.collisionSystem.resolveCollisions();
+
+				// Update in-bounds status for team players after collision
+				const player = e.target.getAttr('player');
+				if (player instanceof KonvaTeamPlayer) {
+					player.updateInBounds(this.trackGeometry);
+				}
+			}
+		});
+
+		// Keep the collision event handler for post-collision updates
 		this.layer.on('collision', (evt) => {
 			const player = evt.target.getAttr('player');
-			const otherPlayer = evt.target.getAttr('otherPlayer');
+			// Access otherPlayer from the correct location in the event object
+			const otherPlayer = evt.currentTarget.attrs?.otherPlayer;
 
 			if (player instanceof KonvaTeamPlayer) {
 				player.updateInBounds(this.trackGeometry);
@@ -36,16 +53,12 @@ export class KonvaPlayerManager {
 
 	addTeamPlayer(x: number, y: number, team: TeamPlayerTeam, role: TeamPlayerRole) {
 		const player = new KonvaTeamPlayer(x, y, this.layer, team, role, this.trackGeometry);
-		// Trigger collision resolution on drag
-		player.getNode().on('dragmove', () => {
-			this.collisionSystem.resolveCollisions();
-		});
 		this.teamPlayers.push(player);
 		return player;
 	}
 
 	addSkatingOfficial(x: number, y: number, role: SkatingOfficialRole) {
-		const official = new KonvaSkatingOfficial(x, y, this.layer, role, this.trackGeometry);
+		const official = new KonvaSkatingOfficial(x, y, this.layer, role);
 		this.skatingOfficials.push(official);
 		return official;
 	}
@@ -100,8 +113,10 @@ export class KonvaPlayerManager {
 				role: player.role as TeamPlayerRole,
 				team: player.team as TeamPlayerTeam
 			})),
-			// Simply use an empty array for skatingOfficials if there are none
-			skatingOfficials: []
+			skatingOfficials: defaultLineup.skatingOfficials.map((official) => ({
+				...official,
+				role: official.role as SkatingOfficialRole
+			}))
 		};
 
 		// Update the store with the predefined lineup

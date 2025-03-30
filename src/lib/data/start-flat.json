@@ -1,92 +1,142 @@
 {
-  "version": 3,
-  "createdAt": "2025-03-30T19:59:02.337Z",
-  "teamPlayers": [
-    {
-      "relative": {
-        "x": 72.09948697035497,
-        "y": -265.0774443775336
-      },
-      "role": "blocker",
-      "team": "A"
-    },
-    {
-      "relative": {
-        "x": 69.48698878012874,
-        "y": -192.26452537064097
-      },
-      "role": "blocker",
-      "team": "A"
-    },
-    {
-      "relative": {
-        "x": 71.00504363150549,
-        "y": -229.89858882998453
-      },
-      "role": "blocker",
-      "team": "A"
-    },
-    {
-      "relative": {
-        "x": 68.22713310302584,
-        "y": -157.6321005613088
-      },
-      "role": "pivot",
-      "team": "A"
-    },
-    {
-      "relative": {
-        "x": 110.20887725193131,
-        "y": -264.6122384266184
-      },
-      "role": "blocker",
-      "team": "B"
-    },
-    {
-      "relative": {
-        "x": 108.20052131567763,
-        "y": -156.52958402700847
-      },
-      "role": "blocker",
-      "team": "B"
-    },
-    {
-      "relative": {
-        "x": 108.93311503921939,
-        "y": -192.77993541675596
-      },
-      "role": "blocker",
-      "team": "B"
-    },
-    {
-      "relative": {
-        "x": 109.85168254142002,
-        "y": -229.2099153496173
-      },
-      "role": "pivot",
-      "team": "B"
-    },
-    {
-      "relative": {
-        "x": 162.81119853012387,
-        "y": -227.32084212819075
-      },
-      "role": "jammer",
-      "team": "A"
-    },
-    {
-      "relative": {
-        "x": 163.47948717948714,
-        "y": -189.32500000000005
-      },
-      "role": "jammer",
-      "team": "B"
-    }
-  ],
-  "skatingOfficials": [],
-  "viewSettings": {
-    "zoom": 1,
-    "relativeX": 0,
-    "relativeY": 0
-  }
+	"version": 3,
+	"createdAt": "2025-03-30T20:50:58.639Z",
+	"teamPlayers": [
+		{
+			"relative": {
+				"x": 72.09948697035497,
+				"y": -265.0774443775336
+			},
+			"role": "blocker",
+			"team": "A"
+		},
+		{
+			"relative": {
+				"x": 69.48698878012874,
+				"y": -192.26452537064097
+			},
+			"role": "blocker",
+			"team": "A"
+		},
+		{
+			"relative": {
+				"x": 71.00504363150549,
+				"y": -229.89858882998453
+			},
+			"role": "blocker",
+			"team": "A"
+		},
+		{
+			"relative": {
+				"x": 68.22713310302584,
+				"y": -157.6321005613088
+			},
+			"role": "pivot",
+			"team": "A"
+		},
+		{
+			"relative": {
+				"x": 110.20887725193131,
+				"y": -264.6122384266184
+			},
+			"role": "blocker",
+			"team": "B"
+		},
+		{
+			"relative": {
+				"x": 109.20052131567763,
+				"y": -156.52958402700847
+			},
+			"role": "blocker",
+			"team": "B"
+		},
+		{
+			"relative": {
+				"x": 108.93311503921939,
+				"y": -192.77993541675596
+			},
+			"role": "blocker",
+			"team": "B"
+		},
+		{
+			"relative": {
+				"x": 109.85168254142002,
+				"y": -229.2099153496173
+			},
+			"role": "pivot",
+			"team": "B"
+		},
+		{
+			"relative": {
+				"x": 154.81119853012387,
+				"y": -219.32084212819075
+			},
+			"role": "jammer",
+			"team": "A"
+		},
+		{
+			"relative": {
+				"x": 174.47948717948714,
+				"y": -184.32500000000005
+			},
+			"role": "jammer",
+			"team": "B"
+		}
+	],
+	"skatingOfficials": [
+		{
+			"relative": {
+				"x": 137.5,
+				"y": -98.5
+			},
+			"role": "jamRefA"
+		},
+		{
+			"relative": {
+				"x": 173.5,
+				"y": -112.5
+			},
+			"role": "jamRefB"
+		},
+		{
+			"relative": {
+				"x": -49.5,
+				"y": -37.5
+			},
+			"role": "frontPackRef"
+		},
+		{
+			"relative": {
+				"x": 149.5,
+				"y": -36.5
+			},
+			"role": "backPackRef"
+		},
+		{
+			"relative": {
+				"x": 137,
+				"y": -332.5
+			},
+			"role": "outsidePackRef"
+		},
+		{
+			"relative": {
+				"x": 39,
+				"y": -317.5
+			},
+			"role": "outsidePackRef"
+		},
+		{
+			"relative": {
+				"x": -188,
+				"y": -309.5
+			},
+			"role": "outsidePackRef"
+		}
+	],
+	"viewSettings": {
+		"zoom": 1,
+		"relativeX": 0,
+		"relativeY": 0
+	}
 }
