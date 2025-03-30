@@ -20,6 +20,7 @@ export class KonvaRecorder {
 	// Konva specific elements
 	private animation: Konva.Animation;
 	private layer: Konva.Layer;
+	private scalingFactor: number;
 
 	/**
 	 * @param stage - The Konva stage to record
@@ -27,8 +28,10 @@ export class KonvaRecorder {
 	 */
 	constructor(
 		private stage: Konva.Stage,
-		scalingFactor: number = 1.5
+		scalingFactor: number = 1
 	) {
+		this.scalingFactor = scalingFactor;
+
 		// Create a high-res stage for recording
 		const recordingStage = new Konva.Stage({
 			container: document.createElement('div'),
@@ -119,6 +122,75 @@ export class KonvaRecorder {
 	}
 
 	/**
+	 * Rebuilds the recording stage to match the current display stage
+	 * Ensures proper alignment of track and players when recording starts
+	 */
+	private rebuildRecordingStage() {
+		const recordingStage = this.layer.getStage();
+		const scalingFactor = this.scalingFactor;
+
+		// Clear existing layers except the merged layer
+		recordingStage.getLayers().forEach((layer) => {
+			if (layer !== this.layer) {
+				layer.destroyChildren();
+			}
+		});
+
+		// Clone and rescale all layers from the display stage
+		this.stage.getLayers().forEach((originalLayer, index) => {
+			let recordingLayer;
+			if (index < recordingStage.getLayers().length - 1) {
+				// Use existing layer if available
+				recordingLayer = recordingStage.getLayers()[index];
+			} else {
+				// Create new layer if needed
+				recordingLayer = new Konva.Layer();
+				recordingStage.add(recordingLayer);
+			}
+
+			// Clone all children with proper scaling
+			originalLayer.children?.forEach((child) => {
+				// Base clone with position and scale
+				const cloneConfig = {
+					x: child.x() * scalingFactor,
+					y: child.y() * scalingFactor,
+					scaleX: child.scaleX() * scalingFactor,
+					scaleY: child.scaleY() * scalingFactor
+				};
+
+				const clone = child.clone(cloneConfig);
+
+				// Scale specific properties for different node types after cloning
+				if (child instanceof Konva.Circle && clone instanceof Konva.Circle) {
+					// Only handle circle-specific properties when both objects are circles
+					clone.radius(child.radius() * scalingFactor);
+					clone.strokeWidth(child.strokeWidth() * scalingFactor);
+				} else if (
+					(child instanceof Konva.Line || child instanceof Konva.Path) &&
+					(clone instanceof Konva.Line || clone instanceof Konva.Path)
+				) {
+					// Only handle line/path-specific properties when objects are lines/paths
+					clone.strokeWidth(child.strokeWidth() * scalingFactor);
+				}
+
+				recordingLayer.add(clone);
+			});
+		});
+
+		// Update dimensions and position
+		recordingStage.width(this.stage.width() * scalingFactor);
+		recordingStage.height(this.stage.height() * scalingFactor);
+		recordingStage.position({
+			x: this.stage.position().x * scalingFactor,
+			y: this.stage.position().y * scalingFactor
+		});
+		recordingStage.scale(this.stage.scale());
+
+		// Redraw all layers
+		recordingStage.draw();
+	}
+
+	/**
 	 * Initiates video recording of the canvas
 	 * Sets up MediaRecorder with optimal codec support
 	 */
@@ -131,6 +203,9 @@ export class KonvaRecorder {
 		this.timeInterval = window.setInterval(() => {
 			this.elapsedTime = Date.now() - this.recordingStartTime;
 		}, 1000);
+
+		// Rebuild the recording stage before starting to ensure alignment
+		this.rebuildRecordingStage();
 
 		const canvas = this.layer.getNativeCanvasElement();
 
@@ -148,7 +223,7 @@ export class KonvaRecorder {
 			combinedStream = videoStream;
 		}
 
-		// Initialize MediaRecorder with simple configuration like in the previous implementation
+		// Initialize MediaRecorder with simple configuration
 		this.mediaRecorder = new MediaRecorder(combinedStream, {
 			mimeType: 'video/webm'
 		});
