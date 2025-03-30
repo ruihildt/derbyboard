@@ -393,7 +393,7 @@ export class KonvaGame {
 		});
 
 		// Add fresh lineup
-		this.playerManager.initialLoad();
+		this.playerManager.loadDefaultLineup();
 
 		// Update pack manager with new player manager
 		this.packManager = new KonvaPackManager(
