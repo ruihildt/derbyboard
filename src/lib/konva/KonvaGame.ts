@@ -178,38 +178,70 @@ export class KonvaGame {
 	}
 
 	private handleResize = () => {
-		// Get current center point
-		const centerX = this.stage.width() / 2;
-		const centerY = this.stage.height() / 2;
+		this.recalculateDimensions();
 
-		// Get current scale and position
-		const oldScale = this.stage.scaleX();
-		const oldPosition = this.stage.position();
+		// Center the stage
+		this.stage.position({ x: 0, y: 0 });
+		this.stage.scale({ x: BASE_ZOOM, y: BASE_ZOOM });
 
-		// Calculate relative position of center in world coordinates
-		const worldX = (centerX - oldPosition.x) / oldScale;
-		const worldY = (centerY - oldPosition.y) / oldScale;
+		// Rebuild the entire stage
+		this.rebuildTrackAndPlayers();
+
+		this.updatePersistedState();
+	};
+
+	private recalculateDimensions() {
+		// Update width and height properties to match current window
+		this.width = window.innerWidth;
+		this.height = window.innerHeight;
 
 		// Update stage size
-		this.stage.width(window.innerWidth);
-		this.stage.height(window.innerHeight);
+		this.stage.width(this.width);
+		this.stage.height(this.height);
+	}
 
-		// Calculate new center
-		const newCenterX = this.stage.width() / 2;
-		const newCenterY = this.stage.height() / 2;
+	private rebuildTrackAndPlayers() {
+		// Clear all layers
+		this.trackSurfaceLayer.destroyChildren();
+		this.trackLinesLayer.destroyChildren();
+		this.engagementZoneLayer.destroyChildren();
+		this.playersLayer.destroyChildren();
 
-		// Set new position to maintain world point at center
-		this.stage.position({
-			x: newCenterX - worldX * oldScale,
-			y: newCenterY - worldY * oldScale
-		});
+		// Recreate track geometry with fresh points
+		this.trackGeometry = new KonvaTrackGeometry(this.initializePoints());
 
-		// Listen for transform completion before updating state
-		this.stage.on('transformend', () => {
-			this.stage.batchDraw();
-			this.updatePersistedState();
-		});
-	};
+		// Redraw track
+		this.trackGeometry.addTrackSurfaceToLayer(this.trackSurfaceLayer);
+		this.trackGeometry.addTrackLinesToLayer(this.trackLinesLayer);
+
+		// Reinitialize player manager with fresh track
+		this.playerManager = new KonvaPlayerManager(this.playersLayer, this.trackGeometry);
+
+		// Either load from state or default lineup based on current state
+		const state = get(boardState);
+		if (state.teamPlayers && state.teamPlayers.length > 0) {
+			this.playerManager.initialLoad();
+		} else {
+			this.playerManager.loadDefaultLineup();
+		}
+
+		// Update pack manager
+		this.packManager = new KonvaPackManager(
+			this.playerManager,
+			this.playersLayer,
+			this.engagementZoneLayer,
+			this.trackGeometry
+		);
+
+		// Recalculate pack
+		this.packManager.determinePack();
+
+		// Redraw all layers
+		this.trackSurfaceLayer.batchDraw();
+		this.trackLinesLayer.batchDraw();
+		this.engagementZoneLayer.batchDraw();
+		this.playersLayer.batchDraw();
+	}
 
 	// Increase zoom level within MAX_ZOOM limit
 	zoomIn() {
@@ -368,18 +400,14 @@ export class KonvaGame {
 	}
 
 	resetBoard() {
-		// Clear existing players and layers
-		this.playersLayer.destroyChildren();
-		this.engagementZoneLayer.destroyChildren();
-
 		// Reset stage position and scale
 		this.stage.position({ x: 0, y: 0 });
 		this.stage.scale({ x: BASE_ZOOM, y: BASE_ZOOM });
 
-		// Clear internal arrays in PlayerManager
-		this.playerManager = new KonvaPlayerManager(this.playersLayer, this.trackGeometry);
+		// Make sure dimensions are current
+		this.recalculateDimensions();
 
-		// Reset persisted state
+		// Reset persisted state first
 		boardState.set({
 			version: 3,
 			createdAt: new Date().toISOString(),
@@ -392,25 +420,8 @@ export class KonvaGame {
 			}
 		});
 
-		// Add fresh lineup
-		this.playerManager.loadDefaultLineup();
-
-		// Update pack manager with new player manager
-		this.packManager = new KonvaPackManager(
-			this.playerManager,
-			this.playersLayer,
-			this.engagementZoneLayer,
-			this.trackGeometry
-		);
-
-		// Recalculate pack and engagement zone
-		this.packManager.determinePack();
-
-		// Redraw all layers
-		this.trackSurfaceLayer.batchDraw();
-		this.trackLinesLayer.batchDraw();
-		this.engagementZoneLayer.batchDraw();
-		this.playersLayer.batchDraw();
+		// Rebuild everything with fresh dimensions
+		this.rebuildTrackAndPlayers();
 
 		this.stage.batchDraw();
 		this.updatePersistedState();
