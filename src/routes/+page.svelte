@@ -91,9 +91,11 @@
 	</Modal>
 </main>
 
-<Menu {game} />
+<div class="fixed left-4 top-4">
+	<Menu {game} />
+</div>
 
-<div class="fixed bottom-4 left-4 flex gap-2">
+<div class="fixed bottom-4 left-4">
 	<ZoomControl {game} />
 </div>
 
@@ -102,4 +104,6 @@
 	<FullscreenButton />
 </div>
 
-<RecordControl bind:isRecording recordingComplete={handleRecordingComplete} {game} />
+<div class="fixed right-4 top-4">
+	<RecordControl bind:isRecording recordingComplete={handleRecordingComplete} {game} />
+</div>

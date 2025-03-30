@@ -96,7 +96,7 @@
 	}
 </script>
 
-<Toolbar class="z-60 fixed right-4 top-4 inline-flex rounded-lg !p-1 shadow-lg shadow-black/5">
+<Toolbar class="inline-flex rounded-lg !p-1 shadow-lg shadow-black/5">
 	<ToolbarButton
 		class={isRecording || countdown !== null
 			? 'cursor-not-allowed opacity-50'

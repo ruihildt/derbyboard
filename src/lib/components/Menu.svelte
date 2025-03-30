@@ -63,48 +63,43 @@
 	}
 </script>
 
-<div class="fixed left-4 top-4">
-	<Button class="bg-white !p-2 hover:bg-primary-200" onclick={() => toggleMenu}>
-		<BarsOutline class="h-6 w-6" color="gray" />
-	</Button>
+<Button class="bg-white !p-2 hover:bg-primary-200" onclick={() => toggleMenu}>
+	<BarsOutline class="h-6 w-6" color="gray" />
+</Button>
 
-	<Dropdown bind:open={dropdownOpen} class="w-40">
-		<DropdownItem class="flex items-center text-gray-600 hover:bg-primary-200" onclick={handleOpen}>
-			<FolderOpenOutline class="mr-2 h-4 w-4" />
-			<span>Open</span>
-		</DropdownItem>
-		<DropdownItem class="flex items-center text-gray-700 hover:bg-primary-200" onclick={handleSave}>
-			<ArrowDownToBracketOutline class="mr-2 h-4 w-4" />
-			<span>Save to...</span>
-		</DropdownItem>
-		<DropdownItem
-			class="flex items-center text-gray-700 hover:bg-primary-200"
-			onclick={handleExportImage}
-		>
-			<ImageOutline class="mr-2 h-4 w-4" />
-			<span>Export image...</span>
-		</DropdownItem>
+<Dropdown bind:open={dropdownOpen} class="w-40">
+	<DropdownItem class="flex items-center text-gray-600 hover:bg-primary-200" onclick={handleOpen}>
+		<FolderOpenOutline class="mr-2 h-4 w-4" />
+		<span>Open</span>
+	</DropdownItem>
+	<DropdownItem class="flex items-center text-gray-700 hover:bg-primary-200" onclick={handleSave}>
+		<ArrowDownToBracketOutline class="mr-2 h-4 w-4" />
+		<span>Save to...</span>
+	</DropdownItem>
+	<DropdownItem
+		class="flex items-center text-gray-700 hover:bg-primary-200"
+		onclick={handleExportImage}
+	>
+		<ImageOutline class="mr-2 h-4 w-4" />
+		<span>Export image...</span>
+	</DropdownItem>
 
-		<DropdownDivider />
-		<DropdownItem
-			class="flex items-center text-gray-700 hover:bg-primary-200"
-			onclick={handleReset}
-		>
-			<RefreshOutline class="mr-2 h-4 w-4" />
-			<span>Reset board</span>
-		</DropdownItem>
-		<DropdownDivider />
-		<DropdownItem
-			class="flex items-center text-gray-700 hover:bg-primary-200"
-			href="https://github.com/ruihildt/derbyboard"
-			target="_blank"
-			onclick={() => (dropdownOpen = false)}
-		>
-			<InfoCircleOutline class="mr-2 h-4 w-4" />
-			<span>About</span>
-		</DropdownItem>
-	</Dropdown>
-</div>
+	<DropdownDivider />
+	<DropdownItem class="flex items-center text-gray-700 hover:bg-primary-200" onclick={handleReset}>
+		<RefreshOutline class="mr-2 h-4 w-4" />
+		<span>Reset board</span>
+	</DropdownItem>
+	<DropdownDivider />
+	<DropdownItem
+		class="flex items-center text-gray-700 hover:bg-primary-200"
+		href="https://github.com/ruihildt/derbyboard"
+		target="_blank"
+		onclick={() => (dropdownOpen = false)}
+	>
+		<InfoCircleOutline class="mr-2 h-4 w-4" />
+		<span>About</span>
+	</DropdownItem>
+</Dropdown>
 
 <Modal bind:open={showErrorModal} size="xs">
 	<div class="text-center">
