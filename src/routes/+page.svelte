@@ -99,11 +99,11 @@
 	<ZoomControl {game} />
 </div>
 
+<div class="fixed right-4 top-4">
+	<RecordControl bind:isRecording recordingComplete={handleRecordingComplete} {game} />
+</div>
+
 <div class="fixed bottom-4 right-4 flex gap-2">
 	<Changelog />
 	<FullscreenButton />
-</div>
-
-<div class="fixed right-4 top-4">
-	<RecordControl bind:isRecording recordingComplete={handleRecordingComplete} {game} />
 </div>
