@@ -1,6 +1,5 @@
-import type { SkatingOfficialRole } from '$lib/classes/SkatingOfficial';
-import type { TeamPlayerRole } from '$lib/classes/TeamPlayer';
-import type { TeamPlayerTeam } from '$lib/konva/KonvaTeamPlayer';
+import type { SkatingOfficialRole } from '$lib/konva/KonvaSkatingOfficial';
+import type { TeamPlayerRole, TeamPlayerTeam } from '$lib/konva/KonvaTeamPlayer';
 import { persisted } from 'svelte-persisted-store';
 
 // Position is relative to the center of the track

@@ -1,5 +1,6 @@
 import Konva from 'konva';
 import fixWebmDuration from 'fix-webm-duration';
+import type { Watermark } from './Watermark';
 
 /**
  * KonvaRecorder handles video recording of Konva canvas animations
@@ -28,7 +29,8 @@ export class KonvaRecorder {
 	 */
 	constructor(
 		private stage: Konva.Stage,
-		scalingFactor: number = 1
+		scalingFactor: number = 1,
+		private watermark?: Watermark
 	) {
 		this.scalingFactor = scalingFactor;
 
@@ -108,6 +110,19 @@ export class KonvaRecorder {
 						ctx.drawImage(layerCanvas, 0, 0);
 					}
 				});
+
+				// Stamp the branding watermark on top, in screen space.
+				if (this.watermark) {
+					const nativeCtx = mergedLayer.getNativeCanvasElement().getContext('2d');
+					if (nativeCtx) {
+						this.watermark.draw(
+							nativeCtx,
+							recordingStage.width(),
+							recordingStage.height(),
+							this.scalingFactor
+						);
+					}
+				}
 			}
 		}, mergedLayer);
 

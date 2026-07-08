@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { Toolbar, ToolbarButton } from 'flowbite-svelte';
 	import { MicrophoneOutline, MicrophoneSlashOutline, StopSolid } from 'flowbite-svelte-icons';
-	import { panMode } from '$lib/stores/panMode';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { KonvaRecorder } from '$lib/konva/KonvaRecorder';
 
@@ -23,7 +22,6 @@
 	let audioStream = $state<MediaStream | null>(null);
 
 	async function startRecording() {
-		panMode.set(false); // Lock panning when recording starts
 		countdown = 3;
 		const countdownInterval = setInterval(() => {
 			countdown = countdown! - 1;
@@ -35,26 +33,27 @@
 
 		if (game) {
 			// Initialize the recorder if not already done
+			const activeRecorder = recorder ?? game.createRecorder();
 			if (!recorder) {
-				recorder = new KonvaRecorder(game.getStage());
+				recorder = activeRecorder;
 			}
 
 			// If audio is enabled, get audio stream and set it in the recorder
 			if (withAudio) {
 				try {
 					audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-					recorder.setAudioStream(audioStream);
+					activeRecorder.setAudioStream(audioStream);
 				} catch (err) {
 					console.error('Error accessing the microphone', err);
 					// Continue without audio if there's an error
-					recorder.setAudioStream(null);
+					activeRecorder.setAudioStream(null);
 				}
 			} else {
-				recorder.setAudioStream(null);
+				activeRecorder.setAudioStream(null);
 			}
 
 			// Start recording
-			recorder.startRecording();
+			activeRecorder.startRecording();
 			isRecording = true;
 
 			// Track elapsed time

@@ -18,6 +18,7 @@ import { KonvaTrackGeometry, type Point } from './KonvaTrackGeometry';
 import { KonvaPlayerManager } from './KonvaPlayerManager';
 import { KonvaPackManager } from './KonvaPackManager';
 import { KonvaRecorder } from './KonvaRecorder';
+import { Watermark } from './Watermark';
 
 export class KonvaGame {
 	private width: number;
@@ -33,7 +34,7 @@ export class KonvaGame {
 	private playerManager!: KonvaPlayerManager;
 	private packManager!: KonvaPackManager;
 
-	private recorder: KonvaRecorder;
+	private watermark: Watermark;
 
 	constructor(containerId: string, width: number, height: number) {
 		// Initialize basic properties first
@@ -112,19 +113,10 @@ export class KonvaGame {
 		// Add window resize handler
 		window.addEventListener('resize', this.handleResize);
 
-		this.recorder = new KonvaRecorder(
-			this.stage
-			// {
-			// x: this.width * 0.25, // Start at 25% from left
-			// y: this.height * 0.25, // Start at 25% from top
-			// width: this.width * 0.5, // Take 50% of width
-			// height: this.height * 0.5 // Take 50% of height
-			// }
-		);
+		this.watermark = new Watermark();
 	}
 
 	destroy() {
-		this.recorder.destroy();
 		window.removeEventListener('resize', this.handleResize);
 		this.trackSurfaceLayer.destroy();
 		this.trackLinesLayer.destroy();
@@ -433,19 +425,18 @@ export class KonvaGame {
 		this.updatePersistedState();
 	}
 
-	startRecording() {
-		this.recorder.startRecording();
-	}
-
-	stopRecording(): Promise<Blob> {
-		return this.recorder.stopRecording();
+	createRecorder(scalingFactor = 1): KonvaRecorder {
+		return new KonvaRecorder(this.stage, scalingFactor, this.watermark);
 	}
 
 	exportAsImage(pixelRatio = 2): string {
-		return this.stage.toDataURL({ pixelRatio });
-	}
-
-	getStage(): Konva.Stage {
-		return this.stage;
+		const sourceCanvas = this.stage.toCanvas({ pixelRatio });
+		const canvas = document.createElement('canvas');
+		canvas.width = sourceCanvas.width;
+		canvas.height = sourceCanvas.height;
+		const ctx = canvas.getContext('2d')!;
+		ctx.drawImage(sourceCanvas, 0, 0);
+		this.watermark.draw(ctx, canvas.width, canvas.height, pixelRatio);
+		return canvas.toDataURL();
 	}
 }
