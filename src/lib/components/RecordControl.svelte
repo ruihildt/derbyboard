@@ -45,6 +45,7 @@
 
 			// Apply recording settings (frozen for this take).
 			const settings = get(recordingSettings);
+			activeRecorder.setEngine(settings.engine);
 			activeRecorder.setQuality(settings.quality);
 			activeRecorder.setRatio(settings.ratio);
 			activeRecorder.setRegion(settings.mode === 'region' ? region : null);

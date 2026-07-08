@@ -1,11 +1,12 @@
 import { persisted } from 'svelte-persisted-store';
 import type { Quality } from '$lib/utils/codec';
-import type { AspectRatio, RecordingMode } from '$lib/utils/recording';
+import type { AspectRatio, EngineKind, RecordingMode } from '$lib/utils/recording';
 
 export interface RecordingSettings {
 	mode: RecordingMode;
 	ratio: AspectRatio;
 	quality: Quality;
+	engine: EngineKind;
 }
 
 /** Coarse-pointer or small screens default to a lighter quality tier. */
@@ -19,5 +20,6 @@ function defaultQuality(): Quality {
 export const recordingSettings = persisted<RecordingSettings>('derbyboard-recording', {
 	mode: 'full',
 	ratio: '16:9',
-	quality: defaultQuality()
+	quality: defaultQuality(),
+	engine: 'tocanvas'
 });

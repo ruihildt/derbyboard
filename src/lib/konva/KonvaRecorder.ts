@@ -8,8 +8,10 @@ import {
 	type RecorderCodec
 } from '$lib/utils/codec';
 import { outputDimensions, type AspectRatio, type OutputSpec } from '$lib/utils/recording';
+import type { EngineKind } from '$lib/utils/recording';
 import type { Region, RecorderEngine } from './recorder/types';
 import { ToCanvasEngine } from './recorder/ToCanvasEngine';
+import { CloneTransformEngine } from './recorder/CloneTransformEngine';
 
 const FRAME_RATE = 30;
 
@@ -46,6 +48,7 @@ export class KonvaRecorder {
 	private output: OutputSpec = { w: 0, h: 0 };
 
 	private engine: RecorderEngine = new ToCanvasEngine();
+	private engineKind: EngineKind = 'tocanvas';
 
 	constructor(private config: KonvaRecorderConfig) {
 		this.outputCanvas = document.createElement('canvas');
@@ -70,6 +73,14 @@ export class KonvaRecorder {
 	/** Selection in viewport CSS pixels, or null for full-frame. Frozen during a take. */
 	setRegion(region: Region | null) {
 		if (!this.isRecording) this.region = region;
+	}
+
+	/** Rendering engine. Frozen during a take. */
+	setEngine(kind: EngineKind) {
+		if (this.isRecording || this.engineKind === kind) return;
+		this.engine.destroy();
+		this.engine = kind === 'clone' ? new CloneTransformEngine() : new ToCanvasEngine();
+		this.engineKind = kind;
 	}
 
 	/**

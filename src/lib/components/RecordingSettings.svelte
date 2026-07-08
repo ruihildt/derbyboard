@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { AdjustmentsVerticalOutline } from 'flowbite-svelte-icons';
 	import { recordingSettings } from '$lib/stores/recordingSettings';
-	import type { AspectRatio, RecordingMode } from '$lib/utils/recording';
+	import type { AspectRatio, EngineKind, RecordingMode } from '$lib/utils/recording';
 	import type { Quality } from '$lib/utils/codec';
 
 	let { disabled = false } = $props<{ disabled?: boolean }>();
@@ -19,6 +19,9 @@
 	}
 	function setQuality(quality: Quality) {
 		recordingSettings.update((s) => ({ ...s, quality }));
+	}
+	function setEngine(engine: EngineKind) {
+		recordingSettings.update((s) => ({ ...s, engine }));
 	}
 
 	function pill(active: boolean) {
@@ -74,6 +77,25 @@
 						</button>
 					{/each}
 				</div>
+			</div>
+
+			<div class="mt-3 border-t border-gray-100 pt-3">
+				<div class="mb-1 text-xs font-semibold text-gray-500">Engine</div>
+				<div class="flex gap-1">
+					<button
+						class={pill($recordingSettings.engine === 'tocanvas')}
+						onclick={() => setEngine('tocanvas')}
+					>
+						Standard
+					</button>
+					<button
+						class={pill($recordingSettings.engine === 'clone')}
+						onclick={() => setEngine('clone')}>Clone</button
+					>
+				</div>
+				<p class="mt-1 text-[10px] leading-tight text-gray-400">
+					Clone is experimental; verify output before relying on it.
+				</p>
 			</div>
 		</div>
 	{/if}
