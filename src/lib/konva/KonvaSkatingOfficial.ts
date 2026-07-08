@@ -20,7 +20,7 @@ export class KonvaSkatingOfficial extends KonvaPlayer {
 	 * Used by child classes to access and modify the player's visual representation
 	 */
 	protected get circle(): Konva.Circle {
-		return this.baseCircle as Konva.Circle;
+		return this.baseCircle;
 	}
 
 	constructor(x: number, y: number, layer: Konva.Layer, role: SkatingOfficialRole) {
@@ -28,8 +28,10 @@ export class KonvaSkatingOfficial extends KonvaPlayer {
 		this.role = role;
 
 		const circle = this.circle;
-		circle.fill(colors.officialPrimary);
-		circle.stroke(colors.officialSecondary);
+		circle.setAttrs({
+			fill: colors.officialPrimary,
+			stroke: colors.officialSecondary
+		});
 
 		// Add referee stripes for visual distinction
 		this.setupStripes();

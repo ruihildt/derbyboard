@@ -2,12 +2,6 @@ import Konva from 'konva';
 import { type Point } from './KonvaTrackGeometry';
 import { PLAYER_RADIUS, PLAYER_STROKE_WIDTH } from '$lib/constants';
 
-declare module 'konva/lib/Node' {
-	interface Node {
-		player: KonvaPlayer;
-	}
-}
-
 interface PlayerGroupConfig {
 	x: number;
 	y: number;
@@ -30,7 +24,7 @@ interface PlayerCircleConfig {
  */
 export class KonvaPlayer {
 	group: Konva.Group;
-	protected baseCircle: Konva.Circle | null;
+	protected baseCircle: Konva.Circle;
 
 	/**
 	 * Creates a new player instance
@@ -99,7 +93,7 @@ export class KonvaPlayer {
 	 * Used by child classes to access and modify the player's visual representation
 	 */
 	protected getBaseCircle(): Konva.Circle {
-		return this.baseCircle as Konva.Circle;
+		return this.baseCircle;
 	}
 
 	/**
@@ -117,6 +111,5 @@ export class KonvaPlayer {
 			this.group.off();
 			this.group.destroy();
 		}
-		this.baseCircle = null;
 	}
 }

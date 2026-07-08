@@ -5,37 +5,15 @@ import { PLAYER_RADIUS, PLAYER_STROKE_WIDTH } from '$lib/constants';
 export class CollisionSystem {
 	private layer: Konva.Layer;
 	private iterationCount = 3;
-	// Cache the players to avoid repeated queries
-	private players: KonvaPlayer[] = [];
 
 	constructor(layer: Konva.Layer) {
 		this.layer = layer;
-
-		// Listen for player additions/removals to update the player cache
-		this.layer.on('add', (e) => {
-			// Check if the added child is a playerGroup
-			if (e.child && e.child.hasName && e.child.hasName('playerGroup')) {
-				this.refreshPlayers();
-			}
-		});
-
-		this.layer.on('remove', (e) => {
-			if (e.child && e.child.hasName && e.child.hasName('playerGroup')) {
-				this.refreshPlayers();
-			}
-		});
-
-		// Initial player population
-		this.refreshPlayers();
-	}
-
-	private refreshPlayers() {
-		this.players = this.layer.find('.playerGroup').map((node) => node.getAttr('player'));
 	}
 
 	resolveCollisions() {
+		const players = this.layer.find('.playerGroup').map((node) => node.getAttr('player'));
 		for (let i = 0; i < this.iterationCount; i++) {
-			this.resolveIteration(this.players);
+			this.resolveIteration(players);
 		}
 		this.layer.batchDraw();
 	}

@@ -93,18 +93,24 @@ export class KonvaGame {
 			this.trackGeometry
 		);
 
+		// Register a single delegated handler for player interactions.
+		// Registered once here (not in the managers) so it survives rebuilds and
+		// always dispatches to the current playerManager/packManager instances.
+		this.playersLayer.on('dragmove dragend touchmove touchend', (e) => {
+			this.playerManager.handleDragMove(e);
+			this.packManager.determinePack();
+		});
+
+		this.playersLayer.on('collision', (e) => {
+			this.playerManager.handleCollision(e);
+		});
+
 		this.playerManager.initialLoad();
 		this.packManager.determinePack();
 		this.playersLayer.batchDraw();
 
 		// Add window resize handler
 		window.addEventListener('resize', this.handleResize);
-
-		// Add stage-wide event listener for interaction end
-		this.stage.on('mouseup touchend', () => {
-			this.packManager.determinePack();
-			this.playersLayer.batchDraw();
-		});
 
 		this.recorder = new KonvaRecorder(
 			this.stage

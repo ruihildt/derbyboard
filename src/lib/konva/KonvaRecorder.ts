@@ -54,10 +54,11 @@ export class KonvaRecorder {
 
 				// Scale visual properties
 				if (child instanceof Konva.Circle) {
-					child.radius(child.radius() * scalingFactor);
-					child.strokeWidth(child.strokeWidth() * scalingFactor);
-				}
-				if (child instanceof Konva.Line || child instanceof Konva.Path) {
+					child.setAttrs({
+						radius: child.radius() * scalingFactor,
+						strokeWidth: child.strokeWidth() * scalingFactor
+					});
+				} else if (child instanceof Konva.Line || child instanceof Konva.Path) {
 					child.strokeWidth(child.strokeWidth() * scalingFactor);
 				}
 				child.scale({ x: scalingFactor, y: scalingFactor });
@@ -163,8 +164,10 @@ export class KonvaRecorder {
 				// Scale specific properties for different node types after cloning
 				if (child instanceof Konva.Circle && clone instanceof Konva.Circle) {
 					// Only handle circle-specific properties when both objects are circles
-					clone.radius(child.radius() * scalingFactor);
-					clone.strokeWidth(child.strokeWidth() * scalingFactor);
+					clone.setAttrs({
+						radius: child.radius() * scalingFactor,
+						strokeWidth: child.strokeWidth() * scalingFactor
+					});
 				} else if (
 					(child instanceof Konva.Line || child instanceof Konva.Path) &&
 					(clone instanceof Konva.Line || clone instanceof Konva.Path)

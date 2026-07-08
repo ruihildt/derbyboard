@@ -22,13 +22,6 @@ export class KonvaPackManager {
 		});
 		this.engagementZoneLayer.add(this.engagementZonePath);
 
-		playersLayer.on('dragmove dragend touchmove touchend', () => {
-			this.playerManager.getBlockers().forEach((player) => {
-				player.updateInBounds(this.trackGeometry);
-			});
-			this.determinePack();
-		});
-
 		// Enable/disable debug mode
 		this.toggleDebugMode(false);
 	}

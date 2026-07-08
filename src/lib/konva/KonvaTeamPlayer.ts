@@ -41,7 +41,7 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 	 * Used by child classes to access and modify the player's visual representation
 	 */
 	protected get circle(): Konva.Circle {
-		return this.baseCircle as Konva.Circle;
+		return this.baseCircle;
 	}
 
 	constructor(
@@ -64,8 +64,10 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 		this.isInEngagementZone = false;
 
 		const circle = this.circle;
-		circle.fill(team === TeamPlayerTeam.A ? colors.teamAPrimary : colors.teamBPrimary);
-		circle.stroke(colors.outOfBounds);
+		circle.setAttrs({
+			fill: team === TeamPlayerTeam.A ? colors.teamAPrimary : colors.teamBPrimary,
+			stroke: colors.outOfBounds
+		});
 
 		this.setupVisualElements();
 		this.updateInBounds(trackGeometry);
@@ -132,8 +134,6 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 
 	public updateInBounds(trackGeometry: KonvaTrackGeometry): void {
 		const circle = this.circle;
-		if (!circle) return;
-
 		const pos = this.getPosition();
 		const radius = circle.radius();
 		const strokeWidth = circle.strokeWidth();

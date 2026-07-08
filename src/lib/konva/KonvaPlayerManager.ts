@@ -2,6 +2,7 @@ import Konva from 'konva';
 
 import { KonvaTeamPlayer, TeamPlayerRole, TeamPlayerTeam } from './KonvaTeamPlayer';
 import { KonvaSkatingOfficial, SkatingOfficialRole } from './KonvaSkatingOfficial';
+import type { KonvaPlayer } from './KonvaPlayer';
 import type { KonvaTrackGeometry } from './KonvaTrackGeometry';
 import { get } from 'svelte/store';
 import { boardState, type KonvaBoardState } from '$lib/stores/konvaBoardState';
@@ -20,35 +21,40 @@ export class KonvaPlayerManager {
 		this.layer = layer;
 		this.trackGeometry = trackGeometry;
 		this.collisionSystem = new CollisionSystem(layer);
+	}
 
-		// Set up a single layer-level event listener for all player movements
-		this.layer.on('dragmove', (e) => {
-			// Only process if the target is a player group
-			if (e.target.hasName('playerGroup')) {
-				// Resolve collisions after any player moves
-				this.collisionSystem.resolveCollisions();
+	/**
+	 * Delegated handler for player drag/touch movement.
+	 * Resolves collisions and refreshes the dragged player's in-bounds status.
+	 */
+	handleDragMove(e: Konva.KonvaEventObject<unknown>): void {
+		const target = e.target as Konva.Node;
+		if (target.hasName('playerGroup')) {
+			this.collisionSystem.resolveCollisions();
 
-				// Update in-bounds status for team players after collision
-				const player = (e.target as Konva.Node).getAttr('player');
-				if (player instanceof KonvaTeamPlayer) {
-					player.updateInBounds(this.trackGeometry);
-				}
-			}
-		});
-
-		// Keep the collision event handler for post-collision updates
-		this.layer.on('collision', (evt) => {
-			const player = (evt.target as Konva.Node).getAttr('player');
-			// Access otherPlayer from the correct location in the event object
-			const otherPlayer = evt.currentTarget.attrs?.otherPlayer;
-
+			const player = target.getAttr('player');
 			if (player instanceof KonvaTeamPlayer) {
 				player.updateInBounds(this.trackGeometry);
 			}
-			if (otherPlayer instanceof KonvaTeamPlayer) {
-				otherPlayer.updateInBounds(this.trackGeometry);
-			}
-		});
+		}
+	}
+
+	/**
+	 * Delegated handler for collision events fired by CollisionSystem.
+	 * Refreshes in-bounds status for both colliding players.
+	 */
+	handleCollision(e: Konva.KonvaEventObject<unknown>): void {
+		const evt = e as Konva.KonvaEventObject<unknown> & { otherPlayer?: KonvaPlayer };
+		const target = e.target as Konva.Node;
+		const player = target.getAttr('player');
+		const otherPlayer = evt.otherPlayer;
+
+		if (player instanceof KonvaTeamPlayer) {
+			player.updateInBounds(this.trackGeometry);
+		}
+		if (otherPlayer instanceof KonvaTeamPlayer) {
+			otherPlayer.updateInBounds(this.trackGeometry);
+		}
 	}
 
 	addTeamPlayer(x: number, y: number, team: TeamPlayerTeam, role: TeamPlayerRole) {
