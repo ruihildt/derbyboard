@@ -21,5 +21,5 @@ export const recordingSettings = persisted<RecordingSettings>('derbyboard-record
 	mode: 'full',
 	ratio: '16:9',
 	quality: defaultQuality(),
-	engine: 'tocanvas'
+	engine: 'composite'
 });

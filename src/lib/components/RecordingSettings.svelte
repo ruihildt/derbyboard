@@ -83,18 +83,16 @@
 				<div class="mb-1 text-xs font-semibold text-gray-500">Engine</div>
 				<div class="flex gap-1">
 					<button
-						class={pill($recordingSettings.engine === 'tocanvas')}
-						onclick={() => setEngine('tocanvas')}
+						class={pill($recordingSettings.engine === 'composite')}
+						onclick={() => setEngine('composite')}>Standard</button
 					>
-						Standard
-					</button>
 					<button
 						class={pill($recordingSettings.engine === 'clone')}
-						onclick={() => setEngine('clone')}>Clone</button
+						onclick={() => setEngine('clone')}>High-res</button
 					>
 				</div>
 				<p class="mt-1 text-[10px] leading-tight text-gray-400">
-					Clone is experimental; verify output before relying on it.
+					High-res re-renders at output resolution (experimental; heavier).
 				</p>
 			</div>
 		</div>

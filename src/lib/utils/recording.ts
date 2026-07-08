@@ -1,7 +1,7 @@
 import type { Quality } from './codec';
 
 export type AspectRatio = '16:9' | '1:1' | '4:3';
-export type EngineKind = 'tocanvas' | 'clone';
+export type EngineKind = 'composite' | 'clone';
 
 export type RecordingMode = 'full' | 'region';
 

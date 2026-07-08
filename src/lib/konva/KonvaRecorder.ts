@@ -10,7 +10,7 @@ import {
 import { outputDimensions, type AspectRatio, type OutputSpec } from '$lib/utils/recording';
 import type { EngineKind } from '$lib/utils/recording';
 import type { Region, RecorderEngine } from './recorder/types';
-import { ToCanvasEngine } from './recorder/ToCanvasEngine';
+import { CompositeEngine } from './recorder/CompositeEngine';
 import { CloneTransformEngine } from './recorder/CloneTransformEngine';
 
 const FRAME_RATE = 30;
@@ -47,12 +47,17 @@ export class KonvaRecorder {
 	private codec: RecorderCodec = pickRecorderCodec();
 	private output: OutputSpec = { w: 0, h: 0 };
 
-	private engine: RecorderEngine = new ToCanvasEngine();
-	private engineKind: EngineKind = 'tocanvas';
+	private engine: RecorderEngine = new CompositeEngine();
+	private engineKind: EngineKind = 'composite';
 
 	constructor(private config: KonvaRecorderConfig) {
 		this.outputCanvas = document.createElement('canvas');
 		this.outputCtx = this.outputCanvas.getContext('2d')!;
+		// Keep the canvas in the DOM (rendered but off-screen) so captureStream reliably
+		// samples painted frames — detached canvases may not be captured in some browsers.
+		this.outputCanvas.style.cssText =
+			'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1';
+		document.body.appendChild(this.outputCanvas);
 	}
 
 	/** Audio track to mux into the recording. Must be called before startRecording(). */
@@ -77,10 +82,12 @@ export class KonvaRecorder {
 
 	/** Rendering engine. Frozen during a take. */
 	setEngine(kind: EngineKind) {
-		if (this.isRecording || this.engineKind === kind) return;
+		if (this.isRecording) return;
+		const resolved = kind === 'clone' ? 'clone' : 'composite';
+		if (this.engineKind === resolved) return;
 		this.engine.destroy();
-		this.engine = kind === 'clone' ? new CloneTransformEngine() : new ToCanvasEngine();
-		this.engineKind = kind;
+		this.engine = resolved === 'clone' ? new CloneTransformEngine() : new CompositeEngine();
+		this.engineKind = resolved;
 	}
 
 	/**
@@ -128,6 +135,9 @@ export class KonvaRecorder {
 				this.recordedChunks.push(event.data);
 			}
 		};
+		this.mediaRecorder.onerror = (event) => {
+			console.error('[KonvaRecorder] MediaRecorder error', event);
+		};
 
 		this.mediaRecorder.start(1000); // Collect data every second
 		this.isRecording = true;
@@ -145,24 +155,30 @@ export class KonvaRecorder {
 		}
 		this.lastFrameTime = now;
 
-		this.engine.renderFrame({
-			stage: this.config.stage,
-			ctx: this.outputCtx,
-			output: this.output,
-			region: this.region,
-			watermark: this.config.watermark,
-			scalingFactor: 1
-		});
+		try {
+			this.engine.renderFrame({
+				stage: this.config.stage,
+				ctx: this.outputCtx,
+				output: this.output,
+				region: this.region,
+				watermark: this.config.watermark
+			});
+		} catch (e) {
+			console.error('[KonvaRecorder] renderFrame threw', e);
+		}
 
 		this.rafId = requestAnimationFrame(this.renderFrame);
 	};
 
 	/**
 	 * Stops recording and returns the final video blob.
-	 * Fixes WebM duration metadata for accurate playback.
+	 *
+	 * Robust against the recorder already being inactive (e.g. its stream track ended)
+	 * and against `onstop` never firing: it always settles, surfacing errors instead of
+	 * hanging silently.
 	 */
 	stopRecording(): Promise<Blob> {
-		return new Promise((resolve) => {
+		return new Promise((resolve, reject) => {
 			if (!this.mediaRecorder) {
 				resolve(new Blob([]));
 				return;
@@ -173,22 +189,51 @@ export class KonvaRecorder {
 				this.rafId = null;
 			}
 
-			this.mediaRecorder.onstop = async () => {
-				const blob = new Blob(this.recordedChunks, {
-					type: this.codec.blobType
-				});
+			let settled = false;
+			const timeout = window.setTimeout(() => {
+				if (!settled) {
+					console.warn('[KonvaRecorder] onstop did not fire; finalizing via timeout');
+					finalize();
+				}
+			}, 3000);
 
-				// fixWebmDuration patches WebM duration metadata; MP4 already carries it.
-				const duration = Date.now() - this.recordingStartTime;
-				const fixedBlob =
-					this.codec.container === 'webm' ? await fixWebmDuration(blob, duration) : blob;
-
-				this.recordedChunks = [];
-				this.isRecording = false;
-				resolve(fixedBlob);
+			const finalize = async () => {
+				if (settled) return;
+				settled = true;
+				window.clearTimeout(timeout);
+				try {
+					const raw = new Blob(this.recordedChunks, { type: this.codec.blobType });
+					let blob = raw;
+					if (this.codec.container === 'webm' && raw.size > 0) {
+						try {
+							blob = await fixWebmDuration(raw, Date.now() - this.recordingStartTime);
+						} catch (e) {
+							console.warn('[KonvaRecorder] fixWebmDuration failed; using raw blob', e);
+							blob = raw;
+						}
+					}
+					this.recordedChunks = [];
+					this.isRecording = false;
+					resolve(blob);
+				} catch (e) {
+					console.error('[KonvaRecorder] finalize failed', e);
+					this.isRecording = false;
+					reject(e);
+				}
 			};
 
-			this.mediaRecorder.stop();
+			this.mediaRecorder.onstop = () => finalize();
+
+			try {
+				if (this.mediaRecorder.state === 'inactive') {
+					finalize();
+				} else {
+					this.mediaRecorder.stop();
+				}
+			} catch (e) {
+				console.error('[KonvaRecorder] mediaRecorder.stop() threw', e);
+				finalize();
+			}
 		});
 	}
 
@@ -208,5 +253,6 @@ export class KonvaRecorder {
 			this.rafId = null;
 		}
 		this.engine.destroy();
+		this.outputCanvas.remove();
 	}
 }

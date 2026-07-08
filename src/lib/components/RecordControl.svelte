@@ -83,18 +83,21 @@
 				timeInterval = null;
 			}
 
-			// Stop recording and get the blob
-			const blob = await recorder.stopRecording();
-			recordingComplete(blob);
-
-			// Stop audio stream if it exists
-			if (audioStream) {
-				audioStream.getTracks().forEach((track) => track.stop());
-				audioStream = null;
+			try {
+				// Stop recording and get the blob
+				const blob = await recorder.stopRecording();
+				recordingComplete(blob);
+			} catch (e) {
+				console.error('[RecordControl] stopRecording failed', e);
+			} finally {
+				// Stop audio stream if it exists
+				if (audioStream) {
+					audioStream.getTracks().forEach((track) => track.stop());
+					audioStream = null;
+				}
+				isRecording = false;
+				elapsedTime = 0;
 			}
-
-			isRecording = false;
-			elapsedTime = 0;
 		}
 	}
 

@@ -19,30 +19,22 @@ export const BITRATE_BY_QUALITY: Record<Quality, number> = {
 };
 
 const CANDIDATES: readonly RecorderCodec[] = [
-	{
-		mimeType: 'video/webm;codecs=vp8,opus',
-		container: 'webm',
-		blobType: 'video/webm; codecs=vp8,opus'
-	},
-	{
-		mimeType: 'video/webm;codecs=vp9,opus',
-		container: 'webm',
-		blobType: 'video/webm; codecs=vp9,opus'
-	},
+	// Plain containers only: declaring audio codecs (e.g. codecs=vp8,opus) on a
+	// video-only stream can leave MediaRecorder producing no data. Letting the
+	// browser choose codecs matching the actual tracks is the reliable option.
 	{ mimeType: 'video/webm', container: 'webm', blobType: 'video/webm' },
-	{ mimeType: 'video/mp4;codecs=h264,aac', container: 'mp4', blobType: 'video/mp4' },
 	{ mimeType: 'video/mp4', container: 'mp4', blobType: 'video/mp4' }
 ];
 
 let cached: RecorderCodec | null = null;
 
 /**
- * Picks the best MediaRecorder codec the current browser supports.
+ * Picks the best MediaRecorder container the current browser supports.
  *
- * WebM/VP8 is preferred (existing behavior on Chromium/Firefox); MP4/H.264 is the
- * fallback so iOS Safari — which does not support WebM recording — can record too.
- * When nothing matches, an empty mimeType is returned so MediaRecorder uses its own
- * default.
+ * WebM is preferred (Chromium/Firefox); MP4 is the fallback so iOS Safari — which
+ * does not support WebM recording — can record too. Plain containers are used so the
+ * browser selects codecs matching the actual tracks. When nothing matches, an empty
+ * mimeType is returned so MediaRecorder uses its own default.
  */
 export function pickRecorderCodec(): RecorderCodec {
 	if (cached) return cached;

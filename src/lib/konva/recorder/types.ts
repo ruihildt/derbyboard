@@ -21,8 +21,6 @@ export interface FrameRequest {
 	/** null for full-frame recording. */
 	region: Region | null;
 	watermark?: Watermark;
-	/** Scaling factor used only in full-frame mode. */
-	scalingFactor: number;
 }
 
 /**
