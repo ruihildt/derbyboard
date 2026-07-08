@@ -38,8 +38,9 @@
 		const year = now.getFullYear().toString().slice(-2);
 		const month = String(now.getMonth() + 1).padStart(2, '0');
 		const day = String(now.getDate()).padStart(2, '0');
+		const ext = recordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
 
-		a.download = `derbyboard-${year}-${month}-${day}.webm`;
+		a.download = `derbyboard-${year}-${month}-${day}.${ext}`;
 
 		document.body.appendChild(a);
 		a.click();

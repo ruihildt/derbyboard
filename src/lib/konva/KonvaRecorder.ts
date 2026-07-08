@@ -1,6 +1,12 @@
 import type Konva from 'konva';
 import fixWebmDuration from 'fix-webm-duration';
 import type { Watermark } from './Watermark';
+import {
+	BITRATE_BY_QUALITY,
+	pickRecorderCodec,
+	type Quality,
+	type RecorderCodec
+} from '$lib/utils/codec';
 
 const FRAME_RATE = 30;
 
@@ -26,6 +32,9 @@ export class KonvaRecorder {
 	private rafId: number | null = null;
 	private lastFrameTime = 0;
 
+	private quality: Quality = '1080p';
+	private codec: RecorderCodec = pickRecorderCodec();
+
 	constructor(
 		private stage: Konva.Stage,
 		private scalingFactor: number = 1,
@@ -41,6 +50,14 @@ export class KonvaRecorder {
 	 */
 	setAudioStream(stream: MediaStream | null) {
 		this.audioStream = stream;
+	}
+
+	/**
+	 * Sets the target quality tier (controls the recording bitrate).
+	 * Must be called before startRecording().
+	 */
+	setQuality(quality: Quality) {
+		this.quality = quality;
 	}
 
 	/**
@@ -67,9 +84,14 @@ export class KonvaRecorder {
 			combinedStream = videoStream;
 		}
 
-		this.mediaRecorder = new MediaRecorder(combinedStream, {
-			mimeType: 'video/webm'
-		});
+		this.codec = pickRecorderCodec();
+		const recorderOptions: MediaRecorderOptions = {
+			videoBitsPerSecond: BITRATE_BY_QUALITY[this.quality]
+		};
+		if (this.codec.mimeType) {
+			recorderOptions.mimeType = this.codec.mimeType;
+		}
+		this.mediaRecorder = new MediaRecorder(combinedStream, recorderOptions);
 
 		this.mediaRecorder.ondataavailable = (event) => {
 			if (event.data.size > 0) {
@@ -136,11 +158,13 @@ export class KonvaRecorder {
 
 			this.mediaRecorder.onstop = async () => {
 				const blob = new Blob(this.recordedChunks, {
-					type: 'video/webm; codecs=vp8,opus'
+					type: this.codec.blobType
 				});
 
+				// fixWebmDuration patches WebM duration metadata; MP4 already carries it.
 				const duration = Date.now() - this.recordingStartTime;
-				const fixedBlob = await fixWebmDuration(blob, duration);
+				const fixedBlob =
+					this.codec.container === 'webm' ? await fixWebmDuration(blob, duration) : blob;
 
 				this.recordedChunks = [];
 				this.isRecording = false;
