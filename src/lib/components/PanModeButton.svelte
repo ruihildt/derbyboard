@@ -16,7 +16,7 @@
 <Toolbar class="inline-flex rounded-lg !p-1 shadow-lg shadow-black/5">
 	<ToolbarButton
 		class="flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200"
-		on:click={() => panMode.set(!$panMode)}
+		onclick={() => panMode.set(!$panMode)}
 	>
 		{#if $panMode}
 			🤚

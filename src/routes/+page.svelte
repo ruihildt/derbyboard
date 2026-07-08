@@ -57,16 +57,10 @@
 <main class="h-screen w-screen">
 	<div id="container" class="absolute left-0 top-0 h-screen w-screen"></div>
 
-	<Modal
-		bind:open={showPreview}
-		size="xl"
-		autoclose={false}
-		backdropClass="z-40 fixed inset-0 bg-black dark:bg-black"
-		outsideclose={false}
-	>
+	<Modal bind:open={showPreview} size="xl" autoclose={false} outsideclose={false}>
 		<div class="flex-grow">
 			{#if recordedBlob}
-				<Video bind:videoBlob={recordedBlob} close={handlePreviewClose} />
+				<Video bind:videoBlob={recordedBlob} />
 			{/if}
 		</div>
 
@@ -74,14 +68,14 @@
 			<Toolbar class="inline-flex rounded-lg !p-1">
 				<ToolbarButton
 					class="flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200"
-					on:click={handlePreviewClose}
+					onclick={handlePreviewClose}
 				>
 					<ArrowsRepeatOutline />
 					Restart
 				</ToolbarButton>
 				<ToolbarButton
 					class="flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200"
-					on:click={handleDownload}
+					onclick={handleDownload}
 				>
 					<DownloadOutline />
 					Download

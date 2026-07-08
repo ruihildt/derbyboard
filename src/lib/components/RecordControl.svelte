@@ -101,7 +101,7 @@
 		class={isRecording || countdown !== null
 			? 'cursor-not-allowed opacity-50'
 			: 'hover:bg-primary-200'}
-		on:click={() => (withAudio = !withAudio)}
+		onclick={() => (withAudio = !withAudio)}
 		disabled={isRecording || countdown !== null}
 	>
 		{#if withAudio}
@@ -115,7 +115,7 @@
 		class="flex items-center gap-2 px-3 text-sm text-gray-700 {countdown !== null
 			? 'cursor-not-allowed'
 			: 'hover:bg-primary-200'}"
-		on:click={toggleRecording}
+		onclick={toggleRecording}
 		disabled={countdown !== null}
 	>
 		{#if isRecording}

@@ -1,11 +1,10 @@
 <script lang="ts">
-	let { videoBlob = $bindable(), close } = $props<{
+	let { videoBlob = $bindable() } = $props<{
 		videoBlob: Blob;
-		close: () => void;
 	}>();
 
 	let videoUrl = URL.createObjectURL(videoBlob);
-	let videoElement: HTMLVideoElement;
+	let videoElement: HTMLVideoElement | undefined;
 
 	$effect(() => {
 		if (videoElement) {
@@ -14,11 +13,10 @@
 	});
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<!-- svelte-ignore a11y_click_events_have_key_events -->
 <div class="h-full w-full">
 	<!-- svelte-ignore a11y_media_has_caption -->
 	<video
+		bind:this={videoElement}
 		controls={true}
 		src={videoUrl}
 		preload="auto"

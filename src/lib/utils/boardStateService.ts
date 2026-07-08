@@ -53,7 +53,8 @@ export async function loadBoardFromFile(file: File, game?: KonvaGame): Promise<v
 		}
 	} catch (error) {
 		throw new Error(
-			`Error loading board state: ${error instanceof Error ? error.message : String(error)}`
+			`Error loading board state: ${error instanceof Error ? error.message : String(error)}`,
+			{ cause: error }
 		);
 	}
 }

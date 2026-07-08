@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { Game } from '$lib/classes/Game';
 	import { panMode } from '$lib/stores/panMode';
-	import { saveBoardState } from '$lib/utils/boardStateService';
 
 	let { highResCanvas = $bindable(), game = $bindable() } = $props<{
 		highResCanvas: HTMLCanvasElement;
@@ -34,9 +33,6 @@
 
 	function handleMouseUp() {
 		isDragging = false;
-		if (game) {
-			saveBoardState(game);
-		}
 	}
 
 	function handleTouchStart(e: TouchEvent) {
@@ -59,9 +55,6 @@
 
 	function handleTouchEnd() {
 		isDragging = false;
-		if (game) {
-			saveBoardState(game);
-		}
 	}
 
 	onMount(() => {

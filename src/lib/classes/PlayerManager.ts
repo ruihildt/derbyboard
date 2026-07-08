@@ -10,7 +10,6 @@ import { Player } from './Player';
 import { SkatingOfficial, SkatingOfficialRole } from './SkatingOfficial';
 import { boardState, type BoardState } from '$lib/stores/boardState';
 import type { Game } from './Game';
-import { saveBoardState } from '$lib/utils/boardStateService';
 
 export class PlayerManager {
 	private game: Game;
@@ -417,7 +416,6 @@ export class PlayerManager {
 		if (this.selectedPlayer) {
 			this.selectedPlayer.isDragging = false;
 			this.selectedPlayer = null;
-			saveBoardState(this.game);
 		}
 	}
 

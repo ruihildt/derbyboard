@@ -41,7 +41,7 @@
 			if (file) {
 				try {
 					await loadBoardFromFile(file, game);
-				} catch (error) {
+				} catch {
 					errorMessage = 'Invalid board file format. Please select a valid JSON file.';
 					showErrorModal = true;
 				}
@@ -67,7 +67,7 @@
 	<BarsOutline class="h-6 w-6" color="gray" />
 </Button>
 
-<Dropdown bind:open={dropdownOpen} class="w-40">
+<Dropdown bind:isOpen={dropdownOpen} class="w-40">
 	<DropdownItem class="flex items-center text-gray-600 hover:bg-primary-200" onclick={handleOpen}>
 		<FolderOpenOutline class="mr-2 h-4 w-4" />
 		<span>Open</span>

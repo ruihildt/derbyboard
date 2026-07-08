@@ -29,7 +29,7 @@ export class KonvaPlayerManager {
 				this.collisionSystem.resolveCollisions();
 
 				// Update in-bounds status for team players after collision
-				const player = e.target.getAttr('player');
+				const player = (e.target as Konva.Node).getAttr('player');
 				if (player instanceof KonvaTeamPlayer) {
 					player.updateInBounds(this.trackGeometry);
 				}
@@ -38,7 +38,7 @@ export class KonvaPlayerManager {
 
 		// Keep the collision event handler for post-collision updates
 		this.layer.on('collision', (evt) => {
-			const player = evt.target.getAttr('player');
+			const player = (evt.target as Konva.Node).getAttr('player');
 			// Access otherPlayer from the correct location in the event object
 			const otherPlayer = evt.currentTarget.attrs?.otherPlayer;
 

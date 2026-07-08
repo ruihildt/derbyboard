@@ -29,7 +29,7 @@
 		class={zoomLevel <= 10
 			? 'flex cursor-not-allowed items-center gap-2 px-3 text-sm text-gray-700 opacity-50'
 			: 'flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200'}
-		on:click={zoomOut}
+		onclick={zoomOut}
 		disabled={zoomLevel <= 10}
 	>
 		<MinusOutline />
@@ -37,7 +37,7 @@
 	<div class="relative">
 		<ToolbarButton
 			class="flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200"
-			on:click={resetZoom}
+			onclick={resetZoom}
 		>
 			{zoomLevel}%
 		</ToolbarButton>
@@ -49,7 +49,7 @@
 		class={zoomLevel >= MAX_ZOOM * 100
 			? 'flex cursor-not-allowed items-center gap-2 px-3 text-sm text-gray-700 opacity-50'
 			: 'flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200'}
-		on:click={zoomIn}
+		onclick={zoomIn}
 		disabled={zoomLevel >= MAX_ZOOM * 100}
 	>
 		<PlusOutline />
