@@ -7,17 +7,24 @@ import {
 	type Quality,
 	type RecorderCodec
 } from '$lib/utils/codec';
+import { outputDimensions, type AspectRatio, type OutputSpec } from '$lib/utils/recording';
+import type { Region, RecorderEngine } from './recorder/types';
+import { ToCanvasEngine } from './recorder/ToCanvasEngine';
 
 const FRAME_RATE = 30;
+
+interface KonvaRecorderConfig {
+	stage: Konva.Stage;
+	watermark?: Watermark;
+}
 
 /**
  * KonvaRecorder captures video of a Konva stage.
  *
- * Each frame re-rasterizes the live display stage via `stage.toCanvas`, so player
- * movement, pack/engagement-zone updates and pan/zoom are all captured. A previous
- * clone-based implementation only ever rendered the first frame: it relied on
- * `Konva.Animation` redrawing its merged layer, while the cloned content layers were
- * drawn once at record start and never updated.
+ * Each frame is rendered into a persistent capture canvas by a swappable
+ * {@link RecorderEngine}; `captureStream` reads from that canvas. Settings
+ * (quality, aspect ratio, region) are applied via setters before recording and are
+ * frozen for the duration of a take.
  */
 export class KonvaRecorder {
 	private mediaRecorder: MediaRecorder | null = null;
@@ -33,31 +40,36 @@ export class KonvaRecorder {
 	private lastFrameTime = 0;
 
 	private quality: Quality = '1080p';
+	private ratio: AspectRatio = '16:9';
+	private region: Region | null = null;
 	private codec: RecorderCodec = pickRecorderCodec();
+	private output: OutputSpec = { w: 0, h: 0 };
 
-	constructor(
-		private stage: Konva.Stage,
-		private scalingFactor: number = 1,
-		private watermark?: Watermark
-	) {
+	private engine: RecorderEngine = new ToCanvasEngine();
+
+	constructor(private config: KonvaRecorderConfig) {
 		this.outputCanvas = document.createElement('canvas');
 		this.outputCtx = this.outputCanvas.getContext('2d')!;
 	}
 
-	/**
-	 * Sets the audio stream to be used for recording.
-	 * Must be called before startRecording().
-	 */
+	/** Audio track to mux into the recording. Must be called before startRecording(). */
 	setAudioStream(stream: MediaStream | null) {
 		this.audioStream = stream;
 	}
 
-	/**
-	 * Sets the target quality tier (controls the recording bitrate).
-	 * Must be called before startRecording().
-	 */
+	/** Target quality tier (controls bitrate and, in region mode, resolution). */
 	setQuality(quality: Quality) {
-		this.quality = quality;
+		if (!this.isRecording) this.quality = quality;
+	}
+
+	/** Aspect ratio for region mode. */
+	setRatio(ratio: AspectRatio) {
+		if (!this.isRecording) this.ratio = ratio;
+	}
+
+	/** Selection in viewport CSS pixels, or null for full-frame. Frozen during a take. */
+	setRegion(region: Region | null) {
+		if (!this.isRecording) this.region = region;
 	}
 
 	/**
@@ -66,14 +78,22 @@ export class KonvaRecorder {
 	startRecording() {
 		this.recordedChunks = [];
 		this.recordingStartTime = Date.now();
+		this.codec = pickRecorderCodec();
 
-		// The output canvas is sized once per take; captureStream must read a stable size.
-		this.outputCanvas.width = Math.max(1, Math.round(this.stage.width() * this.scalingFactor));
-		this.outputCanvas.height = Math.max(1, Math.round(this.stage.height() * this.scalingFactor));
+		// Region mode renders at the quality×ratio target; full-frame uses the viewport.
+		this.output = this.region
+			? outputDimensions(this.quality, this.ratio)
+			: {
+					w: Math.max(1, Math.round(this.config.stage.width())),
+					h: Math.max(1, Math.round(this.config.stage.height()))
+				};
+		this.outputCanvas.width = this.output.w;
+		this.outputCanvas.height = this.output.h;
+
+		this.engine.prepare(this.config.stage, this.output, this.region);
 
 		const videoStream = this.outputCanvas.captureStream(FRAME_RATE);
 
-		// Combine video and audio streams if audio is available
 		let combinedStream: MediaStream;
 		if (this.audioStream) {
 			combinedStream = new MediaStream([
@@ -84,7 +104,6 @@ export class KonvaRecorder {
 			combinedStream = videoStream;
 		}
 
-		this.codec = pickRecorderCodec();
 		const recorderOptions: MediaRecorderOptions = {
 			videoBitsPerSecond: BITRATE_BY_QUALITY[this.quality]
 		};
@@ -105,37 +124,24 @@ export class KonvaRecorder {
 		this.rafId = requestAnimationFrame(this.renderFrame);
 	}
 
-	/**
-	 * Renders a single frame: re-rasterizes the live stage at the recording resolution
-	 * into the output canvas. Explicit bounds (origin + full stage size) capture the
-	 * whole viewport at the current pan/zoom, rather than just the content bounds.
-	 */
 	private renderFrame = (now: number) => {
 		if (!this.isRecording) return;
 
-		// Throttle rasterization to the capture frame rate to limit CPU use.
+		// Throttle rendering to the capture frame rate to limit CPU use.
 		if (now - this.lastFrameTime < 1000 / FRAME_RATE - 1) {
 			this.rafId = requestAnimationFrame(this.renderFrame);
 			return;
 		}
 		this.lastFrameTime = now;
 
-		const frame = this.stage.toCanvas({
-			x: 0,
-			y: 0,
-			width: this.stage.width(),
-			height: this.stage.height(),
-			pixelRatio: this.scalingFactor
+		this.engine.renderFrame({
+			stage: this.config.stage,
+			ctx: this.outputCtx,
+			output: this.output,
+			region: this.region,
+			watermark: this.config.watermark,
+			scalingFactor: 1
 		});
-
-		const { outputCtx: ctx, outputCanvas } = this;
-		ctx.fillStyle = '#FFFFFF';
-		ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-		ctx.drawImage(frame, 0, 0);
-
-		if (this.watermark) {
-			this.watermark.draw(ctx, outputCanvas.width, outputCanvas.height, this.scalingFactor);
-		}
 
 		this.rafId = requestAnimationFrame(this.renderFrame);
 	};
@@ -190,5 +196,6 @@ export class KonvaRecorder {
 			cancelAnimationFrame(this.rafId);
 			this.rafId = null;
 		}
+		this.engine.destroy();
 	}
 }

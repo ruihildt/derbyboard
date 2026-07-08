@@ -4,11 +4,15 @@
 	import { ArrowsRepeatOutline, DownloadOutline } from 'flowbite-svelte-icons';
 
 	import { KonvaGame } from '$lib/konva/KonvaGame';
+	import type { Region } from '$lib/konva/recorder/types';
+	import { recordingSettings } from '$lib/stores/recordingSettings';
 
 	import Changelog from '$lib/components/Changelog.svelte';
 	import FullscreenButton from '$lib/components/FullscreenButton.svelte';
 	import Menu from '$lib/components/Menu.svelte';
 	import RecordControl from '$lib/components/RecordControl.svelte';
+	import RecordingSettings from '$lib/components/RecordingSettings.svelte';
+	import RegionOverlay from '$lib/components/RegionOverlay.svelte';
 	import Video from '$lib/components/Video.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
 
@@ -16,6 +20,7 @@
 	let isRecording = $state(false);
 	let recordedBlob: Blob | null = $state(null);
 	let showPreview = $state(false);
+	let region = $state<Region | null>(null);
 
 	function handleRecordingComplete(blob: Blob) {
 		recordedBlob = blob;
@@ -58,6 +63,14 @@
 <main class="h-screen w-screen">
 	<div id="container" class="absolute left-0 top-0 h-screen w-screen"></div>
 
+	{#if $recordingSettings.mode === 'region' && game}
+		<RegionOverlay
+			ratio={$recordingSettings.ratio}
+			active={!isRecording}
+			onChange={(r) => (region = r)}
+		/>
+	{/if}
+
 	<Modal bind:open={showPreview} size="xl" autoclose={false} outsideclose={false}>
 		<div class="flex-grow">
 			{#if recordedBlob}
@@ -94,8 +107,9 @@
 	<ZoomControl {game} />
 </div>
 
-<div class="fixed right-4 top-4">
-	<RecordControl bind:isRecording recordingComplete={handleRecordingComplete} {game} />
+<div class="fixed right-4 top-4 flex items-start gap-2">
+	<RecordingSettings disabled={isRecording} />
+	<RecordControl bind:isRecording recordingComplete={handleRecordingComplete} {game} {region} />
 </div>
 
 <div class="fixed bottom-4 right-4 flex gap-2">

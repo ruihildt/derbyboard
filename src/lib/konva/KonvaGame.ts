@@ -425,8 +425,8 @@ export class KonvaGame {
 		this.updatePersistedState();
 	}
 
-	createRecorder(scalingFactor = 1): KonvaRecorder {
-		return new KonvaRecorder(this.stage, scalingFactor, this.watermark);
+	createRecorder(): KonvaRecorder {
+		return new KonvaRecorder({ stage: this.stage, watermark: this.watermark });
 	}
 
 	exportAsImage(pixelRatio = 2): string {

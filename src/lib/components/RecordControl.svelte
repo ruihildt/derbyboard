@@ -1,18 +1,23 @@
 <script lang="ts">
+	import { get } from 'svelte/store';
 	import { Toolbar, ToolbarButton } from 'flowbite-svelte';
 	import { MicrophoneOutline, MicrophoneSlashOutline, StopSolid } from 'flowbite-svelte-icons';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { KonvaRecorder } from '$lib/konva/KonvaRecorder';
+	import type { Region } from '$lib/konva/recorder/types';
+	import { recordingSettings } from '$lib/stores/recordingSettings';
 
 	let {
 		recordingComplete,
 		isRecording = $bindable(false),
-		game = $bindable()
-	} = $props<{
+		game = $bindable(),
+		region = null
+	}: {
 		recordingComplete: (blob: Blob) => void;
 		isRecording: boolean;
 		game: KonvaGame;
-	}>();
+		region: Region | null;
+	} = $props();
 
 	let recorder = $state<KonvaRecorder | null>(null);
 	let withAudio = $state(false);
@@ -37,6 +42,12 @@
 			if (!recorder) {
 				recorder = activeRecorder;
 			}
+
+			// Apply recording settings (frozen for this take).
+			const settings = get(recordingSettings);
+			activeRecorder.setQuality(settings.quality);
+			activeRecorder.setRatio(settings.ratio);
+			activeRecorder.setRegion(settings.mode === 'region' ? region : null);
 
 			// If audio is enabled, get audio stream and set it in the recorder
 			if (withAudio) {
