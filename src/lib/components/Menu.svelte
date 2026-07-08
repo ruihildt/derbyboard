@@ -2,7 +2,7 @@
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { exportBoardToFile, loadBoardFromFile } from '$lib/utils/boardStateService';
 
-	import { Dropdown, DropdownItem, Button, DropdownDivider, Modal } from 'flowbite-svelte';
+	import { Dropdown, DropdownItem, Button, Modal } from 'flowbite-svelte';
 	import {
 		BarsOutline,
 		ArrowDownToBracketOutline,
@@ -67,7 +67,7 @@
 	<BarsOutline class="h-6 w-6" color="gray" />
 </Button>
 
-<Dropdown bind:isOpen={dropdownOpen} class="w-40">
+<Dropdown bind:isOpen={dropdownOpen} class="w-48">
 	<DropdownItem class="flex items-center text-gray-600 hover:bg-primary-200" onclick={handleOpen}>
 		<FolderOpenOutline class="mr-2 h-4 w-4" />
 		<span>Open</span>
@@ -83,13 +83,10 @@
 		<ImageOutline class="mr-2 h-4 w-4" />
 		<span>Export image...</span>
 	</DropdownItem>
-
-	<DropdownDivider />
 	<DropdownItem class="flex items-center text-gray-700 hover:bg-primary-200" onclick={handleReset}>
 		<RefreshOutline class="mr-2 h-4 w-4" />
 		<span>Reset board</span>
 	</DropdownItem>
-	<DropdownDivider />
 	<DropdownItem
 		class="flex items-center text-gray-700 hover:bg-primary-200"
 		href="https://github.com/ruihildt/derbyboard"

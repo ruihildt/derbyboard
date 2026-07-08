@@ -15,6 +15,7 @@
 	bind:hidden
 	placement="right"
 	modal={false}
+	dismissable={false}
 	class="w-96 shadow-[-10px_0_15px_-3px_rgba(0,0,0,0.1)]"
 >
 	<Timeline>
