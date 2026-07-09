@@ -4,6 +4,7 @@ import { persisted } from 'svelte-persisted-store';
 
 // Position is relative to the center of the track
 export interface TeamPlayerPosition {
+	id?: string;
 	relative: {
 		x: number;
 		y: number;
@@ -13,6 +14,7 @@ export interface TeamPlayerPosition {
 }
 
 export interface SkatingOfficialPosition {
+	id?: string;
 	relative: {
 		x: number;
 		y: number;

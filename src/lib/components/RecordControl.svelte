@@ -1,30 +1,28 @@
 <script lang="ts">
-	import { get } from 'svelte/store';
 	import { Toolbar, ToolbarButton } from 'flowbite-svelte';
 	import { MicrophoneOutline, MicrophoneSlashOutline, StopSolid } from 'flowbite-svelte-icons';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
-	import { KonvaRecorder } from '$lib/konva/KonvaRecorder';
-	import type { Region } from '$lib/konva/recorder/types';
-	import { recordingSettings } from '$lib/stores/recordingSettings';
+	import { TimelineRecorder } from '$lib/recording/timeline/TimelineRecorder';
+	import { AudioCapture } from '$lib/recording/timeline/AudioCapture';
+	import { saveProjectFile } from '$lib/recording/timeline/projectFile';
 
 	let {
-		recordingComplete,
 		isRecording = $bindable(false),
 		game = $bindable(),
-		region = null
+		disabled = false
 	}: {
-		recordingComplete: (blob: Blob) => void;
 		isRecording: boolean;
 		game: KonvaGame;
-		region: Region | null;
+		disabled?: boolean;
 	} = $props();
 
-	let recorder = $state<KonvaRecorder | null>(null);
+	let recorder = $state<TimelineRecorder | null>(null);
+	let audioCapture = $state<AudioCapture | null>(null);
+	let audioActive = false;
 	let withAudio = $state(false);
 	let countdown = $state<number | null>(null);
 	let elapsedTime = $state(0);
-	let timeInterval = $state<number | null>(null);
-	let audioStream = $state<MediaStream | null>(null);
+	let timeInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
 	async function startRecording() {
 		countdown = 3;
@@ -36,68 +34,47 @@
 		clearInterval(countdownInterval);
 		countdown = null;
 
-		if (game) {
-			// Initialize the recorder if not already done
-			const activeRecorder = recorder ?? game.createRecorder();
-			if (!recorder) {
-				recorder = activeRecorder;
-			}
+		if (!game) return;
 
-			// Apply recording settings (frozen for this take).
-			const settings = get(recordingSettings);
-			activeRecorder.setEngine(settings.engine);
-			activeRecorder.setQuality(settings.quality);
-			activeRecorder.setRatio(settings.ratio);
-			activeRecorder.setRegion(settings.mode === 'region' ? region : null);
-
-			// If audio is enabled, get audio stream and set it in the recorder
-			if (withAudio) {
-				try {
-					audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-					activeRecorder.setAudioStream(audioStream);
-				} catch (err) {
-					console.error('Error accessing the microphone', err);
-					// Continue without audio if there's an error
-					activeRecorder.setAudioStream(null);
-				}
-			} else {
-				activeRecorder.setAudioStream(null);
-			}
-
-			// Start recording
-			activeRecorder.startRecording();
-			isRecording = true;
-
-			// Track elapsed time
-			const startTime = Date.now();
-			timeInterval = setInterval(() => {
-				elapsedTime = Date.now() - startTime;
-			}, 1000);
+		// Capture mic audio first (shared clock origin with the timeline).
+		audioActive = false;
+		if (withAudio) {
+			audioCapture = new AudioCapture();
+			audioActive = await audioCapture.start();
 		}
+
+		// Start the data-driven timeline capture.
+		recorder = new TimelineRecorder(game);
+		recorder.start();
+		isRecording = true;
+
+		// Track elapsed time.
+		const startTime = Date.now();
+		timeInterval = setInterval(() => {
+			elapsedTime = Date.now() - startTime;
+		}, 1000);
 	}
 
 	async function stopRecording() {
-		if (recorder && isRecording) {
-			if (timeInterval) {
-				clearInterval(timeInterval);
-				timeInterval = null;
-			}
+		if (!recorder || !isRecording) return;
 
-			try {
-				// Stop recording and get the blob
-				const blob = await recorder.stopRecording();
-				recordingComplete(blob);
-			} catch (e) {
-				console.error('[RecordControl] stopRecording failed', e);
-			} finally {
-				// Stop audio stream if it exists
-				if (audioStream) {
-					audioStream.getTracks().forEach((track) => track.stop());
-					audioStream = null;
-				}
-				isRecording = false;
-				elapsedTime = 0;
-			}
+		if (timeInterval) {
+			clearInterval(timeInterval);
+			timeInterval = null;
+		}
+
+		try {
+			const { project } = recorder.stop();
+			const audioBlob = audioActive && audioCapture ? await audioCapture.stop() : null;
+			await saveProjectFile(project, audioBlob);
+		} catch (e) {
+			console.error('[RecordControl] stop failed', e);
+		} finally {
+			recorder = null;
+			audioCapture = null;
+			audioActive = false;
+			isRecording = false;
+			elapsedTime = 0;
 		}
 	}
 
@@ -112,11 +89,11 @@
 
 <Toolbar class="inline-flex rounded-lg !p-1 shadow-lg shadow-black/5">
 	<ToolbarButton
-		class={isRecording || countdown !== null
+		class={isRecording || countdown !== null || disabled
 			? 'cursor-not-allowed opacity-50'
 			: 'hover:bg-primary-200'}
 		onclick={() => (withAudio = !withAudio)}
-		disabled={isRecording || countdown !== null}
+		disabled={isRecording || countdown !== null || disabled}
 	>
 		{#if withAudio}
 			<MicrophoneOutline class="text-sm text-gray-700" />
@@ -126,11 +103,11 @@
 	</ToolbarButton>
 
 	<ToolbarButton
-		class="flex items-center gap-2 px-3 text-sm text-gray-700 {countdown !== null
+		class="flex items-center gap-2 px-3 text-sm text-gray-700 {countdown !== null || disabled
 			? 'cursor-not-allowed'
 			: 'hover:bg-primary-200'}"
 		onclick={toggleRecording}
-		disabled={countdown !== null}
+		disabled={countdown !== null || disabled}
 	>
 		{#if isRecording}
 			<StopSolid class="text-red-600" />

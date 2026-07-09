@@ -15,6 +15,7 @@ export enum TeamPlayerTeam {
 }
 
 export type TeamPlayerPosition = {
+	id?: string;
 	absolute: { x: number; y: number };
 	role: TeamPlayerRole;
 	team: TeamPlayerTeam;
@@ -25,6 +26,7 @@ export type TeamPlayerPosition = {
  * Handles team-specific visual elements and status updates
  */
 export class KonvaTeamPlayer extends KonvaPlayer {
+	public readonly id: string;
 	public starShape?: Konva.Star;
 	public pivotStripeGroup?: Konva.Group;
 	team: TeamPlayerTeam;
@@ -50,10 +52,12 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 		layer: Konva.Layer,
 		team: TeamPlayerTeam,
 		role: TeamPlayerRole,
-		trackGeometry: KonvaTrackGeometry
+		trackGeometry: KonvaTrackGeometry,
+		id?: string
 	) {
 		super(x, y, layer);
 
+		this.id = id ?? crypto.randomUUID();
 		this.team = team;
 		this.role = role;
 		this.zone = 0;

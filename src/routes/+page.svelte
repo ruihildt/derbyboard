@@ -1,59 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Modal, Toolbar, ToolbarButton } from 'flowbite-svelte';
-	import { ArrowsRepeatOutline, DownloadOutline } from 'flowbite-svelte-icons';
 
 	import { KonvaGame } from '$lib/konva/KonvaGame';
-	import type { Region } from '$lib/konva/recorder/types';
-	import { recordingSettings } from '$lib/stores/recordingSettings';
 
 	import Changelog from '$lib/components/Changelog.svelte';
 	import FullscreenButton from '$lib/components/FullscreenButton.svelte';
 	import Menu from '$lib/components/Menu.svelte';
 	import RecordControl from '$lib/components/RecordControl.svelte';
-	import RecordingSettings from '$lib/components/RecordingSettings.svelte';
-	import RegionOverlay from '$lib/components/RegionOverlay.svelte';
-	import Video from '$lib/components/Video.svelte';
+	import ReplayBar from '$lib/components/ReplayBar.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
 
 	let game = $state<KonvaGame>()!;
 	let isRecording = $state(false);
-	let recordedBlob: Blob | null = $state(null);
-	let showPreview = $state(false);
-	let region = $state<Region | null>(null);
-
-	function handleRecordingComplete(blob: Blob) {
-		recordedBlob = blob;
-		showPreview = true;
-	}
-
-	function handlePreviewClose() {
-		showPreview = false;
-		recordedBlob = null;
-	}
-
-	function handleDownload() {
-		if (!recordedBlob) return;
-
-		const url = URL.createObjectURL(recordedBlob);
-		const a = document.createElement('a');
-		a.href = url;
-
-		const now = new Date();
-		const year = now.getFullYear().toString().slice(-2);
-		const month = String(now.getMonth() + 1).padStart(2, '0');
-		const day = String(now.getDate()).padStart(2, '0');
-		const ext = recordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
-
-		a.download = `derbyboard-${year}-${month}-${day}.${ext}`;
-
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
-		URL.revokeObjectURL(url);
-
-		handlePreviewClose();
-	}
+	let isReplaying = $state(false);
 
 	onMount(() => {
 		game = new KonvaGame('container', window.innerWidth, window.innerHeight);
@@ -62,41 +21,6 @@
 
 <main class="h-screen w-screen">
 	<div id="container" class="absolute left-0 top-0 h-screen w-screen"></div>
-
-	{#if $recordingSettings.mode === 'region' && game}
-		<RegionOverlay
-			ratio={$recordingSettings.ratio}
-			active={!isRecording}
-			onChange={(r) => (region = r)}
-		/>
-	{/if}
-
-	<Modal bind:open={showPreview} size="xl" autoclose={false} outsideclose={false}>
-		<div class="flex-grow">
-			{#if recordedBlob}
-				<Video bind:videoBlob={recordedBlob} />
-			{/if}
-		</div>
-
-		<div class="mt-auto flex justify-center">
-			<Toolbar class="inline-flex rounded-lg !p-1">
-				<ToolbarButton
-					class="flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200"
-					onclick={handlePreviewClose}
-				>
-					<ArrowsRepeatOutline />
-					Restart
-				</ToolbarButton>
-				<ToolbarButton
-					class="flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200"
-					onclick={handleDownload}
-				>
-					<DownloadOutline />
-					Download
-				</ToolbarButton>
-			</Toolbar>
-		</div>
-	</Modal>
 </main>
 
 <div class="fixed left-4 top-4">
@@ -108,8 +32,13 @@
 </div>
 
 <div class="fixed right-4 top-4 flex items-start gap-2">
-	<RecordingSettings disabled={isRecording} />
-	<RecordControl bind:isRecording recordingComplete={handleRecordingComplete} {game} {region} />
+	<RecordControl bind:isRecording {game} disabled={isReplaying} />
+	<ReplayBar
+		{game}
+		disabled={isRecording}
+		onEnter={() => (isReplaying = true)}
+		onExit={() => (isReplaying = false)}
+	/>
 </div>
 
 <div class="fixed bottom-4 right-4 flex gap-2">

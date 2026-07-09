@@ -19,6 +19,7 @@ import { KonvaPlayerManager } from './KonvaPlayerManager';
 import { KonvaPackManager } from './KonvaPackManager';
 import { KonvaRecorder } from './KonvaRecorder';
 import { Watermark } from './Watermark';
+import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
 
 export class KonvaGame {
 	private width: number;
@@ -35,6 +36,9 @@ export class KonvaGame {
 	private packManager!: KonvaPackManager;
 
 	private watermark: Watermark;
+
+	/** When true, replay drives the board: editing is locked and pack logic is not double-run. */
+	private replayMode = false;
 
 	constructor(containerId: string, width: number, height: number) {
 		// Initialize basic properties first
@@ -99,7 +103,9 @@ export class KonvaGame {
 		// always dispatches to the current playerManager/packManager instances.
 		this.playersLayer.on('dragmove dragend touchmove touchend', (e) => {
 			this.playerManager.handleDragMove(e);
-			this.packManager.determinePack();
+			if (!this.replayMode) {
+				this.packManager.determinePack();
+			}
 		});
 
 		this.playersLayer.on('collision', (e) => {
@@ -299,6 +305,9 @@ export class KonvaGame {
 	}
 
 	private updatePersistedState() {
+		// Replay drives the board programmatically; don't persist those frames.
+		if (this.replayMode) return;
+
 		const centerX = this.width / 2;
 		const centerY = this.height / 2;
 
@@ -309,6 +318,7 @@ export class KonvaGame {
 		const teamPlayers = this.playerManager.getTeamPlayers().map((player) => {
 			const pos = player.getPosition();
 			return {
+				id: player.id,
 				relative: {
 					x: pos.x - centerX,
 					y: pos.y - centerY
@@ -321,6 +331,7 @@ export class KonvaGame {
 		const skatingOfficials = this.playerManager.getSkatingOfficials().map((official) => {
 			const pos = official.getPosition();
 			return {
+				id: official.id,
 				relative: {
 					x: pos.x - centerX,
 					y: pos.y - centerY
@@ -427,6 +438,111 @@ export class KonvaGame {
 
 	createRecorder(): KonvaRecorder {
 		return new KonvaRecorder({ stage: this.stage, watermark: this.watermark });
+	}
+
+	/** Exposes the stage for capture/replay modules that need to attach listeners. */
+	getStage(): Konva.Stage {
+		return this.stage;
+	}
+
+	/** Exposes the players layer for capture listeners. */
+	getPlayersLayer(): Konva.Layer {
+		return this.playersLayer;
+	}
+
+	isReplaying(): boolean {
+		return this.replayMode;
+	}
+
+	/**
+	 * Enters/exits replay mode. Entering locks the board (no dragging/panning);
+	 * exiting restores editing and reloads the user's saved board state.
+	 */
+	setReplayMode(enabled: boolean): void {
+		this.replayMode = enabled;
+		this.stage.draggable(!enabled);
+		this.playerManager.setPlayersDraggable(!enabled);
+		if (!enabled) {
+			// Restore the user's board after replay.
+			this.loadState();
+		}
+	}
+
+	/**
+	 * Captures the current board (player/official relative positions + view) as a
+	 * snapshot. The caller stamps `t`. Used by TimelineRecorder for capture.
+	 */
+	getSnapshot(): Snapshot {
+		const centerX = this.width / 2;
+		const centerY = this.height / 2;
+
+		const teamPlayers = this.playerManager.getTeamPlayers().map((player) => {
+			const pos = player.getPosition();
+			return {
+				id: player.id,
+				relative: {
+					x: pos.x - centerX,
+					y: pos.y - centerY
+				},
+				role: player.role,
+				team: player.team
+			};
+		});
+
+		const skatingOfficials = this.playerManager.getSkatingOfficials().map((official) => {
+			const pos = official.getPosition();
+			return {
+				id: official.id,
+				relative: {
+					x: pos.x - centerX,
+					y: pos.y - centerY
+				},
+				role: official.role
+			};
+		});
+
+		return {
+			teamPlayers,
+			skatingOfficials,
+			view: {
+				zoom: this.stage.scaleX(),
+				relativeX: this.stage.x() / centerX,
+				relativeY: this.stage.y() / centerY
+			}
+		};
+	}
+
+	/**
+	 * Reconciles the board to a sample (roster by id, positions, view) and redraws
+	 * the pack/engagement zone. Used by TimelinePlayer for replay.
+	 */
+	applySnapshot(sample: TimelineSample): void {
+		const wasReplaying = this.replayMode;
+		this.replayMode = true;
+		try {
+			const centerX = this.width / 2;
+			const centerY = this.height / 2;
+
+			this.playerManager.reconcileTeamPlayers(sample.teamPlayers, centerX, centerY);
+			this.playerManager.reconcileSkatingOfficials(sample.skatingOfficials, centerX, centerY);
+			this.playerManager.setPlayersDraggable(false);
+
+			this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds(this.trackGeometry));
+
+			this.stage.scale({ x: sample.view.zoom, y: sample.view.zoom });
+			this.stage.position({
+				x: sample.view.relativeX * centerX,
+				y: sample.view.relativeY * centerY
+			});
+
+			this.packManager.determinePack();
+			this.trackSurfaceLayer.batchDraw();
+			this.trackLinesLayer.batchDraw();
+			this.engagementZoneLayer.batchDraw();
+			this.playersLayer.batchDraw();
+		} finally {
+			this.replayMode = wasReplaying;
+		}
 	}
 
 	exportAsImage(pixelRatio = 2): string {

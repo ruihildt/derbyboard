@@ -13,6 +13,7 @@ export enum SkatingOfficialRole {
 }
 
 export class KonvaSkatingOfficial extends KonvaPlayer {
+	public readonly id: string;
 	role: SkatingOfficialRole;
 
 	/**
@@ -23,8 +24,9 @@ export class KonvaSkatingOfficial extends KonvaPlayer {
 		return this.baseCircle;
 	}
 
-	constructor(x: number, y: number, layer: Konva.Layer, role: SkatingOfficialRole) {
+	constructor(x: number, y: number, layer: Konva.Layer, role: SkatingOfficialRole, id?: string) {
 		super(x, y, layer);
+		this.id = id ?? crypto.randomUUID();
 		this.role = role;
 
 		const circle = this.circle;
