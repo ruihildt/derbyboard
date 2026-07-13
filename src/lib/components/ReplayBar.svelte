@@ -11,12 +11,14 @@
 		onEnter,
 		onExit,
 		onLoadFrame,
+		onLoadError,
 		disabled = false
 	}: {
 		game: KonvaGame;
 		onEnter?: () => void;
 		onExit?: () => void;
 		onLoadFrame?: (frame: TimelineFrame | null) => void;
+		onLoadError?: (msg: string) => void;
 		disabled?: boolean;
 	} = $props();
 
@@ -25,7 +27,6 @@
 	let currentTime = $state(0);
 	let duration = $state(0);
 	let speed = $state(1);
-	let loadError = $state('');
 
 	function handleOpenFile() {
 		if (disabled) return;
@@ -42,10 +43,16 @@
 				enterReplay(project, audioBlob);
 			} catch (err) {
 				console.error('[ReplayBar] load failed', err);
-				loadError =
-					err instanceof Error ? err.message : 'Invalid project file. Please select a .zip.';
+				onLoadError?.(
+					err instanceof Error ? err.message : 'Invalid project file. Please select a .zip.'
+				);
 			}
 		};
+	}
+
+	// Imperative entry point used by the recording bar's "Load replay" button.
+	export function load() {
+		handleOpenFile();
 	}
 
 	function enterReplay(project: TimelineProject, audioBlob: Blob | null) {
@@ -74,6 +81,7 @@
 		player.seek(0);
 
 		onLoadFrame?.(project.frame ?? null);
+		onLoadError?.('');
 	}
 
 	function closeReplay(restore = true) {
@@ -173,21 +181,5 @@
 				class="hidden whitespace-nowrap md:block">Exit replay</Tooltip
 			>
 		</div>
-	</div>
-{:else}
-	<div class="flex flex-col items-end gap-1">
-		<button
-			class="flex items-center gap-2 bg-white !p-2 text-sm text-gray-700 shadow-lg shadow-black/5 hover:bg-primary-200 {disabled
-				? 'pointer-events-none opacity-50'
-				: ''}"
-			onclick={handleOpenFile}
-			{disabled}
-			aria-label="Load replay"
-		>
-			<PlayOutline class="h-5 w-5" />
-		</button>
-		{#if loadError}
-			<p class="max-w-[12rem] text-right text-[10px] leading-tight text-red-500">{loadError}</p>
-		{/if}
 	</div>
 {/if}
