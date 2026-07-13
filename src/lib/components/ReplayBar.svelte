@@ -1,8 +1,13 @@
 <script lang="ts">
-	import { ToolbarButton, Tooltip } from 'flowbite-svelte';
-	import { PlayOutline, PauseOutline, CloseCircleOutline } from 'flowbite-svelte-icons';
+	import { ToolbarButton, Tooltip, Modal, Button } from 'flowbite-svelte';
+	import {
+		PlayOutline,
+		PauseOutline,
+		CloseCircleOutline,
+		ArrowDownToBracketOutline
+	} from 'flowbite-svelte-icons';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
-	import { loadProjectFile } from '$lib/recording/timeline/projectFile';
+	import { loadProjectFile, saveProjectFile } from '$lib/recording/timeline/projectFile';
 	import { TimelinePlayer } from '$lib/recording/timeline/TimelinePlayer';
 	import type { TimelineFrame, TimelineProject } from '$lib/recording/timeline/types';
 
@@ -27,6 +32,13 @@
 	let currentTime = $state(0);
 	let duration = $state(0);
 	let speed = $state(1);
+
+	// Preview-before-save state. `recorded` is true only for a just-recorded preview.
+	let recorded = $state(false);
+	let saved = $state(false);
+	let proj = $state<TimelineProject | null>(null);
+	let audio = $state<Blob | null>(null);
+	let showDiscard = $state(false);
 
 	function handleOpenFile() {
 		if (disabled) return;
@@ -55,11 +67,21 @@
 		handleOpenFile();
 	}
 
-	function enterReplay(project: TimelineProject, audioBlob: Blob | null) {
+	// Imperative entry point used after a recording stops (preview before save).
+	export function replay(project: TimelineProject, audioBlob: Blob | null) {
+		enterReplay(project, audioBlob, true);
+	}
+
+	function enterReplay(project: TimelineProject, audioBlob: Blob | null, isRecorded = false) {
 		closeReplay(false);
 
 		game.setReplayMode(true);
 		onEnter?.();
+
+		proj = project;
+		audio = audioBlob;
+		recorded = isRecorded;
+		saved = false;
 
 		player = new TimelinePlayer({
 			game,
@@ -97,6 +119,35 @@
 		playing = false;
 		currentTime = 0;
 		duration = 0;
+		recorded = false;
+		saved = false;
+		proj = null;
+		audio = null;
+		showDiscard = false;
+	}
+
+	async function handleSave() {
+		if (!proj) return;
+		try {
+			await saveProjectFile(proj, audio);
+			saved = true;
+		} catch (e) {
+			console.error('[ReplayBar] save failed', e);
+			onLoadError?.('Failed to save recording.');
+		}
+	}
+
+	function requestExit() {
+		if (recorded && !saved) {
+			showDiscard = true;
+		} else {
+			closeReplay(true);
+		}
+	}
+
+	function confirmDiscard() {
+		showDiscard = false;
+		closeReplay(true);
 	}
 
 	function togglePlay() {
@@ -166,10 +217,24 @@
 			{speed}×
 		</ToolbarButton>
 
+		{#if recorded}
+			<ToolbarButton
+				class="flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-700 hover:bg-primary-200 {saved
+					? 'opacity-60'
+					: ''}"
+				onclick={handleSave}
+				disabled={saved}
+				aria-label={saved ? 'Saved' : 'Save recording'}
+			>
+				<ArrowDownToBracketOutline class="h-4 w-4" />
+				{saved ? 'Saved' : 'Save'}
+			</ToolbarButton>
+		{/if}
+
 		<div class="relative">
 			<ToolbarButton
 				class="flex items-center text-gray-700 hover:bg-red-100"
-				onclick={() => closeReplay(true)}
+				onclick={requestExit}
 				aria-label="Exit replay"
 			>
 				<CloseCircleOutline class="h-5 w-5" />
@@ -183,3 +248,19 @@
 		</div>
 	</div>
 {/if}
+
+<Modal bind:open={showDiscard} size="xs">
+	<div class="text-center">
+		<h3 class="mb-4 text-lg font-normal text-gray-500">Discard recording?</h3>
+		<div class="flex justify-center space-x-3">
+			<Button
+				class="bg-red-100 !p-2 text-sm text-gray-700 hover:bg-red-200"
+				onclick={confirmDiscard}>Discard</Button
+			>
+			<Button
+				class="bg-primary-200 !p-2 text-sm text-gray-700 hover:bg-primary-300"
+				onclick={() => (showDiscard = false)}>Cancel</Button
+			>
+		</div>
+	</div>
+</Modal>

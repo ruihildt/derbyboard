@@ -11,13 +11,18 @@
 	import ReplayBar from '$lib/components/ReplayBar.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
 	import { recordingSettings } from '$lib/stores/recordingSettings';
-	import type { TimelineFrame } from '$lib/recording/timeline/types';
+	import type { TimelineFrame, TimelineProject } from '$lib/recording/timeline/types';
 
 	let game = $state<KonvaGame>()!;
 	let isRecording = $state(false);
 	let isReplaying = $state(false);
 
-	let replayBar: { load: () => void } | undefined = $state();
+	let replayBar:
+		| {
+				load: () => void;
+				replay: (project: TimelineProject, audioBlob: Blob | null) => void;
+		  }
+		| undefined = $state();
 	let loadError = $state('');
 
 	let replayFrame = $state<TimelineFrame | null>(null);
@@ -80,6 +85,7 @@
 				loadError = '';
 				replayBar?.load();
 			}}
+			onRecorded={(project, audioBlob) => replayBar?.replay(project, audioBlob)}
 		/>
 	</div>
 {/if}

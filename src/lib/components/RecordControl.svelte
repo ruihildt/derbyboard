@@ -11,20 +11,22 @@
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { TimelineRecorder } from '$lib/recording/timeline/TimelineRecorder';
 	import { AudioCapture } from '$lib/recording/timeline/AudioCapture';
-	import { saveProjectFile } from '$lib/recording/timeline/projectFile';
 	import { recordingSettings } from '$lib/stores/recordingSettings';
 	import type { AspectRatio } from '$lib/utils/recording';
+	import type { TimelineProject } from '$lib/recording/timeline/types';
 
 	let {
 		isRecording = $bindable(false),
 		game = $bindable(),
 		disabled = false,
-		onLoadReplay
+		onLoadReplay,
+		onRecorded
 	}: {
 		isRecording: boolean;
 		game: KonvaGame;
 		disabled?: boolean;
 		onLoadReplay?: () => void;
+		onRecorded?: (project: TimelineProject, audioBlob: Blob | null) => void;
 	} = $props();
 
 	let recorder = $state<TimelineRecorder | null>(null);
@@ -116,7 +118,7 @@
 			if (s.mode === 'region') {
 				project.frame = { ratio: s.ratio, region: s.region ?? game.defaultRegion(s.ratio) };
 			}
-			await saveProjectFile(project, audioBlob);
+			onRecorded?.(project, audioBlob);
 		} catch (e) {
 			console.error('[RecordControl] stop failed', e);
 		} finally {
