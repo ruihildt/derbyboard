@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { Toolbar, ToolbarButton } from 'flowbite-svelte';
 	import { MicrophoneOutline, MicrophoneSlashOutline, StopSolid } from 'flowbite-svelte-icons';
+	import { get } from 'svelte/store';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { TimelineRecorder } from '$lib/recording/timeline/TimelineRecorder';
 	import { AudioCapture } from '$lib/recording/timeline/AudioCapture';
 	import { saveProjectFile } from '$lib/recording/timeline/projectFile';
+	import { recordingSettings } from '$lib/stores/recordingSettings';
 
 	let {
 		isRecording = $bindable(false),
@@ -66,6 +68,10 @@
 		try {
 			const { project } = recorder.stop();
 			const audioBlob = audioActive && audioCapture ? await audioCapture.stop() : null;
+			const s = get(recordingSettings);
+			if (s.mode === 'region') {
+				project.frame = { ratio: s.ratio, region: s.region ?? game.defaultRegion(s.ratio) };
+			}
 			await saveProjectFile(project, audioBlob);
 		} catch (e) {
 			console.error('[RecordControl] stop failed', e);

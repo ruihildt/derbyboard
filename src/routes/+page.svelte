@@ -4,15 +4,42 @@
 	import { KonvaGame } from '$lib/konva/KonvaGame';
 
 	import Changelog from '$lib/components/Changelog.svelte';
+	import FrameOverlay from '$lib/components/FrameOverlay.svelte';
 	import FullscreenButton from '$lib/components/FullscreenButton.svelte';
 	import Menu from '$lib/components/Menu.svelte';
 	import RecordControl from '$lib/components/RecordControl.svelte';
+	import RecordingSettings from '$lib/components/RecordingSettings.svelte';
 	import ReplayBar from '$lib/components/ReplayBar.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
+	import { recordingSettings } from '$lib/stores/recordingSettings';
+	import type { TimelineFrame } from '$lib/recording/timeline/types';
 
 	let game = $state<KonvaGame>()!;
 	let isRecording = $state(false);
 	let isReplaying = $state(false);
+
+	let replayFrame = $state<TimelineFrame | null>(null);
+
+	// Effective frame to render: replay uses the project's stored frame; otherwise
+	// the persisted region (when Region mode is on). Until the default-init effect
+	// below populates `region`, no frame is shown.
+	let frame = $derived<TimelineFrame | null>(
+		replayFrame
+			? replayFrame
+			: $recordingSettings.mode === 'region' && $recordingSettings.region
+				? { ratio: $recordingSettings.ratio, region: $recordingSettings.region }
+				: null
+	);
+	let interactive = $derived(!isRecording && !replayFrame);
+
+	// Initialize the persisted region to a sensible default (whole track + margin)
+	// the first time Region mode is enabled.
+	$effect(() => {
+		if ($recordingSettings.mode !== 'region') return;
+		if ($recordingSettings.region) return;
+		if (!game) return;
+		recordingSettings.update((s) => ({ ...s, region: game.defaultRegion(s.ratio) }));
+	});
 
 	onMount(() => {
 		game = new KonvaGame('container', window.innerWidth, window.innerHeight);
@@ -21,6 +48,14 @@
 
 <main class="h-screen w-screen">
 	<div id="container" class="absolute left-0 top-0 h-screen w-screen"></div>
+	{#if frame}
+		<FrameOverlay
+			ratio={frame.ratio}
+			region={frame.region}
+			{interactive}
+			onchange={(r) => recordingSettings.update((s) => ({ ...s, region: r }))}
+		/>
+	{/if}
 </main>
 
 <div class="fixed left-4 top-4">
@@ -38,7 +73,9 @@
 		disabled={isRecording}
 		onEnter={() => (isReplaying = true)}
 		onExit={() => (isReplaying = false)}
+		onLoadFrame={(f) => (replayFrame = f)}
 	/>
+	<RecordingSettings disabled={isRecording || isReplaying} />
 </div>
 
 <div class="fixed bottom-4 right-4 flex gap-2">

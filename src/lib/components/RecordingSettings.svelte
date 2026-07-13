@@ -1,27 +1,19 @@
 <script lang="ts">
 	import { AdjustmentsVerticalOutline } from 'flowbite-svelte-icons';
 	import { recordingSettings } from '$lib/stores/recordingSettings';
-	import type { AspectRatio, EngineKind, RecordingMode } from '$lib/utils/recording';
-	import type { Quality } from '$lib/utils/codec';
+	import type { AspectRatio, RecordingMode } from '$lib/utils/recording';
 
 	let { disabled = false } = $props<{ disabled?: boolean }>();
 
 	let open = $state(false);
 
 	const ratios: AspectRatio[] = ['16:9', '1:1', '4:3'];
-	const qualities: Quality[] = ['720p', '1080p', '1440p', '2160p'];
 
 	function setMode(mode: RecordingMode) {
 		recordingSettings.update((s) => ({ ...s, mode }));
 	}
 	function setRatio(ratio: AspectRatio) {
 		recordingSettings.update((s) => ({ ...s, ratio }));
-	}
-	function setQuality(quality: Quality) {
-		recordingSettings.update((s) => ({ ...s, quality }));
-	}
-	function setEngine(engine: EngineKind) {
-		recordingSettings.update((s) => ({ ...s, engine }));
 	}
 
 	function pill(active: boolean) {
@@ -66,34 +58,6 @@
 						</button>
 					{/each}
 				</div>
-			</div>
-
-			<div>
-				<div class="mb-1 text-xs font-semibold text-gray-500">Quality</div>
-				<div class="grid grid-cols-2 gap-1">
-					{#each qualities as q (q)}
-						<button class={pill($recordingSettings.quality === q)} onclick={() => setQuality(q)}>
-							{q}
-						</button>
-					{/each}
-				</div>
-			</div>
-
-			<div class="mt-3 border-t border-gray-100 pt-3">
-				<div class="mb-1 text-xs font-semibold text-gray-500">Engine</div>
-				<div class="flex gap-1">
-					<button
-						class={pill($recordingSettings.engine === 'composite')}
-						onclick={() => setEngine('composite')}>Standard</button
-					>
-					<button
-						class={pill($recordingSettings.engine === 'clone')}
-						onclick={() => setEngine('clone')}>High-res</button
-					>
-				</div>
-				<p class="mt-1 text-[10px] leading-tight text-gray-400">
-					High-res re-renders at output resolution (experimental; heavier).
-				</p>
 			</div>
 		</div>
 	{/if}

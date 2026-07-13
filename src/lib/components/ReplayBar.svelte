@@ -4,17 +4,19 @@
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { loadProjectFile } from '$lib/recording/timeline/projectFile';
 	import { TimelinePlayer } from '$lib/recording/timeline/TimelinePlayer';
-	import type { TimelineProject } from '$lib/recording/timeline/types';
+	import type { TimelineFrame, TimelineProject } from '$lib/recording/timeline/types';
 
 	let {
 		game,
 		onEnter,
 		onExit,
+		onLoadFrame,
 		disabled = false
 	}: {
 		game: KonvaGame;
 		onEnter?: () => void;
 		onExit?: () => void;
+		onLoadFrame?: (frame: TimelineFrame | null) => void;
 		disabled?: boolean;
 	} = $props();
 
@@ -70,6 +72,8 @@
 		playing = false;
 		currentTime = 0;
 		player.seek(0);
+
+		onLoadFrame?.(project.frame ?? null);
 	}
 
 	function closeReplay(restore = true) {
@@ -80,6 +84,7 @@
 		if (restore) {
 			game.setReplayMode(false);
 			onExit?.();
+			onLoadFrame?.(null);
 		}
 		playing = false;
 		currentTime = 0;

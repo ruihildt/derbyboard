@@ -19,7 +19,10 @@ import { KonvaPlayerManager } from './KonvaPlayerManager';
 import { KonvaPackManager } from './KonvaPackManager';
 import { KonvaRecorder } from './KonvaRecorder';
 import { Watermark } from './Watermark';
-import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
+import { ASPECT_RATIO, type AspectRatio } from '$lib/utils/recording';
+import type { Snapshot, TimelineSample, TimelineRegion } from '$lib/recording/timeline/types';
+
+const FRAME_DEFAULT_MARGIN = 0.1;
 
 export class KonvaGame {
 	private width: number;
@@ -273,6 +276,59 @@ export class KonvaGame {
 		this.stage.scale({ x: BASE_ZOOM, y: BASE_ZOOM });
 		this.stage.position({ x: 0, y: 0 });
 		this.stage.batchDraw();
+	}
+
+	/** Track bounding box in unscaled board (stage-local) coordinates. */
+	getTrackBounds(): { minX: number; minY: number; maxX: number; maxY: number } {
+		const cx = this.width / 2;
+		const cy = this.height / 2;
+		const outerTurnRadius = OUTER_VERTICAL_OFFSET_2 + VERTICAL_OFFSET_2;
+		return {
+			minX: cx - CENTER_POINT_OFFSET - outerTurnRadius,
+			maxX: cx + CENTER_POINT_OFFSET + outerTurnRadius,
+			minY: cy - OUTER_VERTICAL_OFFSET_1,
+			maxY: cy + OUTER_VERTICAL_OFFSET_1
+		};
+	}
+
+	/** Live stage transform for mapping board coordinates to viewport pixels. */
+	getView(): { zoom: number; x: number; y: number } {
+		return { zoom: this.stage.scaleX(), x: this.stage.x(), y: this.stage.y() };
+	}
+
+	/** Default region (whole track + margin) as viewport-relative fractions. */
+	defaultRegion(ratio: AspectRatio): TimelineRegion {
+		const b = this.getTrackBounds();
+		const { zoom, x: sx, y: sy } = this.getView();
+		const ar = ASPECT_RATIO[ratio];
+
+		const bw = (b.maxX - b.minX) * FRAME_DEFAULT_MARGIN;
+		const bh = (b.maxY - b.minY) * FRAME_DEFAULT_MARGIN;
+		const cx = (b.minX + b.maxX) / 2;
+		const cy = (b.minY + b.maxY) / 2;
+		const ebw = b.maxX - b.minX + 2 * bw;
+		const ebh = b.maxY - b.minY + 2 * bh;
+
+		let rw: number;
+		let rh: number;
+		if (ebw / ebh > ar) {
+			rw = ebw;
+			rh = ebw / ar;
+		} else {
+			rh = ebh;
+			rw = ebh * ar;
+		}
+
+		const left = sx + (cx - rw / 2) * zoom;
+		const top = sy + (cy - rh / 2) * zoom;
+		const w = rw * zoom;
+		const h = rh * zoom;
+
+		return {
+			widthFrac: w / this.width,
+			centerXFrac: (left + w / 2) / this.width,
+			centerYFrac: (top + h / 2) / this.height
+		};
 	}
 
 	// Update zoom while maintaining the center point

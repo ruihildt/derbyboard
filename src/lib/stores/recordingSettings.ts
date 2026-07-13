@@ -1,12 +1,14 @@
 import { persisted } from 'svelte-persisted-store';
 import type { Quality } from '$lib/utils/codec';
 import type { AspectRatio, EngineKind, RecordingMode } from '$lib/utils/recording';
+import type { TimelineRegion } from '$lib/recording/timeline/types';
 
 export interface RecordingSettings {
 	mode: RecordingMode;
 	ratio: AspectRatio;
 	quality: Quality;
 	engine: EngineKind;
+	region?: TimelineRegion;
 }
 
 /** Coarse-pointer or small screens default to a lighter quality tier. */
