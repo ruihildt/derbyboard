@@ -1,4 +1,5 @@
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import { SceneCanvas } from 'konva/lib/Canvas.js';
 import type { KonvaGame } from '$lib/konva/KonvaGame';
 import { ASPECT_RATIO } from '$lib/utils/recording';
 import { interpolateSample } from '../timeline/interpolate';
@@ -225,14 +226,34 @@ export class TimelineVideoExporter {
 		// Render + encode video frames deterministically.
 		const totalFrames = Math.max(1, Math.ceil((project.durationMs / 1000) * fps));
 
-		// Reusable macroblock-aligned output canvas. `stage.toCanvas` can't
-		// guarantee 16-aligned pixel dims (height follows the crop aspect), so we
-		// render the crop at the encode width, then blit (sub-1% stretch) into
-		// this exact-sized canvas the encoder expects.
+		// Persistent render canvases (allocated ONCE, reused every frame).
+		// `stage.toCanvas` allocates 1 + 2·N `SceneCanvas` instances per call
+		// (one per visible layer, each with its own buffer) and releases none
+		// but the returned one — ~342MB/frame churn at 4K, the OOM root cause.
+		// Instead we render each layer directly into a reused `workScene` via
+		// `layer.drawScene`, compositing onto the aligned `outCanvas` below.
+		const workScene = new SceneCanvas({
+			width: crop.width,
+			height: crop.height,
+			pixelRatio: encodePixelRatio
+		});
+		// Buffer canvas for shapes that need one (shadow / composite op). Sized
+		// larger than the crop by the offset to fit overhanging buffered shapes
+		// — same heuristic as Konva's own `Node._toKonvaCanvas`.
+		const workBuffer = new SceneCanvas({
+			width: crop.width + Math.abs(crop.x),
+			height: crop.height + Math.abs(crop.y),
+			pixelRatio: encodePixelRatio
+		});
+		// Reusable macroblock-aligned output canvas. `drawScene` can't guarantee
+		// 16-aligned pixel dims (height follows the crop aspect), so we render
+		// the crop at the encode width, then blit (sub-1% stretch) into this
+		// exact-sized canvas the encoder expects.
 		const outCanvas = document.createElement('canvas');
 		outCanvas.width = encodeWidth;
 		outCanvas.height = encodeHeight;
 		const outCtx = outCanvas.getContext('2d');
+		const layers = stage.children;
 
 		try {
 			for (let i = 0; i < totalFrames; i++) {
@@ -242,17 +263,23 @@ export class TimelineVideoExporter {
 				const tMs = (i / fps) * 1000;
 				game.applySnapshot(interpolateSample(project, tMs));
 
-				const rendered = stage.toCanvas({ ...crop, pixelRatio: encodePixelRatio });
 				if (outCtx) {
-					outCtx.drawImage(rendered, 0, 0, encodeWidth, encodeHeight);
+					outCtx.clearRect(0, 0, encodeWidth, encodeHeight);
+					const workCtx = workScene.getContext();
+					for (const layer of layers) {
+						if (!layer.isVisible()) continue;
+						// Full clear BEFORE the crop translate — `clear()` is
+						// transform-aware, so a translate would clear a shifted region
+						// and leak the previous layer.
+						workCtx.clear();
+						workCtx.save();
+						workCtx.translate(-crop.x, -crop.y);
+						layer.drawScene(workScene, undefined, workBuffer);
+						workCtx.restore();
+						outCtx.drawImage(workScene._canvas, 0, 0, encodeWidth, encodeHeight);
+					}
 					if (watermark) watermark.draw(outCtx, encodeWidth, encodeHeight, encodePixelRatio);
 				}
-				// `toCanvas` allocates a fresh canvas (plus an internal buffer
-				// canvas) every call — ~76MB at 4K. Release the backing store
-				// immediately (Konva's own `releaseCanvas` does width=height=0) so
-				// it doesn't pile up ahead of GC — the prime cause of the OOM crash.
-				rendered.width = 0;
-				rendered.height = 0;
 
 				const frame = new VideoFrame(outCanvas, {
 					timestamp: i * frameDurationUs,
@@ -269,9 +296,8 @@ export class TimelineVideoExporter {
 					);
 				}
 
-				// Cap pending VideoFrames and yield every frame so GC can reclaim
-				// Konva's internal buffer canvas + the freed render canvas before
-				// the next allocation.
+				// Cap pending VideoFrames and yield every frame so the encoder can
+				// drain and the event loop stays responsive.
 				if (videoEncoder.encodeQueueSize > 4) await waitForQueue(videoEncoder, 2);
 				await new Promise((r) => setTimeout(r, 0));
 			}
@@ -289,6 +315,13 @@ export class TimelineVideoExporter {
 		} finally {
 			videoEncoder.close();
 			audioEncoder?.close();
+			// Release the persistent render-canvas backing stores (Konva's own
+			// `releaseCanvas` pattern: width=height=0) so a repeated export in the
+			// same tab doesn't accumulate them.
+			for (const c of [workScene._canvas, workBuffer._canvas, outCanvas]) {
+				c.width = 0;
+				c.height = 0;
+			}
 		}
 	}
 }
