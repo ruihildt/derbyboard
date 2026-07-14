@@ -611,4 +611,9 @@ export class KonvaGame {
 		this.watermark.draw(ctx, canvas.width, canvas.height, pixelRatio);
 		return canvas.toDataURL();
 	}
+
+	/** Shared watermark (preloaded at construction); used by image and video export. */
+	getWatermark(): Watermark {
+		return this.watermark;
+	}
 }

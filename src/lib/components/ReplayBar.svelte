@@ -4,12 +4,14 @@
 		PlayOutline,
 		PauseOutline,
 		CloseCircleOutline,
-		ArrowDownToBracketOutline
+		ArrowDownToBracketOutline,
+		VideoCameraOutline
 	} from 'flowbite-svelte-icons';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { loadProjectFile, saveProjectFile } from '$lib/recording/timeline/projectFile';
 	import { TimelinePlayer } from '$lib/recording/timeline/TimelinePlayer';
 	import type { TimelineFrame, TimelineProject } from '$lib/recording/timeline/types';
+	import VideoExportDialog from './VideoExportDialog.svelte';
 
 	let {
 		game,
@@ -39,6 +41,7 @@
 	let proj = $state<TimelineProject | null>(null);
 	let audio = $state<Blob | null>(null);
 	let showDiscard = $state(false);
+	let showExport = $state(false);
 
 	function handleOpenFile() {
 		if (disabled) return;
@@ -150,6 +153,13 @@
 		closeReplay(true);
 	}
 
+	// The exporter drives the stage directly; restore the board to the replay's
+	// current position when the export dialog closes.
+	function closeExport() {
+		showExport = false;
+		if (player) player.seek(currentTime);
+	}
+
 	function togglePlay() {
 		if (!player) return;
 		player.toggle();
@@ -233,6 +243,22 @@
 
 		<div class="relative">
 			<ToolbarButton
+				class="flex items-center text-gray-700 hover:bg-primary-200"
+				onclick={() => (showExport = true)}
+				aria-label="Export video"
+			>
+				<VideoCameraOutline class="h-5 w-5" />
+			</ToolbarButton>
+			<Tooltip
+				trigger="hover"
+				arrow={false}
+				color="primary"
+				class="hidden whitespace-nowrap md:block">Export video</Tooltip
+			>
+		</div>
+
+		<div class="relative">
+			<ToolbarButton
 				class="flex items-center text-gray-700 hover:bg-red-100"
 				onclick={requestExit}
 				aria-label="Exit replay"
@@ -264,3 +290,7 @@
 		</div>
 	</div>
 </Modal>
+
+{#if showExport && proj}
+	<VideoExportDialog {game} project={proj} audioBlob={audio} onClose={closeExport} />
+{/if}
