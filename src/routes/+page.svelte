@@ -65,11 +65,15 @@
 	{/if}
 </main>
 
-<div class="fixed left-4 top-4">
+<div class="fixed left-4 top-4 z-30">
 	<Menu {game} />
 </div>
 
-<div class="fixed bottom-4 left-4">
+<div class="fixed right-4 top-4 z-30">
+	<Changelog />
+</div>
+
+<div class="fixed bottom-4 left-4 z-30">
 	<ZoomControl {game} />
 </div>
 
@@ -100,7 +104,6 @@
 	onLoadError={(m) => (loadError = m)}
 />
 
-<div class="fixed bottom-4 right-4 flex gap-2">
-	<Changelog />
+<div class="fixed bottom-4 right-4 z-30">
 	<FullscreenButton />
 </div>
