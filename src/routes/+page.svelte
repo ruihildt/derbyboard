@@ -69,17 +69,29 @@
 	{/if}
 </main>
 
-<div class="fixed left-4 top-4 z-30">
-	<Menu {game} />
-</div>
+{#if !isReplaying}
+	<div class="fixed left-4 top-4 z-30">
+		<Menu
+			{game}
+			onOpenArchive={() => {
+				loadError = '';
+				replayBar?.load();
+			}}
+		/>
+	</div>
+{/if}
 
-<div class="fixed right-4 top-4 z-30">
-	<Changelog />
-</div>
+{#if !isReplaying}
+	<div class="fixed right-4 top-4 z-30">
+		<Changelog />
+	</div>
+{/if}
 
-<div class="fixed bottom-4 left-4 z-30">
-	<ZoomControl {game} />
-</div>
+{#if !isReplaying}
+	<div class="fixed bottom-4 left-4 z-30">
+		<ZoomControl {game} />
+	</div>
+{/if}
 
 {#if !isReplaying}
 	<div class="fixed bottom-4 left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-1">
@@ -90,10 +102,6 @@
 			{game}
 			bind:activeTab
 			bind:isRecording
-			onLoadReplay={() => {
-				loadError = '';
-				replayBar?.load();
-			}}
 			onRecorded={(project, audioBlob) => replayBar?.replay(project, audioBlob)}
 		/>
 	</div>
@@ -109,6 +117,8 @@
 	onLoadError={(m) => (loadError = m)}
 />
 
-<div class="fixed bottom-4 right-4 z-30">
-	<FullscreenButton />
-</div>
+{#if !isReplaying}
+	<div class="fixed bottom-4 right-4 z-30">
+		<FullscreenButton />
+	</div>
+{/if}

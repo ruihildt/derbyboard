@@ -4,6 +4,7 @@
 	import { get } from 'svelte/store';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { captureSettings } from '$lib/stores/captureSettings';
+	import { exportSettings } from '$lib/stores/exportSettings';
 	import { formatRatio } from '$lib/utils/capture';
 
 	let {
@@ -16,10 +17,11 @@
 
 	function capture() {
 		const s = get(captureSettings);
+		const scale = get(exportSettings).image.scale;
 		const dataUrl =
 			s.format === 'full'
-				? game.exportAsImage(2)
-				: game.exportZoneImage(s.zone ?? game.defaultZone(formatRatio(s.format)), 2);
+				? game.exportAsImage(scale)
+				: game.exportZoneImage(s.zone ?? game.defaultZone(formatRatio(s.format)), scale);
 		const link = document.createElement('a');
 		link.download = `derbyboard-${new Date().toISOString().slice(0, 10)}.png`;
 		link.href = dataUrl;

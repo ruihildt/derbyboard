@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { Button } from 'flowbite-svelte';
 	import { TimelineVideoExporter } from '$lib/recording/video/TimelineVideoExporter';
-	import { BITRATE_BY_QUALITY, type Quality } from '$lib/utils/codec';
+	import { BITRATE_BY_QUALITY } from '$lib/utils/codec';
 	import { QUALITY_HEIGHT } from '$lib/utils/recording';
+	import { exportSettings } from '$lib/stores/exportSettings';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import type { TimelineProject } from '$lib/recording/timeline/types';
 
@@ -21,17 +22,13 @@
 	const webcodecsSupported =
 		typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined';
 
-	const qualities: Quality[] = ['720p', '1080p', '1440p', '2160p'];
-
-	let quality = $state<Quality>('1080p');
-	let fps = $state(30);
 	let phase = $state<'config' | 'exporting' | 'done' | 'error'>('config');
 	let progress = $state({ frames: 0, total: 0 });
 	let errorMsg = $state('');
 	let controller: AbortController | null = null;
 
 	const dims = $derived.by(() => {
-		const h = QUALITY_HEIGHT[quality];
+		const h = QUALITY_HEIGHT[$exportSettings.video.resolution];
 		const stage = game.getStage();
 		if (project.frame) {
 			const z = project.frame.region;
@@ -44,23 +41,20 @@
 		progress.total > 0 ? Math.round((progress.frames / progress.total) * 100) : 0
 	);
 
-	function pill(active: boolean): string {
-		return `rounded px-2 py-1 text-xs ${active ? 'bg-primary-200 text-gray-900' : 'text-gray-600 hover:bg-gray-100'}`;
-	}
-
 	async function runExport() {
 		phase = 'exporting';
 		progress = { frames: 0, total: 0 };
 		controller = new AbortController();
+		const { resolution, fps } = $exportSettings.video;
 		const exporter = new TimelineVideoExporter();
 		try {
 			const result = await exporter.export({
 				game,
 				project,
 				audioBlob,
-				height: QUALITY_HEIGHT[quality],
+				height: QUALITY_HEIGHT[resolution],
 				fps,
-				bitrate: BITRATE_BY_QUALITY[quality],
+				bitrate: BITRATE_BY_QUALITY[resolution],
 				signal: controller.signal,
 				onProgress: (frames, total) => (progress = { frames, total })
 			});
@@ -110,23 +104,10 @@
 				<Button class="bg-primary-200 !p-2 text-sm text-gray-700" onclick={onClose}>Close</Button>
 			</div>
 		{:else if phase === 'config'}
-			<div class="mb-3">
-				<div class="mb-1 text-xs font-semibold text-gray-500">Resolution</div>
-				<div class="flex flex-wrap gap-1">
-					{#each qualities as q (q)}
-						<button class={pill(quality === q)} onclick={() => (quality = q)}>{q}</button>
-					{/each}
-				</div>
-				<p class="mt-1 text-[10px] text-gray-400">Output: {dims.w}×{dims.h}px</p>
-			</div>
-
-			<div class="mb-4">
-				<div class="mb-1 text-xs font-semibold text-gray-500">Frame rate</div>
-				<div class="flex gap-1">
-					<button class={pill(fps === 30)} onclick={() => (fps = 30)}>30 fps</button>
-					<button class={pill(fps === 60)} onclick={() => (fps = 60)}>60 fps</button>
-				</div>
-			</div>
+			<p class="mb-1 text-sm text-gray-700">
+				{$exportSettings.video.resolution} · {$exportSettings.video.fps} fps
+			</p>
+			<p class="mb-4 text-[10px] text-gray-400">Output: {dims.w}×{dims.h}px</p>
 
 			<div class="flex justify-end gap-2">
 				<Button class="bg-gray-100 !p-2 text-sm text-gray-700 hover:bg-gray-200" onclick={onClose}

@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { ToolbarButton, Tooltip, Modal, Button } from 'flowbite-svelte';
+	import { ToolbarButton } from 'flowbite-svelte';
 	import {
 		PlayOutline,
 		PauseOutline,
-		CloseCircleOutline,
-		ArrowDownToBracketOutline,
-		VideoCameraOutline
+		CloseOutline,
+		ChevronDownOutline,
+		VideoCameraOutline,
+		ArchiveArrowDownOutline
 	} from 'flowbite-svelte-icons';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { loadProjectFile, saveProjectFile } from '$lib/recording/timeline/projectFile';
@@ -34,15 +35,31 @@
 	let playing = $state(false);
 	let currentTime = $state(0);
 	let duration = $state(0);
-	let speed = $state(1);
+
+	// Interactive progression bar state.
+	let trackEl = $state<HTMLDivElement | undefined>();
+	let dragging = $state(false);
+	const pct = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);
 
 	// Preview-before-save state. `recorded` is true only for a just-recorded preview.
 	let recorded = $state(false);
 	let saved = $state(false);
 	let proj = $state<TimelineProject | null>(null);
 	let audio = $state<Blob | null>(null);
-	let showDiscard = $state(false);
 	let showExport = $state(false);
+
+	// Export split-button caret.
+	let caretRef = $state<HTMLDivElement | undefined>();
+	let caretOpen = $state(false);
+
+	$effect(() => {
+		if (!caretOpen) return;
+		function onPointerDown(e: PointerEvent) {
+			if (caretRef && !caretRef.contains(e.target as Node)) caretOpen = false;
+		}
+		window.addEventListener('pointerdown', onPointerDown);
+		return () => window.removeEventListener('pointerdown', onPointerDown);
+	});
 
 	function handleOpenFile() {
 		if (disabled) return;
@@ -60,7 +77,7 @@
 			} catch (err) {
 				console.error('[ReplayBar] load failed', err);
 				onLoadError?.(
-					err instanceof Error ? err.message : 'Invalid project file. Please select a .zip.'
+					err instanceof Error ? err.message : 'Invalid recording file. Please select a .zip.'
 				);
 			}
 		};
@@ -124,7 +141,6 @@
 		});
 
 		duration = player.getDuration();
-		speed = player.getSpeed();
 		playing = false;
 		currentTime = 0;
 		player.seek(0);
@@ -150,7 +166,7 @@
 		saved = false;
 		proj = null;
 		audio = null;
-		showDiscard = false;
+		showExport = false;
 	}
 
 	async function handleSave() {
@@ -162,19 +178,6 @@
 			console.error('[ReplayBar] save failed', e);
 			onLoadError?.('Failed to save recording.');
 		}
-	}
-
-	function requestExit() {
-		if (recorded && !saved) {
-			showDiscard = true;
-		} else {
-			closeReplay(true);
-		}
-	}
-
-	function confirmDiscard() {
-		showDiscard = false;
-		closeReplay(true);
 	}
 
 	// The exporter drives the stage directly; restore the board to the replay's
@@ -190,19 +193,43 @@
 		playing = player.isPlaying();
 	}
 
-	function onScrub(e: Event) {
+	function seekTo(t: number) {
 		if (!player) return;
-		const t = Number((e.target as HTMLInputElement).value);
-		player.seek(t);
-		currentTime = t;
+		const clamped = Math.min(duration, Math.max(0, t));
+		player.seek(clamped);
+		currentTime = clamped;
 		playing = player.isPlaying();
 	}
 
-	function toggleSpeed() {
-		if (!player) return;
-		const next = speed === 1 ? 0.5 : 1;
-		player.setSpeed(next);
-		speed = next;
+	function seekFromClientX(clientX: number) {
+		if (!trackEl || duration <= 0) return;
+		const rect = trackEl.getBoundingClientRect();
+		const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+		seekTo(frac * duration);
+	}
+
+	function onTrackPointerDown(e: PointerEvent) {
+		dragging = true;
+		trackEl?.setPointerCapture(e.pointerId);
+		seekFromClientX(e.clientX);
+	}
+
+	function onTrackPointerMove(e: PointerEvent) {
+		if (!dragging) return;
+		seekFromClientX(e.clientX);
+	}
+
+	function onTrackPointerUp(e: PointerEvent) {
+		if (!dragging) return;
+		dragging = false;
+		trackEl?.releasePointerCapture(e.pointerId);
+	}
+
+	function onTrackKey(e: KeyboardEvent) {
+		if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+			seekTo(currentTime + (e.key === 'ArrowRight' ? 1000 : -1000));
+			e.preventDefault();
+		}
 	}
 
 	function fmt(ms: number): string {
@@ -233,87 +260,78 @@
 			{fmt(currentTime)} / {fmt(duration)}
 		</div>
 
-		<input
-			type="range"
-			min="0"
-			max={duration}
-			step="10"
-			value={currentTime}
-			oninput={onScrub}
-			class="h-1 w-64 cursor-pointer accent-primary-500"
-		/>
-
-		<ToolbarButton
-			class="rounded px-2 py-1 text-xs text-gray-700 hover:bg-primary-200"
-			onclick={toggleSpeed}
-			aria-label="Playback speed"
+		<div
+			bind:this={trackEl}
+			class="relative h-1.5 w-72 cursor-pointer rounded-full bg-gray-200"
+			role="slider"
+			aria-label="Seek"
+			aria-valuemin={0}
+			aria-valuemax={duration}
+			aria-valuenow={Math.round(currentTime)}
+			tabindex={0}
+			onpointerdown={onTrackPointerDown}
+			onpointermove={onTrackPointerMove}
+			onpointerup={onTrackPointerUp}
+			onkeydown={onTrackKey}
 		>
-			{speed}×
-		</ToolbarButton>
+			<div
+				class="absolute left-0 top-0 h-full rounded-full bg-primary-500 transition-[width] duration-75"
+				style="width: {pct}%"
+			></div>
+			<div
+				class="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-1 ring-primary-500"
+				style="left: {pct}%"
+			></div>
+		</div>
 
-		{#if recorded}
-			<ToolbarButton
-				class="flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-700 hover:bg-primary-200 {saved
-					? 'opacity-60'
-					: ''}"
-				onclick={handleSave}
-				disabled={saved}
-				aria-label={saved ? 'Saved' : 'Save recording'}
-			>
-				<ArrowDownToBracketOutline class="h-4 w-4" />
-				{saved ? 'Saved' : 'Save'}
-			</ToolbarButton>
-		{/if}
-
-		<div class="relative">
-			<ToolbarButton
-				class="flex items-center text-gray-700 hover:bg-primary-200"
+		<div bind:this={caretRef} class="relative flex items-stretch rounded-md ring-1 ring-gray-200">
+			{#if recorded && !saved}
+				<span class="absolute right-1 top-1 z-10 h-2 w-2 rounded-full bg-amber-500"></span>
+			{/if}
+			<button
+				type="button"
+				class="flex items-center gap-1 whitespace-nowrap rounded-l-md py-1 pl-2 pr-2 text-xs text-gray-700 hover:bg-primary-200"
 				onclick={() => (showExport = true)}
-				aria-label="Export video"
+				aria-label="Save as video"
 			>
 				<VideoCameraOutline class="h-5 w-5" />
-			</ToolbarButton>
-			<Tooltip
-				trigger="hover"
-				arrow={false}
-				color="primary"
-				class="hidden whitespace-nowrap md:block">Export video</Tooltip
+				Save as video
+			</button>
+			<div class="w-px self-stretch bg-gray-200"></div>
+			<button
+				type="button"
+				class="flex items-center rounded-r-md px-2 py-1 text-gray-700 hover:bg-primary-200"
+				onclick={() => (caretOpen = !caretOpen)}
+				aria-label="More save options"
 			>
-		</div>
-
-		<div class="relative">
-			<ToolbarButton
-				class="flex items-center text-gray-700 hover:bg-red-100"
-				onclick={requestExit}
-				aria-label="Exit replay"
-			>
-				<CloseCircleOutline class="h-5 w-5" />
-			</ToolbarButton>
-			<Tooltip
-				trigger="hover"
-				arrow={false}
-				color="primary"
-				class="hidden whitespace-nowrap md:block">Exit replay</Tooltip
-			>
+				<ChevronDownOutline class="h-4 w-4" />
+			</button>
+			{#if caretOpen}
+				<div class="absolute bottom-full right-0 z-40 mb-1 rounded-lg bg-white p-1 shadow-xl">
+					<button
+						class="flex w-full items-center gap-2 whitespace-nowrap rounded px-2 py-1 text-left text-xs text-gray-600 hover:bg-gray-100"
+						onclick={() => {
+							caretOpen = false;
+							handleSave();
+						}}
+					>
+						<ArchiveArrowDownOutline class="h-5 w-5" />
+						Save recording (zip)
+					</button>
+				</div>
+			{/if}
 		</div>
 	</div>
+
+	<button
+		class="fixed left-1/2 top-4 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm text-gray-700 shadow-lg shadow-black/10 hover:bg-red-100"
+		onclick={() => closeReplay(true)}
+		aria-label="Exit replay"
+	>
+		<CloseOutline class="h-4 w-4" />
+		Exit replay
+	</button>
 {/if}
-
-<Modal bind:open={showDiscard} size="xs">
-	<div class="text-center">
-		<h3 class="mb-4 text-lg font-normal text-gray-500">Discard recording?</h3>
-		<div class="flex justify-center space-x-3">
-			<Button
-				class="bg-red-100 !p-2 text-sm text-gray-700 hover:bg-red-200"
-				onclick={confirmDiscard}>Discard</Button
-			>
-			<Button
-				class="bg-primary-200 !p-2 text-sm text-gray-700 hover:bg-primary-300"
-				onclick={() => (showDiscard = false)}>Cancel</Button
-			>
-		</div>
-	</div>
-</Modal>
 
 {#if showExport && proj}
 	<VideoExportDialog {game} project={proj} audioBlob={audio} onClose={closeExport} />

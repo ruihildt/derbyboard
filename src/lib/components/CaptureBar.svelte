@@ -14,13 +14,11 @@
 		game,
 		activeTab = $bindable<'video' | 'screenshot'>('video'),
 		isRecording = $bindable(false),
-		onLoadReplay,
 		onRecorded
 	}: {
 		game: KonvaGame;
 		activeTab?: 'video' | 'screenshot';
 		isRecording?: boolean;
-		onLoadReplay?: () => void;
 		onRecorded?: (project: TimelineProject, audioBlob: Blob | null) => void;
 	} = $props();
 
@@ -69,4 +67,4 @@
 	</div>
 </div>
 
-<SettingsModal bind:open={settingsOpen} {game} onOpenArchive={onLoadReplay} />
+<SettingsModal bind:open={settingsOpen} />
