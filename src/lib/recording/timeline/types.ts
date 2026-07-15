@@ -1,4 +1,4 @@
-import type { AspectRatio } from '$lib/utils/recording';
+import type { CaptureZone } from '$lib/utils/capture';
 import type { TeamPlayerPosition, SkatingOfficialPosition } from '$lib/stores/konvaBoardState';
 
 /** Board view (zoom + pan), stored relative to the stage center. */
@@ -29,17 +29,12 @@ export interface TimelineAudioMeta {
 	mimeType: string;
 }
 
-/** Region geometry as viewport-relative fractions (resolution-independent). */
-export interface TimelineRegion {
-	widthFrac: number; // region width / viewport width
-	centerXFrac: number; // region center.x / viewport width
-	centerYFrac: number; // region center.y / viewport height
-}
+/** Selection rect as viewport-relative fractions (resolution-independent). */
+export type TimelineRegion = CaptureZone;
 
-/** Aspect-locked output frame; presence enables the composition mask overlay. */
+/** Output frame; presence enables the composition mask overlay / crop. */
 export interface TimelineFrame {
-	ratio: AspectRatio;
-	region: TimelineRegion;
+	region: CaptureZone;
 }
 
 export interface TimelineProject {

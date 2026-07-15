@@ -11,6 +11,7 @@
 	import { loadProjectFile, saveProjectFile } from '$lib/recording/timeline/projectFile';
 	import { TimelinePlayer } from '$lib/recording/timeline/TimelinePlayer';
 	import type { TimelineFrame, TimelineProject } from '$lib/recording/timeline/types';
+	import { ASPECT_RATIO, type AspectRatio } from '$lib/utils/recording';
 	import VideoExportDialog from './VideoExportDialog.svelte';
 
 	let {
@@ -75,12 +76,35 @@
 		enterReplay(project, audioBlob, true);
 	}
 
+	/**
+	 * Converts a legacy project frame (which stored an aspect `ratio` plus
+	 * width/center fractions) into the unified x/y/w/h fraction rect. New
+	 * projects already use the unified shape and pass through unchanged.
+	 */
+	function normalizeFrame(frame: TimelineFrame | undefined): TimelineFrame | undefined {
+		if (!frame) return frame;
+		const r = frame.region as unknown as Record<string, number | undefined>;
+		if (typeof r.widthFrac !== 'number' || typeof r.centerXFrac !== 'number') return frame;
+		const ratio = ASPECT_RATIO[(frame as { ratio?: AspectRatio }).ratio ?? '16:9'] ?? 16 / 9;
+		const stage = game.getStage();
+		const sw = stage.width();
+		const sh = stage.height();
+		const cropW = r.widthFrac * sw;
+		const cropH = cropW / ratio;
+		const x = r.centerXFrac * sw - cropW / 2;
+		const y = (r.centerYFrac ?? 0.5) * sh - cropH / 2;
+		return {
+			region: { xFrac: x / sw, yFrac: y / sh, wFrac: cropW / sw, hFrac: cropH / sh }
+		};
+	}
+
 	function enterReplay(project: TimelineProject, audioBlob: Blob | null, isRecorded = false) {
 		closeReplay(false);
 
 		game.setReplayMode(true);
 		onEnter?.();
 
+		project.frame = normalizeFrame(project.frame);
 		proj = project;
 		audio = audioBlob;
 		recorded = isRecorded;

@@ -1,54 +1,65 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { ASPECT_RATIO, type AspectRatio } from '$lib/utils/recording';
-	import type { TimelineRegion } from '$lib/recording/timeline/types';
+	import type { CaptureZone } from '$lib/utils/capture';
 
 	let {
-		ratio,
-		region,
+		zone,
+		ratio = null,
 		interactive = true,
 		onchange
 	}: {
-		ratio: AspectRatio;
-		region: TimelineRegion;
+		zone: CaptureZone;
+		/** Aspect ratio to enforce, or null for free-form. */
+		ratio?: number | null;
 		interactive?: boolean;
-		onchange?: (r: TimelineRegion) => void;
+		onchange: (zone: CaptureZone) => void;
 	} = $props();
 
 	let vw = $state(typeof window !== 'undefined' ? window.innerWidth : 1280);
 	let vh = $state(typeof window !== 'undefined' ? window.innerHeight : 720);
 
-	const MIN_WIDTH = 80;
-	// Minimum gap between the region and every viewport edge so the resize handles
-	// always stay reachable.
+	const MIN_SIZE = 80;
+	// Minimum gap between the zone and every viewport edge so handles stay reachable.
 	const EDGE_MARGIN = 16;
 
-	function fromRegion(r: TimelineRegion): { w: number; left: number; top: number } {
-		const arVal = ASPECT_RATIO[ratio];
-		const w = r.widthFrac * vw;
+	function fromZone(z: CaptureZone): {
+		left: number;
+		top: number;
+		width: number;
+		height: number;
+	} {
 		return {
-			w,
-			left: r.centerXFrac * vw - w / 2,
-			top: r.centerYFrac * vh - w / (2 * arVal)
+			left: z.xFrac * vw,
+			top: z.yFrac * vh,
+			width: z.wFrac * vw,
+			height: z.hFrac * vh
 		};
 	}
 
-	const init = untrack(() => fromRegion(region));
-	let width = $state(init.w);
+	const init = untrack(() => fromZone(zone));
 	let left = $state(init.left);
 	let top = $state(init.top);
+	let width = $state(init.width);
+	let height = $state(init.height);
 
 	function clampBox(
 		l: number,
 		t: number,
-		w: number
+		w: number,
+		h: number
 	): { x: number; y: number; w: number; h: number } {
-		const arVal = ASPECT_RATIO[ratio];
-		const fit = Math.min(vw - 2 * EDGE_MARGIN, (vh - 2 * EDGE_MARGIN) * arVal);
+		const maxW = vw - 2 * EDGE_MARGIN;
+		const maxH = vh - 2 * EDGE_MARGIN;
 		let cw = w;
-		if (cw > fit) cw = fit;
-		if (cw < MIN_WIDTH) cw = MIN_WIDTH;
-		const ch = cw / arVal;
+		let ch = h;
+		if (ratio !== null) {
+			const fit = Math.min(maxW, maxH * ratio);
+			cw = Math.min(Math.max(cw, MIN_SIZE), fit);
+			ch = cw / ratio;
+		} else {
+			cw = Math.min(Math.max(cw, MIN_SIZE), maxW);
+			ch = Math.min(Math.max(ch, MIN_SIZE), maxH);
+		}
 		return {
 			x: Math.max(EDGE_MARGIN, Math.min(l, vw - cw - EDGE_MARGIN)),
 			y: Math.max(EDGE_MARGIN, Math.min(t, vh - ch - EDGE_MARGIN)),
@@ -57,26 +68,28 @@
 		};
 	}
 
-	const box = $derived(clampBox(left, top, width));
+	const box = $derived(clampBox(left, top, width, height));
 
-	// Re-sync local px from the controlled `region` prop when it (or the viewport /
+	// Re-sync local px from the controlled `zone` prop when it (or the viewport /
 	// ratio) changes externally — but never while a drag is in progress.
 	let lastSynced = '';
 	$effect(() => {
-		const sig = `${region.widthFrac},${region.centerXFrac},${region.centerYFrac},${ratio},${vw},${vh}`;
+		const sig = `${zone.xFrac},${zone.yFrac},${zone.wFrac},${zone.hFrac},${ratio},${vw},${vh}`;
 		if (sig === lastSynced) return;
 		lastSynced = sig;
-		const v = fromRegion(region);
-		width = v.w;
+		const v = fromZone(zone);
 		left = v.left;
 		top = v.top;
+		width = v.width;
+		height = v.height;
 	});
 
 	function emit() {
-		onchange?.({
-			widthFrac: box.w / vw,
-			centerXFrac: (box.x + box.w / 2) / vw,
-			centerYFrac: (box.y + box.h / 2) / vh
+		onchange({
+			xFrac: box.x / vw,
+			yFrac: box.y / vh,
+			wFrac: box.w / vw,
+			hFrac: box.h / vh
 		});
 	}
 
@@ -121,17 +134,24 @@
 			top = drag.originTop + (e.clientY - drag.startY);
 			return;
 		}
-		const arVal = ASPECT_RATIO[ratio];
-		const rawW = Math.abs(e.clientX - drag.anchorX);
-		const rawH = Math.abs(e.clientY - drag.anchorY);
-		// Preserve ratio by taking the larger implied width.
-		const w = Math.max(rawW, rawH * arVal);
-		const h = w / arVal;
 		const dirX = e.clientX >= drag.anchorX ? 1 : -1;
 		const dirY = e.clientY >= drag.anchorY ? 1 : -1;
+		let w: number;
+		let h: number;
+		if (ratio !== null) {
+			// Preserve ratio by taking the larger implied width.
+			const rawW = Math.abs(e.clientX - drag.anchorX);
+			const rawH = Math.abs(e.clientY - drag.anchorY);
+			w = Math.max(rawW, rawH * ratio);
+			h = w / ratio;
+		} else {
+			w = Math.max(Math.abs(e.clientX - drag.anchorX), MIN_SIZE);
+			h = Math.max(Math.abs(e.clientY - drag.anchorY), MIN_SIZE);
+		}
 		left = dirX > 0 ? drag.anchorX : drag.anchorX - w;
 		top = dirY > 0 ? drag.anchorY : drag.anchorY - h;
 		width = w;
+		height = h;
 	}
 
 	function endDrag() {
@@ -159,7 +179,7 @@
 		onpointerdown={beginMove}
 		role="button"
 		tabindex="-1"
-		aria-label="Recording frame"
+		aria-label="Capture selection"
 	>
 		{#if interactive}
 			<div

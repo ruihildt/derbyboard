@@ -1,7 +1,6 @@
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { SceneCanvas } from 'konva/lib/Canvas.js';
 import type { KonvaGame } from '$lib/konva/KonvaGame';
-import { ASPECT_RATIO } from '$lib/utils/recording';
 import { interpolateSample } from '../timeline/interpolate';
 import type { TimelineProject } from '../timeline/types';
 
@@ -65,14 +64,11 @@ export class TimelineVideoExporter {
 		let width: number;
 		let crop: { x: number; y: number; width: number; height: number };
 		if (project.frame) {
-			const ar = ASPECT_RATIO[project.frame.ratio];
-			width = Math.round(height * ar);
-			const r = project.frame.region;
-			const rw = r.widthFrac * stageW;
-			const rh = rw / ar;
-			const rx = r.centerXFrac * stageW - rw / 2;
-			const ry = r.centerYFrac * stageH - rh / 2;
-			crop = { x: rx, y: ry, width: rw, height: rh };
+			const z = project.frame.region;
+			const cw = z.wFrac * stageW;
+			const ch = z.hFrac * stageH;
+			crop = { x: z.xFrac * stageW, y: z.yFrac * stageH, width: cw, height: ch };
+			width = Math.round((height * cw) / ch);
 		} else {
 			width = Math.round((height * stageW) / stageH);
 			crop = { x: 0, y: 0, width: stageW, height: stageH };

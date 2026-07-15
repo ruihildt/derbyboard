@@ -19,8 +19,8 @@ import { KonvaPlayerManager } from './KonvaPlayerManager';
 import { KonvaPackManager } from './KonvaPackManager';
 import { KonvaRecorder } from './KonvaRecorder';
 import { Watermark } from './Watermark';
-import { ASPECT_RATIO, type AspectRatio } from '$lib/utils/recording';
-import type { Snapshot, TimelineSample, TimelineRegion } from '$lib/recording/timeline/types';
+import type { CaptureZone } from '$lib/utils/capture';
+import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
 
 const FRAME_DEFAULT_MARGIN = 0.1;
 
@@ -296,11 +296,14 @@ export class KonvaGame {
 		return { zoom: this.stage.scaleX(), x: this.stage.x(), y: this.stage.y() };
 	}
 
-	/** Default region (whole track + margin) as viewport-relative fractions. */
-	defaultRegion(ratio: AspectRatio): TimelineRegion {
+	/**
+	 * Default zone (whole track + margin) as viewport-relative fractions.
+	 * When `ratio` is null the zone is free-form; otherwise it is fitted to the
+	 * given aspect ratio. Clamped inside the viewport.
+	 */
+	defaultZone(ratio: number | null): CaptureZone {
 		const b = this.getTrackBounds();
 		const { zoom, x: sx, y: sy } = this.getView();
-		const ar = ASPECT_RATIO[ratio];
 
 		const bw = (b.maxX - b.minX) * FRAME_DEFAULT_MARGIN;
 		const bh = (b.maxY - b.minY) * FRAME_DEFAULT_MARGIN;
@@ -311,12 +314,15 @@ export class KonvaGame {
 
 		let rw: number;
 		let rh: number;
-		if (ebw / ebh > ar) {
+		if (ratio === null) {
 			rw = ebw;
-			rh = ebw / ar;
+			rh = ebh;
+		} else if (ebw / ebh > ratio) {
+			rw = ebw;
+			rh = ebw / ratio;
 		} else {
 			rh = ebh;
-			rw = ebh * ar;
+			rw = ebh * ratio;
 		}
 
 		const left = sx + (cx - rw / 2) * zoom;
@@ -324,10 +330,17 @@ export class KonvaGame {
 		const w = rw * zoom;
 		const h = rh * zoom;
 
+		// Clamp inside the viewport.
+		const x0 = Math.max(0, left);
+		const y0 = Math.max(0, top);
+		const x1 = Math.min(this.width, left + w);
+		const y1 = Math.min(this.height, top + h);
+
 		return {
-			widthFrac: w / this.width,
-			centerXFrac: (left + w / 2) / this.width,
-			centerYFrac: (top + h / 2) / this.height
+			xFrac: x0 / this.width,
+			yFrac: y0 / this.height,
+			wFrac: (x1 - x0) / this.width,
+			hFrac: (y1 - y0) / this.height
 		};
 	}
 
@@ -603,6 +616,24 @@ export class KonvaGame {
 
 	exportAsImage(pixelRatio = 2): string {
 		const sourceCanvas = this.stage.toCanvas({ pixelRatio });
+		const canvas = document.createElement('canvas');
+		canvas.width = sourceCanvas.width;
+		canvas.height = sourceCanvas.height;
+		const ctx = canvas.getContext('2d')!;
+		ctx.drawImage(sourceCanvas, 0, 0);
+		this.watermark.draw(ctx, canvas.width, canvas.height, pixelRatio);
+		return canvas.toDataURL();
+	}
+
+	/** Captures a viewport sub-region as a PNG data URL (with watermark). */
+	exportZoneImage(zone: CaptureZone, pixelRatio = 2): string {
+		const sourceCanvas = this.stage.toCanvas({
+			x: zone.xFrac * this.width,
+			y: zone.yFrac * this.height,
+			width: zone.wFrac * this.width,
+			height: zone.hFrac * this.height,
+			pixelRatio
+		});
 		const canvas = document.createElement('canvas');
 		canvas.width = sourceCanvas.width;
 		canvas.height = sourceCanvas.height;

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { ToolbarButton } from 'flowbite-svelte';
 	import {
-		ChevronDownOutline,
 		MicrophoneOutline,
 		MicrophoneSlashOutline,
 		PlayOutline,
@@ -12,18 +11,21 @@
 	import { TimelineRecorder } from '$lib/recording/timeline/TimelineRecorder';
 	import { AudioCapture } from '$lib/recording/timeline/AudioCapture';
 	import { recordingSettings } from '$lib/stores/recordingSettings';
-	import type { AspectRatio } from '$lib/utils/recording';
+	import { formatRatio, type CaptureFormat } from '$lib/utils/capture';
 	import type { TimelineProject } from '$lib/recording/timeline/types';
+	import ZoneFormatSelect from './ZoneFormatSelect.svelte';
 
 	let {
 		isRecording = $bindable(false),
 		game = $bindable(),
+		locked = $bindable(false),
 		disabled = false,
 		onLoadReplay,
 		onRecorded
 	}: {
 		isRecording: boolean;
 		game: KonvaGame;
+		locked?: boolean;
 		disabled?: boolean;
 		onLoadReplay?: () => void;
 		onRecorded?: (project: TimelineProject, audioBlob: Blob | null) => void;
@@ -37,39 +39,15 @@
 	let elapsedTime = $state(0);
 	let timeInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
-	let open = $state(false);
-	let menuRef: HTMLDivElement | undefined;
-
-	// Close the dropdown on any pointer down outside of it (e.g. on the board).
+	// Keep the bindable `locked` output in sync with the internal busy state so the
+	// parent (CaptureBar) can disable tab switching during the countdown too.
 	$effect(() => {
-		if (!open) return;
-		function onPointerDown(e: PointerEvent) {
-			if (menuRef && !menuRef.contains(e.target as Node)) {
-				open = false;
-			}
-		}
-		window.addEventListener('pointerdown', onPointerDown);
-		return () => window.removeEventListener('pointerdown', onPointerDown);
+		locked = isRecording || countdown !== null || disabled;
 	});
 
-	const ratios: AspectRatio[] = ['16:9', '4:3', '1:1'];
-
-	const locked = $derived(isRecording || countdown !== null || disabled);
-	const selectionLabel = $derived(
-		$recordingSettings.mode === 'full' ? 'Full page' : $recordingSettings.ratio
-	);
-
-	function selectFull() {
-		recordingSettings.update((s) => ({ ...s, mode: 'full' }));
-		open = false;
-	}
-	function selectRatio(ratio: AspectRatio) {
-		recordingSettings.update((s) => ({ ...s, mode: 'region', ratio }));
-		open = false;
-	}
-
-	function menuItem(active: boolean) {
-		return `block w-full rounded px-2 py-1 text-left text-sm ${active ? 'bg-primary-200 text-gray-900' : 'text-gray-600 hover:bg-gray-100'}`;
+	function setFormat(format: CaptureFormat) {
+		// Reset the zone so the page re-initializes a default fitting the new format.
+		recordingSettings.update((s) => ({ ...s, format, zone: undefined }));
 	}
 
 	async function startRecording() {
@@ -115,8 +93,8 @@
 			const { project } = recorder.stop();
 			const audioBlob = audioActive && audioCapture ? await audioCapture.stop() : null;
 			const s = get(recordingSettings);
-			if (s.mode === 'region') {
-				project.frame = { ratio: s.ratio, region: s.region ?? game.defaultRegion(s.ratio) };
+			if (s.format !== 'full') {
+				project.frame = { region: s.zone ?? game.defaultZone(formatRatio(s.format)) };
 			}
 			onRecorded?.(project, audioBlob);
 		} catch (e) {
@@ -140,6 +118,9 @@
 </script>
 
 <div class="flex items-center gap-1 rounded-lg bg-white p-1 shadow-lg shadow-black/10">
+	<!-- Zone format selector -->
+	<ZoneFormatSelect format={$recordingSettings.format} disabled={locked} onchange={setFormat} />
+
 	<!-- Sound -->
 	<ToolbarButton
 		class={locked ? 'cursor-not-allowed opacity-50' : 'hover:bg-primary-200'}
@@ -153,35 +134,6 @@
 			<MicrophoneSlashOutline class="text-gray-700" />
 		{/if}
 	</ToolbarButton>
-
-	<!-- Area / aspect ratio -->
-	<div bind:this={menuRef} class="relative flex items-center">
-		<button
-			class="flex items-center gap-1 rounded px-2 py-1 text-sm text-gray-700 {locked
-				? 'cursor-not-allowed opacity-50'
-				: 'hover:bg-primary-200'}"
-			onclick={() => (open = !open)}
-			disabled={locked}
-			aria-label="Recording area"
-		>
-			{selectionLabel}
-			<ChevronDownOutline class="h-3.5 w-3.5" />
-		</button>
-
-		{#if open}
-			<div class="absolute bottom-full left-0 z-40 mb-1 w-32 rounded-lg bg-white p-1 shadow-xl">
-				<button class={menuItem($recordingSettings.mode === 'full')} onclick={selectFull}>
-					Full page
-				</button>
-				{#each ratios as r (r)}
-					<button
-						class={menuItem($recordingSettings.mode === 'region' && $recordingSettings.ratio === r)}
-						onclick={() => selectRatio(r)}>{r}</button
-					>
-				{/each}
-			</div>
-		{/if}
-	</div>
 
 	<!-- Record / stop -->
 	<ToolbarButton

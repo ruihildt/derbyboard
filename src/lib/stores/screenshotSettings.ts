@@ -1,11 +1,11 @@
 import { persisted } from 'svelte-persisted-store';
 import type { CaptureFormat, CaptureZone } from '$lib/utils/capture';
 
-export interface RecordingSettings {
+export interface ScreenshotSettings {
 	format: CaptureFormat;
 	zone?: CaptureZone;
 }
 
-export const recordingSettings = persisted<RecordingSettings>('derbyboard-recording-v2', {
+export const screenshotSettings = persisted<ScreenshotSettings>('derbyboard-screenshot-v2', {
 	format: 'custom'
 });

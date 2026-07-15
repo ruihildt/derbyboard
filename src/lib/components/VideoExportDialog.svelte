@@ -2,7 +2,7 @@
 	import { Button } from 'flowbite-svelte';
 	import { TimelineVideoExporter } from '$lib/recording/video/TimelineVideoExporter';
 	import { BITRATE_BY_QUALITY, type Quality } from '$lib/utils/codec';
-	import { ASPECT_RATIO, QUALITY_HEIGHT } from '$lib/utils/recording';
+	import { QUALITY_HEIGHT } from '$lib/utils/recording';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import type { TimelineProject } from '$lib/recording/timeline/types';
 
@@ -34,7 +34,9 @@
 		const h = QUALITY_HEIGHT[quality];
 		const stage = game.getStage();
 		if (project.frame) {
-			return { w: Math.round(h * ASPECT_RATIO[project.frame.ratio]), h };
+			const z = project.frame.region;
+			const ar = (z.wFrac * stage.width()) / (z.hFrac * stage.height());
+			return { w: Math.round(h * ar), h };
 		}
 		return { w: Math.round((h * stage.width()) / stage.height()), h };
 	});
