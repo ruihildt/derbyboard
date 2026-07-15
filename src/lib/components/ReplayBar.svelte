@@ -41,9 +41,6 @@
 	let dragging = $state(false);
 	const pct = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);
 
-	// Preview-before-save state. `recorded` is true only for a just-recorded preview.
-	let recorded = $state(false);
-	let saved = $state(false);
 	let proj = $state<TimelineProject | null>(null);
 	let audio = $state<Blob | null>(null);
 	let showExport = $state(false);
@@ -90,7 +87,7 @@
 
 	// Imperative entry point used after a recording stops (preview before save).
 	export function replay(project: TimelineProject, audioBlob: Blob | null) {
-		enterReplay(project, audioBlob, true);
+		enterReplay(project, audioBlob);
 	}
 
 	/**
@@ -115,7 +112,7 @@
 		};
 	}
 
-	function enterReplay(project: TimelineProject, audioBlob: Blob | null, isRecorded = false) {
+	function enterReplay(project: TimelineProject, audioBlob: Blob | null) {
 		closeReplay(false);
 
 		game.setReplayMode(true);
@@ -124,8 +121,6 @@
 		project.frame = normalizeFrame(project.frame);
 		proj = project;
 		audio = audioBlob;
-		recorded = isRecorded;
-		saved = false;
 
 		player = new TimelinePlayer({
 			game,
@@ -162,8 +157,6 @@
 		playing = false;
 		currentTime = 0;
 		duration = 0;
-		recorded = false;
-		saved = false;
 		proj = null;
 		audio = null;
 		showExport = false;
@@ -173,7 +166,6 @@
 		if (!proj) return;
 		try {
 			await saveProjectFile(proj, audio);
-			saved = true;
 		} catch (e) {
 			console.error('[ReplayBar] save failed', e);
 			onLoadError?.('Failed to save recording.');
@@ -285,9 +277,6 @@
 		</div>
 
 		<div bind:this={caretRef} class="relative flex items-stretch rounded-md ring-1 ring-gray-200">
-			{#if recorded && !saved}
-				<span class="absolute right-1 top-1 z-10 h-2 w-2 rounded-full bg-amber-500"></span>
-			{/if}
 			<button
 				type="button"
 				class="flex items-center gap-1 whitespace-nowrap rounded-l-md py-1 pl-2 pr-2 text-xs text-gray-700 hover:bg-primary-200"
