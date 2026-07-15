@@ -93,9 +93,17 @@
 		});
 	}
 
+	type Handle = 'tl' | 'tr' | 'bl' | 'br' | 't' | 'b' | 'l' | 'r';
 	type Drag =
 		| { mode: 'move'; startX: number; startY: number; originLeft: number; originTop: number }
-		| { mode: 'resize'; anchorX: number; anchorY: number };
+		| {
+				mode: 'resize';
+				handle: Handle;
+				originLeft: number;
+				originTop: number;
+				originW: number;
+				originH: number;
+		  };
 	let drag: Drag | null = null;
 	let moving = $state(false);
 
@@ -116,13 +124,18 @@
 		window.addEventListener('pointerup', endDrag);
 	}
 
-	function beginResize(e: PointerEvent, corner: 'tl' | 'tr' | 'bl' | 'br') {
+	function beginResize(e: PointerEvent, handle: Handle) {
 		if (!interactive) return;
 		e.preventDefault();
 		e.stopPropagation();
-		const ax = corner === 'tl' || corner === 'bl' ? box.x + box.w : box.x;
-		const ay = corner === 'tl' || corner === 'tr' ? box.y + box.h : box.y;
-		drag = { mode: 'resize', anchorX: ax, anchorY: ay };
+		drag = {
+			mode: 'resize',
+			handle,
+			originLeft: box.x,
+			originTop: box.y,
+			originW: box.w,
+			originH: box.h
+		};
 		window.addEventListener('pointermove', onPointerMove);
 		window.addEventListener('pointerup', endDrag);
 	}
@@ -134,22 +147,43 @@
 			top = drag.originTop + (e.clientY - drag.startY);
 			return;
 		}
-		const dirX = e.clientX >= drag.anchorX ? 1 : -1;
-		const dirY = e.clientY >= drag.anchorY ? 1 : -1;
-		let w: number;
-		let h: number;
+		const { originLeft: ol, originTop: ot, originW: ow, originH: oh, handle } = drag;
+		const moveL = handle.includes('l');
+		const moveR = handle.includes('r');
+		const moveT = handle.includes('t');
+		const moveB = handle.includes('b');
+
+		let l = ol;
+		let t = ot;
+		let w = ow;
+		let h = oh;
+
 		if (ratio !== null) {
-			// Preserve ratio by taking the larger implied width.
-			const rawW = Math.abs(e.clientX - drag.anchorX);
-			const rawH = Math.abs(e.clientY - drag.anchorY);
-			w = Math.max(rawW, rawH * ratio);
+			// Implied dimensions from whichever axis the active handle drives.
+			let dw: number | null = moveL ? ol + ow - e.clientX : moveR ? e.clientX - ol : null;
+			let dh: number | null = moveT ? ot + oh - e.clientY : moveB ? e.clientY - ot : null;
+			// Drive width by the larger implied dimension (matches corner behavior).
+			if (dw !== null && dh !== null) w = Math.max(dw, dh * ratio);
+			else if (dw !== null) w = dw;
+			else if (dh !== null) w = dh * ratio;
+			w = Math.max(w, MIN_SIZE);
 			h = w / ratio;
+			if (moveL) l = ol + ow - w;
+			if (moveT) t = ot + oh - h;
 		} else {
-			w = Math.max(Math.abs(e.clientX - drag.anchorX), MIN_SIZE);
-			h = Math.max(Math.abs(e.clientY - drag.anchorY), MIN_SIZE);
+			if (moveL) {
+				w = Math.max(ol + ow - e.clientX, MIN_SIZE);
+				l = ol + ow - w;
+			}
+			if (moveR) w = Math.max(e.clientX - ol, MIN_SIZE);
+			if (moveT) {
+				h = Math.max(ot + oh - e.clientY, MIN_SIZE);
+				t = ot + oh - h;
+			}
+			if (moveB) h = Math.max(e.clientY - ot, MIN_SIZE);
 		}
-		left = dirX > 0 ? drag.anchorX : drag.anchorX - w;
-		top = dirY > 0 ? drag.anchorY : drag.anchorY - h;
+		left = l;
+		top = t;
 		width = w;
 		height = h;
 	}
@@ -182,33 +216,80 @@
 		aria-label="Capture selection"
 	>
 		{#if interactive}
+			<!-- Full-edge resize hit bands (the whole edge is draggable). -->
+			<div
+				role="button"
+				tabindex="-1"
+				aria-label="Resize top"
+				class="absolute inset-x-0 top-0 h-3 cursor-ns-resize"
+				onpointerdown={(e) => beginResize(e, 't')}
+			></div>
+			<div
+				role="button"
+				tabindex="-1"
+				aria-label="Resize bottom"
+				class="absolute inset-x-0 bottom-0 h-3 cursor-ns-resize"
+				onpointerdown={(e) => beginResize(e, 'b')}
+			></div>
+			<div
+				role="button"
+				tabindex="-1"
+				aria-label="Resize left"
+				class="absolute inset-y-0 left-0 w-3 cursor-ew-resize"
+				onpointerdown={(e) => beginResize(e, 'l')}
+			></div>
+			<div
+				role="button"
+				tabindex="-1"
+				aria-label="Resize right"
+				class="absolute inset-y-0 right-0 w-3 cursor-ew-resize"
+				onpointerdown={(e) => beginResize(e, 'r')}
+			></div>
+			<!-- Corner handles (square): diagonal resize, drawn above the bands. -->
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize top-left"
-				class="absolute -left-1 -top-1 h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize rounded-full border border-gray-400 bg-white"
+				class="absolute -left-1 -top-1 h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize border border-gray-400 bg-white"
 				onpointerdown={(e) => beginResize(e, 'tl')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize top-right"
-				class="absolute -right-1 -top-1 h-3 w-3 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize rounded-full border border-gray-400 bg-white"
+				class="absolute -right-1 -top-1 h-3 w-3 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize border border-gray-400 bg-white"
 				onpointerdown={(e) => beginResize(e, 'tr')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize bottom-left"
-				class="absolute -bottom-1 -left-1 h-3 w-3 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize rounded-full border border-gray-400 bg-white"
+				class="absolute -bottom-1 -left-1 h-3 w-3 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize border border-gray-400 bg-white"
 				onpointerdown={(e) => beginResize(e, 'bl')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize bottom-right"
-				class="absolute -bottom-1 -right-1 h-3 w-3 translate-x-1/2 translate-y-1/2 cursor-nwse-resize rounded-full border border-gray-400 bg-white"
+				class="absolute -bottom-1 -right-1 h-3 w-3 translate-x-1/2 translate-y-1/2 cursor-nwse-resize border border-gray-400 bg-white"
 				onpointerdown={(e) => beginResize(e, 'br')}
+			></div>
+			<!-- Edge midpoint markers (square): decoration only, pointer passes through. -->
+			<div
+				aria-hidden="true"
+				class="pointer-events-none absolute left-1/2 top-0 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border border-gray-400 bg-white"
+			></div>
+			<div
+				aria-hidden="true"
+				class="pointer-events-none absolute bottom-0 left-1/2 h-3 w-3 -translate-x-1/2 translate-y-1/2 border border-gray-400 bg-white"
+			></div>
+			<div
+				aria-hidden="true"
+				class="pointer-events-none absolute -left-1 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border border-gray-400 bg-white"
+			></div>
+			<div
+				aria-hidden="true"
+				class="pointer-events-none absolute -right-1 top-1/2 h-3 w-3 translate-x-1/2 -translate-y-1/2 border border-gray-400 bg-white"
 			></div>
 		{/if}
 	</div>
