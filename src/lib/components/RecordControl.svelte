@@ -28,6 +28,8 @@
 	let audioActive = false;
 	let withAudio = $state(false);
 	let countdown = $state<number | null>(null);
+	let countdownTimer = $state<ReturnType<typeof setInterval> | null>(null);
+	let countdownToken = 0;
 	let elapsedTime = $state(0);
 	let timeInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -38,13 +40,20 @@
 	});
 
 	async function startRecording() {
+		const token = ++countdownToken;
 		countdown = 3;
-		const countdownInterval = setInterval(() => {
+		countdownTimer = setInterval(() => {
 			countdown = countdown! - 1;
 		}, 1000);
 
 		await new Promise((resolve) => setTimeout(resolve, 3000));
-		clearInterval(countdownInterval);
+
+		if (countdownTimer) {
+			clearInterval(countdownTimer);
+			countdownTimer = null;
+		}
+		// A later cancel/supersede bumped the token; abandon the start.
+		if (token !== countdownToken) return;
 		countdown = null;
 
 		if (!game) return;
@@ -95,9 +104,20 @@
 		}
 	}
 
+	function cancelCountdown() {
+		countdownToken++;
+		if (countdownTimer) {
+			clearInterval(countdownTimer);
+			countdownTimer = null;
+		}
+		countdown = null;
+	}
+
 	async function toggleRecording() {
 		if (isRecording) {
 			await stopRecording();
+		} else if (countdown !== null) {
+			cancelCountdown();
 		} else {
 			await startRecording();
 		}
@@ -121,15 +141,17 @@
 
 	<!-- Record / stop -->
 	<ToolbarButton
-		class="flex items-center gap-2 px-3 text-sm text-gray-700 {countdown !== null || disabled
+		class="flex items-center gap-2 whitespace-nowrap px-3 text-sm text-gray-700 {disabled
 			? 'cursor-not-allowed'
 			: 'hover:bg-primary-200'}"
 		onclick={toggleRecording}
-		disabled={countdown !== null || disabled}
-		aria-label={isRecording ? 'Stop' : 'Record'}
+		{disabled}
+		aria-label={isRecording ? 'Stop' : countdown !== null ? 'Cancel' : 'Record'}
 	>
 		{#if isRecording}
 			<StopSolid class="text-red-600" />
+		{:else if countdown !== null}
+			<span class="h-2.5 w-2.5 bg-red-600"></span>
 		{:else}
 			<span class="h-2.5 w-2.5 rounded-full bg-red-600"></span>
 		{/if}
