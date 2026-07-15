@@ -1,9 +1,5 @@
 <script lang="ts">
-	import {
-		ChevronDownOutline,
-		CameraPhotoOutline,
-		VideoCameraOutline
-	} from 'flowbite-svelte-icons';
+	import { ChevronDownOutline, ImageOutline, VideoCameraOutline } from 'flowbite-svelte-icons';
 
 	export type CaptureMode = 'screenshot' | 'video';
 
@@ -57,7 +53,7 @@
 		aria-label="Capture mode"
 	>
 		{#if mode === 'screenshot'}
-			<CameraPhotoOutline class="h-4 w-4" />
+			<ImageOutline class="h-4 w-4" />
 			Image
 		{:else}
 			<VideoCameraOutline class="h-4 w-4" />
@@ -71,7 +67,7 @@
 			{#each MODES as m (m.value)}
 				<button class={menuItem(mode === m.value)} onclick={() => select(m.value)}>
 					{#if m.value === 'screenshot'}
-						<CameraPhotoOutline class="h-4 w-4" />
+						<ImageOutline class="h-4 w-4" />
 					{:else}
 						<VideoCameraOutline class="h-4 w-4" />
 					{/if}

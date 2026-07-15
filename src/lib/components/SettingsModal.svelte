@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Modal } from 'flowbite-svelte';
+	import { ImageOutline, VideoCameraOutline } from 'flowbite-svelte-icons';
 	import { exportSettings, type ImageScale, type VideoFps } from '$lib/stores/exportSettings';
 	import type { Quality } from '$lib/utils/codec';
 
@@ -23,7 +24,12 @@
 		<h2 class="mb-4 text-lg font-semibold text-gray-800">Settings</h2>
 
 		<section class="mb-5">
-			<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Video</h3>
+			<h3
+				class="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"
+			>
+				<VideoCameraOutline class="h-3.5 w-3.5" />
+				Video
+			</h3>
 			<div class="space-y-2">
 				<div>
 					<div class="mb-1 text-xs text-gray-500">Resolution</div>
@@ -53,7 +59,12 @@
 		</section>
 
 		<section>
-			<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Image</h3>
+			<h3
+				class="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"
+			>
+				<ImageOutline class="h-3.5 w-3.5" />
+				Image
+			</h3>
 			<div>
 				<div class="mb-1 text-xs text-gray-500">Resolution</div>
 				<div class="flex flex-wrap gap-1">
