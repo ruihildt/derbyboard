@@ -321,16 +321,16 @@
 				</div>
 			{/if}
 		</div>
-	</div>
 
-	<button
-		class="fixed left-1/2 top-4 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm text-gray-700 shadow-lg shadow-black/10 hover:bg-red-100"
-		onclick={() => closeReplay(true)}
-		aria-label="Exit replay"
-	>
-		<CloseOutline class="h-4 w-4" />
-		Exit replay
-	</button>
+		<button
+			class="flex items-center gap-1.5 rounded-md bg-red-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-red-200"
+			onclick={() => closeReplay(true)}
+			aria-label="Exit"
+		>
+			<CloseOutline class="h-4 w-4" />
+			Exit
+		</button>
+	</div>
 {/if}
 
 {#if showExport && proj}
