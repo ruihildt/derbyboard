@@ -10,8 +10,7 @@
 	import ReplayBar from '$lib/components/ReplayBar.svelte';
 	import ZoneOverlay from '$lib/components/ZoneOverlay.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
-	import { recordingSettings } from '$lib/stores/recordingSettings';
-	import { screenshotSettings } from '$lib/stores/screenshotSettings';
+	import { captureSettings } from '$lib/stores/captureSettings';
 	import { formatRatio } from '$lib/utils/capture';
 	import type { TimelineFrame, TimelineProject } from '$lib/recording/timeline/types';
 
@@ -32,44 +31,23 @@
 	type CaptureTab = 'video' | 'screenshot';
 	let activeTab = $state<CaptureTab>('video');
 
-	// Replay uses the project's stored frame (non-interactive). On the Video tab,
-	// the selection overlay shows for any non-full format; it stays visible during
-	// recording (non-interactive) to mark the capture area.
+	// Replay uses the project's stored frame (non-interactive). Otherwise the
+	// shared capture selection overlay shows for any non-full format; it stays
+	// visible during recording (non-interactive) to mark the capture area.
 	let replayOverlay = $derived(!!replayFrame);
-	let videoZone = $derived(
-		activeTab === 'video' && $recordingSettings.format !== 'full'
-			? $recordingSettings.zone
-			: undefined
+	let captureZone = $derived(
+		!isReplaying && $captureSettings.format !== 'full' ? $captureSettings.zone : undefined
 	);
-	let videoRatio = $derived(formatRatio($recordingSettings.format));
+	let captureRatio = $derived(formatRatio($captureSettings.format));
 	let interactive = $derived(!isRecording && !replayFrame);
 
-	// Screenshot selection overlay, shown on the Screenshot tab for any non-full format.
-	let screenshotZone = $derived(
-		activeTab === 'screenshot' && $screenshotSettings.format !== 'full'
-			? $screenshotSettings.zone
-			: undefined
-	);
-	let screenshotRatio = $derived(formatRatio($screenshotSettings.format));
-
-	// Initialize the recording zone to the whole track the first time a non-full
-	// format is active on the Video tab.
+	// Initialize the shared zone to the whole track the first time a non-full
+	// format is selected.
 	$effect(() => {
-		if (activeTab !== 'video') return;
-		if ($recordingSettings.format === 'full') return;
-		if ($recordingSettings.zone) return;
+		if ($captureSettings.format === 'full') return;
+		if ($captureSettings.zone) return;
 		if (!game) return;
-		recordingSettings.update((s) => ({ ...s, zone: game.defaultZone(formatRatio(s.format)) }));
-	});
-
-	// Initialize the screenshot zone to the whole track the first time a non-full
-	// format is active on the Screenshot tab.
-	$effect(() => {
-		if (activeTab !== 'screenshot') return;
-		if ($screenshotSettings.format === 'full') return;
-		if ($screenshotSettings.zone) return;
-		if (!game) return;
-		screenshotSettings.update((s) => ({ ...s, zone: game.defaultZone(formatRatio(s.format)) }));
+		captureSettings.update((s) => ({ ...s, zone: game.defaultZone(formatRatio(s.format)) }));
 	});
 
 	onMount(() => {
@@ -81,20 +59,12 @@
 	<div id="container" class="absolute left-0 top-0 h-screen w-screen"></div>
 	{#if replayOverlay && replayFrame}
 		<ZoneOverlay zone={replayFrame.region} ratio={null} interactive={false} onchange={() => {}} />
-	{:else if videoZone}
+	{:else if captureZone}
 		<ZoneOverlay
-			zone={videoZone}
-			ratio={videoRatio}
+			zone={captureZone}
+			ratio={captureRatio}
 			{interactive}
-			onchange={(z) => recordingSettings.update((s) => ({ ...s, zone: z }))}
-		/>
-	{/if}
-	{#if screenshotZone}
-		<ZoneOverlay
-			zone={screenshotZone}
-			ratio={screenshotRatio}
-			{interactive}
-			onchange={(z) => screenshotSettings.update((s) => ({ ...s, zone: z }))}
+			onchange={(z) => captureSettings.update((s) => ({ ...s, zone: z }))}
 		/>
 	{/if}
 </main>

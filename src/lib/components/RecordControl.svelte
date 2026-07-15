@@ -1,33 +1,25 @@
 <script lang="ts">
 	import { ToolbarButton } from 'flowbite-svelte';
-	import {
-		MicrophoneOutline,
-		MicrophoneSlashOutline,
-		PlayOutline,
-		StopSolid
-	} from 'flowbite-svelte-icons';
+	import { MicrophoneOutline, MicrophoneSlashOutline, StopSolid } from 'flowbite-svelte-icons';
 	import { get } from 'svelte/store';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { TimelineRecorder } from '$lib/recording/timeline/TimelineRecorder';
 	import { AudioCapture } from '$lib/recording/timeline/AudioCapture';
-	import { recordingSettings } from '$lib/stores/recordingSettings';
-	import { formatRatio, type CaptureFormat } from '$lib/utils/capture';
+	import { captureSettings } from '$lib/stores/captureSettings';
+	import { formatRatio } from '$lib/utils/capture';
 	import type { TimelineProject } from '$lib/recording/timeline/types';
-	import ZoneFormatSelect from './ZoneFormatSelect.svelte';
 
 	let {
 		isRecording = $bindable(false),
 		game = $bindable(),
 		locked = $bindable(false),
 		disabled = false,
-		onLoadReplay,
 		onRecorded
 	}: {
 		isRecording: boolean;
 		game: KonvaGame;
 		locked?: boolean;
 		disabled?: boolean;
-		onLoadReplay?: () => void;
 		onRecorded?: (project: TimelineProject, audioBlob: Blob | null) => void;
 	} = $props();
 
@@ -44,11 +36,6 @@
 	$effect(() => {
 		locked = isRecording || countdown !== null || disabled;
 	});
-
-	function setFormat(format: CaptureFormat) {
-		// Reset the zone so the page re-initializes a default fitting the new format.
-		recordingSettings.update((s) => ({ ...s, format, zone: undefined }));
-	}
 
 	async function startRecording() {
 		countdown = 3;
@@ -92,7 +79,7 @@
 		try {
 			const { project } = recorder.stop();
 			const audioBlob = audioActive && audioCapture ? await audioCapture.stop() : null;
-			const s = get(recordingSettings);
+			const s = get(captureSettings);
 			if (s.format !== 'full') {
 				project.frame = { region: s.zone ?? game.defaultZone(formatRatio(s.format)) };
 			}
@@ -117,10 +104,7 @@
 	}
 </script>
 
-<div class="flex items-center gap-1 rounded-lg bg-white p-1 shadow-lg shadow-black/10">
-	<!-- Zone format selector -->
-	<ZoneFormatSelect format={$recordingSettings.format} disabled={locked} onchange={setFormat} />
-
+<div class="flex items-center gap-1">
 	<!-- Sound -->
 	<ToolbarButton
 		class={locked ? 'cursor-not-allowed opacity-50' : 'hover:bg-primary-200'}
@@ -159,16 +143,4 @@
 				.padStart(2, '0')}
 		</div>
 	{/if}
-
-	<div class="mx-1 h-6 w-px bg-gray-200"></div>
-
-	<!-- Load replay -->
-	<ToolbarButton
-		class={locked ? 'cursor-not-allowed opacity-50' : 'hover:bg-primary-200'}
-		onclick={() => onLoadReplay?.()}
-		disabled={locked}
-		aria-label="Load replay"
-	>
-		<PlayOutline class="h-5 w-5 text-gray-700" />
-	</ToolbarButton>
 </div>

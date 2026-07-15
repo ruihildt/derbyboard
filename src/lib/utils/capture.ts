@@ -9,14 +9,14 @@ import { ASPECT_RATIO, type AspectRatio } from './recording';
 export type CaptureFormat = 'custom' | '16:9' | '4:3' | '1:1' | 'full';
 
 /** Selector option order, shared by both menus. */
-export const CAPTURE_FORMATS: CaptureFormat[] = ['custom', '16:9', '4:3', '1:1', 'full'];
+export const CAPTURE_FORMATS: CaptureFormat[] = ['full', 'custom', '4:3', '16:9', '1:1'];
 
 export const FORMAT_LABELS: Record<CaptureFormat, string> = {
-	custom: 'Custom Region',
-	'16:9': '16:9',
+	custom: 'Custom region',
+	full: 'Full page',
 	'4:3': '4:3',
-	'1:1': '1:1',
-	full: 'Full Screen'
+	'16:9': '16:9',
+	'1:1': '1:1'
 };
 
 /** Selection rect as viewport-relative fractions (resolution-independent). */

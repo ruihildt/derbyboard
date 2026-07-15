@@ -3,9 +3,8 @@
 	import { CameraPhotoOutline } from 'flowbite-svelte-icons';
 	import { get } from 'svelte/store';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
-	import { screenshotSettings } from '$lib/stores/screenshotSettings';
-	import { formatRatio, type CaptureFormat } from '$lib/utils/capture';
-	import ZoneFormatSelect from './ZoneFormatSelect.svelte';
+	import { captureSettings } from '$lib/stores/captureSettings';
+	import { formatRatio } from '$lib/utils/capture';
 
 	let {
 		game,
@@ -15,13 +14,8 @@
 		disabled?: boolean;
 	} = $props();
 
-	function setFormat(format: CaptureFormat) {
-		// Reset the zone so the page re-initializes a default fitting the new format.
-		screenshotSettings.update((s) => ({ ...s, format, zone: undefined }));
-	}
-
 	function capture() {
-		const s = get(screenshotSettings);
+		const s = get(captureSettings);
 		const dataUrl =
 			s.format === 'full'
 				? game.exportAsImage(2)
@@ -33,13 +27,7 @@
 	}
 </script>
 
-<div class="flex items-center gap-1 rounded-lg bg-white p-1 shadow-lg shadow-black/10">
-	<!-- Zone format selector -->
-	<ZoneFormatSelect format={$screenshotSettings.format} {disabled} onchange={setFormat} />
-
-	<div class="mx-1 h-6 w-px bg-gray-200"></div>
-
-	<!-- Capture -->
+<div class="flex items-center gap-1">
 	<ToolbarButton
 		class="flex items-center gap-2 px-3 text-sm text-gray-700 {disabled
 			? 'cursor-not-allowed'
