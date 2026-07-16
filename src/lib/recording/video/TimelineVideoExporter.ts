@@ -1,6 +1,7 @@
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { SceneCanvas } from 'konva/lib/Canvas.js';
 import type { KonvaGame } from '$lib/konva/KonvaGame';
+import { colors } from '$lib/constants';
 import { interpolateSample } from '../timeline/interpolate';
 import type { TimelineProject } from '../timeline/types';
 
@@ -260,7 +261,8 @@ export class TimelineVideoExporter {
 				game.applySnapshot(interpolateSample(project, tMs));
 
 				if (outCtx) {
-					outCtx.clearRect(0, 0, encodeWidth, encodeHeight);
+					outCtx.fillStyle = colors.canvasBackground;
+					outCtx.fillRect(0, 0, encodeWidth, encodeHeight);
 					const workCtx = workScene.getContext();
 					for (const layer of layers) {
 						if (!layer.isVisible()) continue;
