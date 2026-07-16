@@ -24,19 +24,19 @@
 	}
 </script>
 
-<Toolbar class="inline-flex rounded-lg !p-1 shadow-lg shadow-black/5">
+<Toolbar class="inline-flex items-center rounded-lg !p-0 shadow-lg shadow-black/5">
 	<ToolbarButton
 		class={zoomLevel <= 10
-			? 'flex cursor-not-allowed items-center gap-2 px-3 text-sm text-gray-700 opacity-50'
-			: 'flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200'}
+			? 'flex !my-0 min-h-11 cursor-not-allowed items-center gap-2 rounded-lg px-3 text-sm text-gray-700 opacity-50'
+			: 'flex !my-0 min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-gray-700 hover:bg-primary-200'}
 		onclick={zoomOut}
 		disabled={zoomLevel <= 10}
 	>
 		<MinusOutline />
 	</ToolbarButton>
-	<div class="relative">
+	<div class="relative flex items-center">
 		<ToolbarButton
-			class="flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200"
+			class="flex !my-0 min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-gray-700 hover:bg-primary-200"
 			onclick={resetZoom}
 		>
 			{zoomLevel}%
@@ -47,8 +47,8 @@
 	</div>
 	<ToolbarButton
 		class={zoomLevel >= MAX_ZOOM * 100
-			? 'flex cursor-not-allowed items-center gap-2 px-3 text-sm text-gray-700 opacity-50'
-			: 'flex items-center gap-2 px-3 text-sm text-gray-700 hover:bg-primary-200'}
+			? 'flex !my-0 min-h-11 cursor-not-allowed items-center gap-2 rounded-lg px-3 text-sm text-gray-700 opacity-50'
+			: 'flex !my-0 min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-gray-700 hover:bg-primary-200'}
 		onclick={zoomIn}
 		disabled={zoomLevel >= MAX_ZOOM * 100}
 	>

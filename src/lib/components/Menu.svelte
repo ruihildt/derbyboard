@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { exportBoardToFile, loadBoardFromFile } from '$lib/utils/boardStateService';
+	import { isMobile } from '$lib/stores/viewport';
 
 	import { Dropdown, DropdownItem, Modal, Button } from 'flowbite-svelte';
 	import {
@@ -9,15 +10,20 @@
 		InfoCircleOutline,
 		FolderOpenOutline,
 		ArrowDownToBracketOutline,
-		ArchiveOutline
+		ArchiveOutline,
+		NewspaperOutline,
+		ExpandOutline,
+		MinimizeOutline
 	} from 'flowbite-svelte-icons';
 
 	let {
 		game,
-		onOpenArchive
+		onOpenArchive,
+		onOpenNews
 	}: {
 		game: KonvaGame;
 		onOpenArchive?: () => void;
+		onOpenNews?: () => void;
 	} = $props();
 
 	let dropdownOpen = $state(false);
@@ -60,9 +66,39 @@
 		dropdownOpen = false;
 		onOpenArchive?.();
 	}
+
+	function handleOpenNews() {
+		dropdownOpen = false;
+		onOpenNews?.();
+	}
+
+	let isFullscreen = $state(typeof document !== 'undefined' && !!document.fullscreenElement);
+
+	function onFullscreenChange() {
+		isFullscreen = !!document.fullscreenElement;
+	}
+
+	async function toggleFullscreen() {
+		if (!document.fullscreenElement) {
+			await document.documentElement.requestFullscreen();
+		} else {
+			await document.exitFullscreen();
+		}
+		isFullscreen = !!document.fullscreenElement;
+	}
+
+	function handleToggleFullscreen() {
+		dropdownOpen = false;
+		toggleFullscreen();
+	}
 </script>
 
-<Button class="bg-white !p-2 hover:bg-primary-200" onclick={() => toggleMenu}>
+<svelte:window onfullscreenchange={onFullscreenChange} />
+
+<Button
+	class="min-h-11 min-w-11 rounded-lg bg-white !p-1 hover:bg-primary-200"
+	onclick={() => toggleMenu}
+>
 	<BarsOutline class="h-6 w-6" color="gray" />
 </Button>
 
@@ -91,6 +127,26 @@
 	>
 		<ArchiveOutline class="mr-2 h-4 w-4" />
 		<span>Open recording</span>
+	</DropdownItem>
+	{#if $isMobile}
+		<DropdownItem
+			class="flex items-center text-gray-700 hover:bg-primary-200"
+			onclick={handleOpenNews}
+		>
+			<NewspaperOutline class="mr-2 h-4 w-4" />
+			<span>News</span>
+		</DropdownItem>
+	{/if}
+	<DropdownItem
+		class="flex items-center text-gray-700 hover:bg-primary-200"
+		onclick={handleToggleFullscreen}
+	>
+		{#if isFullscreen}
+			<MinimizeOutline class="mr-2 h-4 w-4" />
+		{:else}
+			<ExpandOutline class="mr-2 h-4 w-4" />
+		{/if}
+		<span>{isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}</span>
 	</DropdownItem>
 	<DropdownItem
 		class="flex items-center text-gray-700 hover:bg-primary-200"

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ChevronDownOutline } from 'flowbite-svelte-icons';
-	import { CAPTURE_FORMATS, FORMAT_LABELS, type CaptureFormat } from '$lib/utils/capture';
+	import { CAPTURE_FORMATS, FORMAT_LABELS_SHORT, type CaptureFormat } from '$lib/utils/capture';
 
 	let {
 		format,
@@ -39,22 +39,22 @@
 
 <div bind:this={menuRef} class="relative flex items-center">
 	<button
-		class="flex w-[132px] items-center justify-between gap-1 rounded px-2 py-1 text-sm text-gray-700 {disabled
+		class="flex min-h-11 w-[84px] items-center justify-between gap-1 rounded-lg px-2 py-1 text-sm text-gray-700 {disabled
 			? 'cursor-not-allowed opacity-50'
 			: 'hover:bg-primary-200'}"
 		onclick={() => (open = !open)}
 		{disabled}
 		aria-label="Capture zone format"
 	>
-		<span>{FORMAT_LABELS[format]}</span>
+		<span>{FORMAT_LABELS_SHORT[format]}</span>
 		<ChevronDownOutline class="h-3.5 w-3.5" />
 	</button>
 
 	{#if open}
-		<div class="absolute bottom-full left-0 z-40 mb-1 w-[132px] rounded-lg bg-white p-1 shadow-xl">
+		<div class="absolute bottom-full left-0 z-40 mb-1 w-[84px] rounded-lg bg-white p-1 shadow-xl">
 			{#each CAPTURE_FORMATS as f (f)}
 				<button class={menuItem(format === f)} onclick={() => select(f)}>
-					{FORMAT_LABELS[f]}
+					{FORMAT_LABELS_SHORT[f]}
 				</button>
 			{/each}
 		</div>

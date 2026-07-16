@@ -13,6 +13,7 @@
 	import { TimelinePlayer } from '$lib/recording/timeline/TimelinePlayer';
 	import type { TimelineFrame, TimelineProject } from '$lib/recording/timeline/types';
 	import { ASPECT_RATIO, type AspectRatio } from '$lib/utils/recording';
+	import { isMobile } from '$lib/stores/viewport';
 	import VideoExportDialog from './VideoExportDialog.svelte';
 
 	let {
@@ -234,10 +235,12 @@
 
 {#if player}
 	<div
-		class="fixed bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-lg bg-white px-4 py-2 shadow-lg shadow-black/10"
+		class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 flex items-center bg-white shadow-lg shadow-black/10 {$isMobile
+			? 'inset-x-0 gap-2 pl-[max(0.25rem,env(safe-area-inset-left))] pr-[max(0.25rem,env(safe-area-inset-right))]'
+			: 'left-1/2 max-w-[calc(100vw-2rem)] -translate-x-1/2 gap-3 rounded-lg px-2'}"
 	>
 		<ToolbarButton
-			class="flex items-center text-gray-700 hover:bg-primary-200"
+			class="flex !my-0 min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
 			onclick={togglePlay}
 			aria-label={playing ? 'Pause' : 'Play'}
 		>
@@ -248,13 +251,15 @@
 			{/if}
 		</ToolbarButton>
 
-		<div class="w-24 text-center text-xs tabular-nums text-gray-600">
+		<div class:hidden={$isMobile} class="w-24 text-center text-xs tabular-nums text-gray-600">
 			{fmt(currentTime)} / {fmt(duration)}
 		</div>
 
 		<div
 			bind:this={trackEl}
-			class="relative h-1.5 w-72 cursor-pointer rounded-full bg-gray-200"
+			class="relative h-1.5 cursor-pointer rounded-full bg-gray-200 {$isMobile
+				? 'w-auto min-w-[6rem] flex-1'
+				: 'w-72 flex-none'}"
 			role="slider"
 			aria-label="Seek"
 			aria-valuemin={0}
@@ -276,20 +281,20 @@
 			></div>
 		</div>
 
-		<div bind:this={caretRef} class="relative flex items-stretch rounded-md ring-1 ring-gray-200">
+		<div bind:this={caretRef} class="relative flex items-center">
 			<button
 				type="button"
-				class="flex items-center gap-1 whitespace-nowrap rounded-l-md py-1 pl-2 pr-2 text-xs text-gray-700 hover:bg-primary-200"
+				class="flex min-h-11 items-center gap-1 whitespace-nowrap rounded-l-lg py-1 pl-2 pr-2 text-xs text-gray-700 hover:bg-primary-200"
 				onclick={() => (showExport = true)}
 				aria-label="Save as video"
 			>
 				<VideoCameraOutline class="h-5 w-5" />
-				Save as video
+				<span class:hidden={$isMobile}>Save as video</span>
 			</button>
 			<div class="w-px self-stretch bg-gray-200"></div>
 			<button
 				type="button"
-				class="flex items-center rounded-r-md px-2 py-1 text-gray-700 hover:bg-primary-200"
+				class="flex min-h-11 items-center rounded-r-lg px-2 py-1 text-gray-700 hover:bg-primary-200"
 				onclick={() => (caretOpen = !caretOpen)}
 				aria-label="More save options"
 			>
@@ -312,7 +317,7 @@
 		</div>
 
 		<button
-			class="flex items-center gap-1.5 rounded-md bg-red-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-red-200"
+			class="flex min-h-11 items-center gap-1.5 rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-red-200"
 			onclick={() => closeReplay(true)}
 			aria-label="Exit"
 		>

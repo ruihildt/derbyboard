@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { ChevronDownOutline, ImageOutline, VideoCameraOutline } from 'flowbite-svelte-icons';
+	import { isMobile } from '$lib/stores/viewport';
 
 	export type CaptureMode = 'screenshot' | 'video';
 
@@ -45,7 +46,7 @@
 
 <div bind:this={menuRef} class="relative flex items-center">
 	<button
-		class="flex items-center gap-1.5 rounded px-2 py-1 text-sm text-gray-700 {disabled
+		class="flex min-h-11 items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-gray-700 {disabled
 			? 'cursor-not-allowed opacity-50'
 			: 'hover:bg-primary-200'}"
 		onclick={() => (open = !open)}
@@ -54,10 +55,10 @@
 	>
 		{#if mode === 'screenshot'}
 			<ImageOutline class="h-4 w-4" />
-			Image
+			<span class:hidden={$isMobile}>Image</span>
 		{:else}
 			<VideoCameraOutline class="h-4 w-4" />
-			Video
+			<span class:hidden={$isMobile}>Video</span>
 		{/if}
 		<ChevronDownOutline class="h-3.5 w-3.5" />
 	</button>

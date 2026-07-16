@@ -19,6 +19,15 @@ export const FORMAT_LABELS: Record<CaptureFormat, string> = {
 	'1:1': '1:1'
 };
 
+/** Compact labels for the narrow capture-format dropdown. */
+export const FORMAT_LABELS_SHORT: Record<CaptureFormat, string> = {
+	custom: 'Custom',
+	full: 'Full',
+	'4:3': '4:3',
+	'16:9': '16:9',
+	'1:1': '1:1'
+};
+
 /** Selection rect as viewport-relative fractions (resolution-independent). */
 export interface CaptureZone {
 	xFrac: number; // left / viewport width

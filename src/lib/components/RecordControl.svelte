@@ -127,7 +127,9 @@
 <div class="flex items-center gap-1">
 	<!-- Sound -->
 	<ToolbarButton
-		class={locked ? 'cursor-not-allowed opacity-50' : 'hover:bg-primary-200'}
+		class={locked
+			? '!m-0 flex min-h-11 min-w-11 items-center justify-center rounded-lg p-1 cursor-not-allowed opacity-50'
+			: '!m-0 flex min-h-11 min-w-11 items-center justify-center rounded-lg p-1 hover:bg-primary-200'}
 		onclick={() => (withAudio = !withAudio)}
 		disabled={locked}
 		aria-label={withAudio ? 'Disable microphone' : 'Enable microphone'}
@@ -141,7 +143,7 @@
 
 	<!-- Record / stop -->
 	<ToolbarButton
-		class="flex items-center gap-2 whitespace-nowrap px-3 text-sm text-gray-700 {disabled
+		class="flex min-h-11 items-center gap-2 whitespace-nowrap rounded-lg px-2 text-sm text-gray-700 !m-0 {disabled
 			? 'cursor-not-allowed'
 			: 'hover:bg-primary-200'}"
 		onclick={toggleRecording}
@@ -159,7 +161,7 @@
 	</ToolbarButton>
 
 	{#if isRecording}
-		<div class="mx-1 tabular-nums text-gray-600">
+		<div class="ml-1 mr-2 tabular-nums text-gray-600">
 			{Math.floor(elapsedTime / 60000)}:{Math.floor((elapsedTime % 60000) / 1000)
 				.toString()
 				.padStart(2, '0')}

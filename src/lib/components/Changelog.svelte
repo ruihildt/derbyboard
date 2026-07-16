@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { Drawer, Timeline, TimelineItem } from 'flowbite-svelte';
 	import { CloseOutline } from 'flowbite-svelte-icons';
+	import { isMobile } from '$lib/stores/viewport';
 	let hidden = true;
+
+	// Imperative entry point used by the Menu's "News" item on mobile.
+	export function open() {
+		hidden = false;
+	}
 
 	function onWindowPointerDown(e: PointerEvent) {
 		if (hidden) return;
@@ -18,7 +24,8 @@
 
 <button
 	on:click={() => (hidden = !hidden)}
-	class="news-trigger rounded-lg bg-white px-4 py-2 text-sm text-gray-700 hover:bg-primary-200"
+	class:hidden={$isMobile}
+	class="news-trigger inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-3 py-1 text-sm text-gray-700 hover:bg-primary-200"
 >
 	News
 </button>

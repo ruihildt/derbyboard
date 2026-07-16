@@ -119,14 +119,22 @@ export class KonvaGame {
 		this.packManager.determinePack();
 		this.playersLayer.batchDraw();
 
-		// Add window resize handler
+		// Resize handling: window + visualViewport (mobile address bar / keyboard).
+		// Debounced; see applyResize for the fit/restore logic.
 		window.addEventListener('resize', this.handleResize);
+		window.visualViewport?.addEventListener('resize', this.onVisualViewportResize);
 
+		this.prevPortrait = this.isPortrait();
 		this.watermark = new Watermark();
+
+		// If the default view crops the track (e.g. small/mobile portrait), fit it.
+		this.fitIfOverflowing();
 	}
 
 	destroy() {
+		if (this.resizeTimer) clearTimeout(this.resizeTimer);
 		window.removeEventListener('resize', this.handleResize);
+		window.visualViewport?.removeEventListener('resize', this.onVisualViewportResize);
 		this.trackSurfaceLayer.destroy();
 		this.trackLinesLayer.destroy();
 		this.engagementZoneLayer.destroy();
@@ -184,25 +192,56 @@ export class KonvaGame {
 		};
 	}
 
+	private resizeTimer: ReturnType<typeof setTimeout> | undefined;
+	private prevPortrait = false;
+
+	private isPortrait() {
+		return this.height > this.width;
+	}
+
+	// Debounced entry point shared by `resize` and `visualViewport` events.
 	private handleResize = () => {
-		this.recalculateDimensions();
-
-		// Center the stage
-		this.stage.position({ x: 0, y: 0 });
-		this.stage.scale({ x: BASE_ZOOM, y: BASE_ZOOM });
-
-		// Rebuild the entire stage
-		this.rebuildTrackAndPlayers();
-
-		this.updatePersistedState();
+		if (this.resizeTimer) clearTimeout(this.resizeTimer);
+		this.resizeTimer = setTimeout(() => this.applyResize(), 150);
 	};
 
-	private recalculateDimensions() {
-		// Update width and height properties to match current window
-		this.width = window.innerWidth;
-		this.height = window.innerHeight;
+	private onVisualViewportResize = () => {
+		// visualViewport also fires for scale-only changes (page pinch-zoom);
+		// applyResize no-ops when the layout size hasn't actually changed.
+		this.handleResize();
+	};
 
-		// Update stage size
+	private applyResize() {
+		const el = this.stage.container();
+		const newW = el?.clientWidth ?? window.innerWidth;
+		const newH = el?.clientHeight ?? window.innerHeight;
+		// Skip no-op / scale-only events.
+		if (Math.abs(newW - this.width) < 1 && Math.abs(newH - this.height) < 1) return;
+
+		const orientationChanged = this.prevPortrait !== newH > newW;
+		this.recalculateDimensions();
+		this.prevPortrait = this.isPortrait();
+		this.rebuildTrackAndPlayers();
+
+		if (this.replayMode) return; // replay drives the board; don't touch the view.
+
+		if (orientationChanged) {
+			// Track shape vs viewport changed a lot: re-fit the whole track.
+			this.fitToTrack();
+		} else {
+			// Keep the user's zoom/pan; the track re-centers via fresh geometry.
+			this.loadViewSettings();
+			this.stage.batchDraw();
+		}
+	}
+
+	private recalculateDimensions() {
+		// Measure the container (sized by CSS dvh/dvw) so the canvas matches the
+		// visible viewport; fall back to the window if unavailable.
+		const el = this.stage.container();
+		this.width = el?.clientWidth ?? window.innerWidth;
+		this.height = el?.clientHeight ?? window.innerHeight;
+
 		this.stage.width(this.width);
 		this.stage.height(this.height);
 	}
@@ -342,6 +381,50 @@ export class KonvaGame {
 			wFrac: (x1 - x0) / this.width,
 			hFrac: (y1 - y0) / this.height
 		};
+	}
+
+	/**
+	 * Fits the whole track (with margin) inside the viewport and centers it,
+	 * persisting the resulting view unless in replay mode. Used on orientation
+	 * change and whenever the default view would crop the track.
+	 */
+	fitToTrack(margin = FRAME_DEFAULT_MARGIN) {
+		const b = this.getTrackBounds();
+		const tw = (b.maxX - b.minX) * (1 + 2 * margin);
+		const th = (b.maxY - b.minY) * (1 + 2 * margin);
+		const cx = (b.minX + b.maxX) / 2;
+		const cy = (b.minY + b.maxY) / 2;
+
+		const scale = Math.min(this.width / tw, this.height / th, MAX_ZOOM);
+		const sx = this.width / 2 - cx * scale;
+		const sy = this.height / 2 - cy * scale;
+
+		this.stage.scale({ x: scale, y: scale });
+		this.stage.position({ x: sx, y: sy });
+
+		if (!this.replayMode) {
+			boardState.update((s) => ({
+				...s,
+				viewSettings: {
+					zoom: scale,
+					relativeX: sx / (this.width / 2),
+					relativeY: sy / (this.height / 2)
+				}
+			}));
+		}
+
+		this.stage.batchDraw();
+	}
+
+	/** Fits the track only if it currently overflows the viewport. */
+	private fitIfOverflowing() {
+		const b = this.getTrackBounds();
+		const zoom = this.stage.scaleX();
+		const tw = (b.maxX - b.minX) * zoom;
+		const th = (b.maxY - b.minY) * zoom;
+		if (tw > this.width || th > this.height) {
+			this.fitToTrack();
+		}
 	}
 
 	// Update zoom while maintaining the center point
