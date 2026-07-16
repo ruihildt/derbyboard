@@ -38,12 +38,11 @@
 	</div>
 	<div class="min-h-0 flex-1 overflow-y-auto pe-2 pl-2">
 		<Timeline>
-			<TimelineItem title="Same same but different" date="2025 April 1st" liClass="!mb-7">
+			<TimelineItem title="Same same but different" date="2026 July 19th" liClass="!mb-7">
 				<p>
 					This is the Track of Theseus, where everything is progressively being replaced over time.
-					But you can feel differences. An infinite canvas ready to be explored. A window of
-					opportunity when recording. A different approach to a start. And a refined design coming
-					to an end.
+					But you can feel differences. An infinite canvas ready to be explored. Recording your
+					experiences feels new again. The images stay as sharp as you, full zoom ahead!
 				</p>
 			</TimelineItem>
 			<TimelineItem title="Fingerplay" date="2024 December 2nd" liClass="!mb-7">
