@@ -206,7 +206,7 @@
 
 <div class="pointer-events-none absolute inset-0 z-20">
 	<div
-		class="absolute border-2 border-white/90 shadow-[0_0_0_100vmax_rgba(0,0,0,0.55)] {boxCursor}"
+		class="absolute shadow-[0_0_0_100vmax_rgba(0,0,0,0.55)] {boxCursor}"
 		style="left: {box.x}px; top: {box.y}px; width: {box.w}px; height: {box.h}px; pointer-events: {interactive
 			? 'auto'
 			: 'none'};"
@@ -245,51 +245,51 @@
 				class="absolute inset-y-0 right-0 w-3 cursor-ew-resize"
 				onpointerdown={(e) => beginResize(e, 'r')}
 			></div>
-			<!-- Corner handles (square): diagonal resize, drawn above the bands. -->
+			<!-- Corner handles: solid inward L-brackets hugging the zone from outside. -->
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize top-left"
-				class="absolute -left-1 -top-1 h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize border border-gray-400 bg-white"
+				class="absolute -left-0.5 -top-0.5 h-10 w-10 cursor-nwse-resize border-l-2 border-t-2 border-primary-600"
 				onpointerdown={(e) => beginResize(e, 'tl')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize top-right"
-				class="absolute -right-1 -top-1 h-3 w-3 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize border border-gray-400 bg-white"
+				class="absolute -right-0.5 -top-0.5 h-10 w-10 cursor-nesw-resize border-r-2 border-t-2 border-primary-600"
 				onpointerdown={(e) => beginResize(e, 'tr')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize bottom-left"
-				class="absolute -bottom-1 -left-1 h-3 w-3 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize border border-gray-400 bg-white"
+				class="absolute -left-0.5 -bottom-0.5 h-10 w-10 cursor-nesw-resize border-b-2 border-l-2 border-primary-600"
 				onpointerdown={(e) => beginResize(e, 'bl')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize bottom-right"
-				class="absolute -bottom-1 -right-1 h-3 w-3 translate-x-1/2 translate-y-1/2 cursor-nwse-resize border border-gray-400 bg-white"
+				class="absolute -right-0.5 -bottom-0.5 h-10 w-10 cursor-nwse-resize border-b-2 border-r-2 border-primary-600"
 				onpointerdown={(e) => beginResize(e, 'br')}
 			></div>
-			<!-- Edge midpoint markers (square): decoration only, pointer passes through. -->
+			<!-- Edge midpoint markers: short inset lines (decoration only). -->
 			<div
 				aria-hidden="true"
-				class="pointer-events-none absolute left-1/2 top-0 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border border-gray-400 bg-white"
+				class="pointer-events-none absolute left-1/2 -top-0.5 h-0.5 w-10 -translate-x-1/2 bg-primary-600"
 			></div>
 			<div
 				aria-hidden="true"
-				class="pointer-events-none absolute bottom-0 left-1/2 h-3 w-3 -translate-x-1/2 translate-y-1/2 border border-gray-400 bg-white"
+				class="pointer-events-none absolute -bottom-0.5 left-1/2 h-0.5 w-10 -translate-x-1/2 bg-primary-600"
 			></div>
 			<div
 				aria-hidden="true"
-				class="pointer-events-none absolute -left-1 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 border border-gray-400 bg-white"
+				class="pointer-events-none absolute -left-0.5 top-1/2 h-10 w-0.5 -translate-y-1/2 bg-primary-600"
 			></div>
 			<div
 				aria-hidden="true"
-				class="pointer-events-none absolute -right-1 top-1/2 h-3 w-3 translate-x-1/2 -translate-y-1/2 border border-gray-400 bg-white"
+				class="pointer-events-none absolute -right-0.5 top-1/2 h-10 w-0.5 -translate-y-1/2 bg-primary-600"
 			></div>
 		{/if}
 	</div>
