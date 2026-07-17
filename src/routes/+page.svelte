@@ -32,6 +32,9 @@
 
 	type CaptureTab = 'video' | 'screenshot';
 	let activeTab = $state<CaptureTab>('video');
+	// Capture-region interaction mode: 'board' = fully pass-through (default),
+	// 'edit' = resize handles hot. Only meaningful while a region is editable.
+	let regionMode = $state<'board' | 'edit'>('board');
 
 	// Replay uses the project's stored frame (non-interactive). Otherwise the
 	// shared capture selection overlay shows for any non-full format; it stays
@@ -66,6 +69,7 @@
 			zone={captureZone}
 			ratio={captureRatio}
 			{interactive}
+			mode={regionMode}
 			onchange={(z) => captureSettings.update((s) => ({ ...s, zone: z }))}
 		/>
 	{/if}
@@ -98,7 +102,7 @@
 	{#if !$isMobile}
 		<!-- Desktop: zoom bottom-left. -->
 		<div
-			class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] z-30"
+			class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] z-30 flex items-center gap-2"
 		>
 			<ZoomControl {game} />
 		</div>
@@ -124,6 +128,7 @@
 			{game}
 			bind:activeTab
 			bind:isRecording
+			bind:regionMode
 			onRecorded={(project, audioBlob) => replayBar?.replay(project, audioBlob)}
 		/>
 	</div>

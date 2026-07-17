@@ -6,12 +6,15 @@
 		zone,
 		ratio = null,
 		interactive = true,
+		mode = 'board',
 		onchange
 	}: {
 		zone: CaptureZone;
 		/** Aspect ratio to enforce, or null for free-form. */
 		ratio?: number | null;
 		interactive?: boolean;
+		/** 'edit' shows resize handles; 'board' is fully pass-through (visual guide). */
+		mode?: 'board' | 'edit';
 		onchange: (zone: CaptureZone) => void;
 	} = $props();
 
@@ -107,10 +110,14 @@
 	let drag: Drag | null = null;
 	let moving = $state(false);
 
-	let boxCursor = $derived(!interactive ? '' : moving ? 'cursor-grabbing' : 'cursor-grab');
+	// In Edit mode the box interior is a move target (grab cursor); otherwise the
+	// box is pass-through and shows no special cursor.
+	let boxCursor = $derived(
+		interactive && mode === 'edit' ? (moving ? 'cursor-grabbing' : 'cursor-grab') : ''
+	);
 
 	function beginMove(e: PointerEvent) {
-		if (!interactive) return;
+		if (!interactive || mode !== 'edit') return;
 		e.preventDefault();
 		drag = {
 			mode: 'move',
@@ -207,7 +214,8 @@
 <div class="pointer-events-none absolute inset-0 z-20">
 	<div
 		class="absolute shadow-[0_0_0_100vmax_rgba(0,0,0,0.55)] {boxCursor}"
-		style="left: {box.x}px; top: {box.y}px; width: {box.w}px; height: {box.h}px; pointer-events: {interactive
+		style="left: {box.x}px; top: {box.y}px; width: {box.w}px; height: {box.h}px; pointer-events: {interactive &&
+		mode === 'edit'
 			? 'auto'
 			: 'none'};"
 		onpointerdown={beginMove}
@@ -215,34 +223,34 @@
 		tabindex="-1"
 		aria-label="Capture selection"
 	>
-		{#if interactive}
+		{#if interactive && mode === 'edit'}
 			<!-- Full-edge resize hit bands (the whole edge is draggable). -->
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize top"
-				class="absolute inset-x-0 top-0 h-3 cursor-ns-resize"
+				class="pointer-events-auto absolute inset-x-0 top-0 h-3 cursor-ns-resize"
 				onpointerdown={(e) => beginResize(e, 't')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize bottom"
-				class="absolute inset-x-0 bottom-0 h-3 cursor-ns-resize"
+				class="pointer-events-auto absolute inset-x-0 bottom-0 h-3 cursor-ns-resize"
 				onpointerdown={(e) => beginResize(e, 'b')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize left"
-				class="absolute inset-y-0 left-0 w-3 cursor-ew-resize"
+				class="pointer-events-auto absolute inset-y-0 left-0 w-3 cursor-ew-resize"
 				onpointerdown={(e) => beginResize(e, 'l')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize right"
-				class="absolute inset-y-0 right-0 w-3 cursor-ew-resize"
+				class="pointer-events-auto absolute inset-y-0 right-0 w-3 cursor-ew-resize"
 				onpointerdown={(e) => beginResize(e, 'r')}
 			></div>
 			<!-- Corner handles: solid inward L-brackets hugging the zone from outside. -->
@@ -250,28 +258,28 @@
 				role="button"
 				tabindex="-1"
 				aria-label="Resize top-left"
-				class="absolute -left-0.5 -top-0.5 h-10 w-10 cursor-nwse-resize border-l-2 border-t-2 border-primary-600"
+				class="pointer-events-auto absolute -left-0.5 -top-0.5 h-10 w-10 cursor-nwse-resize border-l-2 border-t-2 border-primary-600"
 				onpointerdown={(e) => beginResize(e, 'tl')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize top-right"
-				class="absolute -right-0.5 -top-0.5 h-10 w-10 cursor-nesw-resize border-r-2 border-t-2 border-primary-600"
+				class="pointer-events-auto absolute -right-0.5 -top-0.5 h-10 w-10 cursor-nesw-resize border-r-2 border-t-2 border-primary-600"
 				onpointerdown={(e) => beginResize(e, 'tr')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize bottom-left"
-				class="absolute -left-0.5 -bottom-0.5 h-10 w-10 cursor-nesw-resize border-b-2 border-l-2 border-primary-600"
+				class="pointer-events-auto absolute -left-0.5 -bottom-0.5 h-10 w-10 cursor-nesw-resize border-b-2 border-l-2 border-primary-600"
 				onpointerdown={(e) => beginResize(e, 'bl')}
 			></div>
 			<div
 				role="button"
 				tabindex="-1"
 				aria-label="Resize bottom-right"
-				class="absolute -right-0.5 -bottom-0.5 h-10 w-10 cursor-nwse-resize border-b-2 border-r-2 border-primary-600"
+				class="pointer-events-auto absolute -right-0.5 -bottom-0.5 h-10 w-10 cursor-nwse-resize border-b-2 border-r-2 border-primary-600"
 				onpointerdown={(e) => beginResize(e, 'br')}
 			></div>
 			<!-- Edge midpoint markers: short inset lines (decoration only). -->

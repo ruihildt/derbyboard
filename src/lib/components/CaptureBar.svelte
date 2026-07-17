@@ -7,6 +7,7 @@
 	import { type CaptureFormat } from '$lib/utils/capture';
 	import CaptureModeSelect from './CaptureModeSelect.svelte';
 	import RecordControl from './RecordControl.svelte';
+	import RegionModeToggle from './RegionModeToggle.svelte';
 	import ScreenshotControl from './ScreenshotControl.svelte';
 	import SettingsModal from './SettingsModal.svelte';
 	import ZoneFormatSelect from './ZoneFormatSelect.svelte';
@@ -15,11 +16,13 @@
 		game,
 		activeTab = $bindable<'video' | 'screenshot'>('video'),
 		isRecording = $bindable(false),
+		regionMode = $bindable<'board' | 'edit'>('board'),
 		onRecorded
 	}: {
 		game: KonvaGame;
 		activeTab?: 'video' | 'screenshot';
 		isRecording?: boolean;
+		regionMode?: 'board' | 'edit';
 		onRecorded?: (project: TimelineProject, audioBlob: Blob | null) => void;
 	} = $props();
 
@@ -53,6 +56,11 @@
 				disabled={videoLocked}
 				onchange={setFormat}
 			/>
+
+			{#if $captureSettings.format !== 'full'}
+				<div class="h-7 w-px bg-gray-200"></div>
+				<RegionModeToggle bind:mode={regionMode} />
+			{/if}
 
 			<div class="h-7 w-px bg-gray-200"></div>
 
