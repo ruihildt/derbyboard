@@ -20,6 +20,7 @@
 		"@tailwindcss/typography": "^0.5.20",
 		"@tailwindcss/vite": "^4.3.2",
 		"@types/eslint": "^9.6.1",
+		"@vitejs/plugin-basic-ssl": "^2.3.0",
 		"eslint": "^10.6.0",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.20.0",
