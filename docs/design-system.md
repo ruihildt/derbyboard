@@ -20,9 +20,14 @@ shorter, raise it here first.
 
 ### Bars / pills
 
-- A bar's height is defined **by its buttons** (44px), not by padding.
-- Do **not** add vertical padding to bar containers — it inflates them past 44px and
-  breaks height consistency across bars.
+- Every bar (zoom, capture, replay) is **exactly 44px** (`h-11` / `2.75rem`) tall,
+  matching the zoom bar. Control bars (`control-bar` class, styled in
+  `src/app.css`) enforce this with a fixed `height: 2.75rem`.
+- Inside capture/replay control bars, buttons are **36px** (`min-h-9`), inset with
+  `0.25rem` padding so there is consistent spacing around every button (4px on all
+  sides, plus the bar's `gap-*` between buttons). Icon-only buttons stay square at
+  `min-h-9 min-w-9` (36×36). Buttons get a resting `bg-gray-100` background;
+  hover/active backgrounds are still per-button utilities.
 - Flowbite `ToolbarButton` carries a default `m-0.5` that adds vertical height; always
   pass `!my-0` on `ToolbarButton`s used inside bars so the bar stays exactly 44px.
 - Horizontal spacing between buttons uses the bar's `gap-*`, not button margins.

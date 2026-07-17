@@ -235,12 +235,12 @@
 
 {#if player}
 	<div
-		class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 flex items-center bg-white shadow-lg shadow-black/10 {$isMobile
+		class="control-bar fixed bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 flex items-center bg-white shadow-lg shadow-black/10 {$isMobile
 			? 'inset-x-0 gap-2 pl-[max(0.25rem,env(safe-area-inset-left))] pr-[max(0.25rem,env(safe-area-inset-right))]'
 			: 'left-1/2 max-w-[calc(100vw-2rem)] -translate-x-1/2 gap-3 rounded-lg px-2'}"
 	>
 		<ToolbarButton
-			class="flex !my-0 min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
+			class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
 			onclick={togglePlay}
 			aria-label={playing ? 'Pause' : 'Play'}
 		>
@@ -257,7 +257,7 @@
 
 		<div
 			bind:this={trackEl}
-			class="relative flex h-11 cursor-pointer items-center touch-none {$isMobile
+			class="relative flex h-9 cursor-pointer items-center touch-none {$isMobile
 				? 'w-auto min-w-[6rem] flex-1'
 				: 'w-72 flex-none'}"
 			role="slider"
@@ -288,7 +288,7 @@
 		<div bind:this={caretRef} class="relative flex items-center">
 			<button
 				type="button"
-				class="flex min-h-11 items-center gap-1 whitespace-nowrap rounded-l-lg py-1 pl-2 pr-2 text-xs text-gray-700 hover:bg-primary-200"
+				class="flex min-h-9 items-center gap-1 whitespace-nowrap rounded-l-lg py-1 pl-2 pr-2 text-xs text-gray-700 hover:bg-primary-200"
 				onclick={() => (showExport = true)}
 				aria-label="Save as video"
 			>
@@ -298,7 +298,7 @@
 			<div class="w-px self-stretch bg-gray-200"></div>
 			<button
 				type="button"
-				class="flex min-h-11 items-center rounded-r-lg px-2 py-1 text-gray-700 hover:bg-primary-200"
+				class="flex min-h-9 items-center rounded-r-lg px-2 py-1 text-gray-700 hover:bg-primary-200"
 				onclick={() => (caretOpen = !caretOpen)}
 				aria-label="More save options"
 			>
@@ -321,7 +321,7 @@
 		</div>
 
 		<button
-			class="flex min-h-11 items-center gap-1.5 rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-red-200"
+			class="flex min-h-9 items-center gap-1.5 rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-red-200"
 			onclick={() => closeReplay(true)}
 			aria-label="Exit"
 		>

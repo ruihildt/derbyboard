@@ -46,17 +46,15 @@
 <div class="flex items-stretch gap-2">
 	{#if !videoLocked}
 		<!-- Toolbar: Settings | Custom Region | Screenshot/Video (hidden while recording) -->
-		<div class="flex items-center gap-2 rounded-lg bg-white shadow-lg shadow-black/10">
+		<div class="control-bar flex items-center gap-1 rounded-lg bg-white shadow-lg shadow-black/10">
 			<button
-				class="flex min-h-11 items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-gray-700 hover:bg-primary-200"
+				class="flex min-h-9 items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-gray-700 hover:bg-primary-200"
 				onclick={() => (settingsOpen = true)}
 				aria-label="Settings"
 			>
 				<CogOutline class="h-4 w-4" />
 				<span class:hidden={$isMobile}>Settings</span>
 			</button>
-
-			<div class="h-7 w-px bg-gray-200"></div>
 
 			<ZoneFormatSelect
 				format={$captureSettings.format}
@@ -65,11 +63,8 @@
 			/>
 
 			{#if $captureSettings.format !== 'full'}
-				<div class="h-7 w-px bg-gray-200"></div>
 				<RegionModeToggle bind:mode={regionMode} />
 			{/if}
-
-			<div class="h-7 w-px bg-gray-200"></div>
 
 			<CaptureModeSelect
 				mode={activeTab}
@@ -80,7 +75,7 @@
 	{/if}
 
 	<!-- Recording Bar: active controls (always visible; the start/stop focus while recording) -->
-	<div class="flex items-center rounded-lg bg-white shadow-lg shadow-black/10">
+	<div class="control-bar flex items-center rounded-lg bg-white shadow-lg shadow-black/10">
 		{#if activeTab === 'video'}
 			<RecordControl bind:isRecording bind:locked={videoLocked} {game} {onRecorded} />
 		{:else}

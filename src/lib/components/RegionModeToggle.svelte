@@ -11,7 +11,7 @@
 <Toolbar class="inline-flex items-center rounded-lg !p-0 shadow-lg shadow-black/5">
 	<div class="relative flex items-center">
 		<ToolbarButton
-			class="flex !my-0 min-h-11 items-center gap-2 rounded-lg px-3 text-sm transition-colors {mode ===
+			class="flex !my-0 min-h-9 items-center gap-2 rounded-lg px-3 text-sm transition-colors {mode ===
 			'edit'
 				? 'bg-primary-500 text-white hover:bg-primary-600'
 				: 'text-gray-700 hover:bg-primary-200'}"

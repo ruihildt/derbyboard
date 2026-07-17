@@ -46,7 +46,7 @@
 
 <div bind:this={menuRef} class="relative flex items-center">
 	<button
-		class="flex min-h-11 items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-gray-700 {disabled
+		class="flex min-h-9 items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-gray-700 {disabled
 			? 'cursor-not-allowed opacity-50'
 			: 'hover:bg-primary-200'}"
 		onclick={() => (open = !open)}

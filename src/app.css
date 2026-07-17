@@ -27,6 +27,26 @@ body {
 	@apply bg-canvas;
 }
 
+/* Control bars (capture / replay) are exactly 44px tall, matching the zoom bar.
+   Their buttons are 36px (`min-h-9`), inset with 0.25rem padding so there is
+   consistent spacing around every button. Buttons also get a resting background.
+   Defined in the base layer so per-button hover/active utilities still win. */
+@layer base {
+	.control-bar {
+		padding: 0.25rem;
+		height: 2.75rem;
+	}
+	.control-bar button {
+		background-color: var(--color-gray-100);
+	}
+}
+
+/* Hide the Flowbite focus ring after pointer activation; keep it for keyboard nav. */
+button:focus:not(:focus-visible) {
+	outline: none;
+	--tw-ring-shadow: 0 0 #0000;
+}
+
 /* Stop the mobile "drag down to reload" affordance (pull-to-refresh). */
 html,
 body {

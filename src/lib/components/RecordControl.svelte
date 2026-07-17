@@ -128,8 +128,8 @@
 	<!-- Sound -->
 	<ToolbarButton
 		class={locked
-			? '!m-0 flex min-h-11 min-w-11 items-center justify-center rounded-lg p-1 cursor-not-allowed opacity-50'
-			: '!m-0 flex min-h-11 min-w-11 items-center justify-center rounded-lg p-1 hover:bg-primary-200'}
+			? '!m-0 flex min-h-9 min-w-9 items-center justify-center rounded-lg p-1 cursor-not-allowed opacity-50'
+			: '!m-0 flex min-h-9 min-w-9 items-center justify-center rounded-lg p-1 hover:bg-primary-200'}
 		onclick={() => (withAudio = !withAudio)}
 		disabled={locked}
 		aria-label={withAudio ? 'Disable microphone' : 'Enable microphone'}
@@ -143,7 +143,7 @@
 
 	<!-- Record / stop -->
 	<ToolbarButton
-		class="flex min-h-11 items-center gap-2 whitespace-nowrap rounded-lg px-2 text-sm text-gray-700 !m-0 {disabled
+		class="flex min-h-9 items-center gap-2 whitespace-nowrap rounded-lg px-2 text-sm text-gray-700 !m-0 {disabled
 			? 'cursor-not-allowed'
 			: 'hover:bg-primary-200'}"
 		onclick={toggleRecording}

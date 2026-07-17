@@ -34,7 +34,7 @@
 
 <div class="flex items-center gap-1">
 	<ToolbarButton
-		class="!m-0 flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-gray-700 {disabled
+		class="!m-0 flex min-h-9 items-center gap-2 rounded-lg px-3 text-sm text-gray-700 {disabled
 			? 'cursor-not-allowed'
 			: 'hover:bg-primary-200'}"
 		onclick={capture}
