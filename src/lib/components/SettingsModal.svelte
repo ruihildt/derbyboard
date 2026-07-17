@@ -27,7 +27,7 @@
 	};
 </script>
 
-<Modal bind:open size="sm">
+<Modal bind:open size="sm" classes={{ close: 'hover:bg-primary-200' }}>
 	<div class="px-5 pb-2 pt-4">
 		<h2 class="mb-4 text-lg font-semibold text-gray-800">Settings</h2>
 
