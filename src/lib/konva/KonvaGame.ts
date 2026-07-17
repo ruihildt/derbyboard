@@ -18,6 +18,7 @@ import { KonvaTrackGeometry, type Point } from './KonvaTrackGeometry';
 import { KonvaPlayerManager } from './KonvaPlayerManager';
 import { KonvaPackManager } from './KonvaPackManager';
 import { KonvaRecorder } from './KonvaRecorder';
+import { KonvaGestureHandler } from './KonvaGestureHandler';
 import { Watermark, type WatermarkSize } from './Watermark';
 import type { CaptureZone } from '$lib/utils/capture';
 import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
@@ -42,6 +43,8 @@ export class KonvaGame {
 
 	/** When true, replay drives the board: editing is locked and pack logic is not double-run. */
 	private replayMode = false;
+
+	private gestureHandler!: KonvaGestureHandler;
 
 	constructor(containerId: string, width: number, height: number) {
 		// Initialize basic properties first
@@ -124,6 +127,14 @@ export class KonvaGame {
 		window.addEventListener('resize', this.handleResize);
 		window.visualViewport?.addEventListener('resize', this.onVisualViewportResize);
 
+		// Pinch-zoom (touch) + wheel-zoom (desktop), anchored at the gesture point.
+		this.gestureHandler = new KonvaGestureHandler(
+			this.stage,
+			(point, scale) => this.zoomAt(point, scale),
+			() => this.replayMode,
+			() => this.updatePersistedState()
+		);
+
 		this.prevPortrait = this.isPortrait();
 		this.watermark = new Watermark();
 
@@ -135,6 +146,7 @@ export class KonvaGame {
 		if (this.resizeTimer) clearTimeout(this.resizeTimer);
 		window.removeEventListener('resize', this.handleResize);
 		window.visualViewport?.removeEventListener('resize', this.onVisualViewportResize);
+		this.gestureHandler.destroy();
 		this.trackSurfaceLayer.destroy();
 		this.trackLinesLayer.destroy();
 		this.engagementZoneLayer.destroy();
@@ -453,6 +465,24 @@ export class KonvaGame {
 
 		this.stage.scale({ x: newScale, y: newScale });
 		this.stage.position({ x: newX, y: newY });
+		this.stage.batchDraw();
+	}
+
+	/**
+	 * Zoom while keeping the world point under `viewportPoint` (a stage-space pixel)
+	 * fixed in place. Used by pinch (anchored at the midpoint) and wheel (cursor).
+	 * The caller persists the resulting view; this only applies the transform.
+	 */
+	private zoomAt(viewportPoint: { x: number; y: number }, newScale: number) {
+		const s = this.stage.scaleX();
+		const worldX = (viewportPoint.x - this.stage.x()) / s;
+		const worldY = (viewportPoint.y - this.stage.y()) / s;
+		const clamped = Math.min(Math.max(newScale, MIN_ZOOM), MAX_ZOOM);
+		this.stage.scale({ x: clamped, y: clamped });
+		this.stage.position({
+			x: viewportPoint.x - worldX * clamped,
+			y: viewportPoint.y - worldY * clamped
+		});
 		this.stage.batchDraw();
 	}
 

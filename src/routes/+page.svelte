@@ -58,7 +58,12 @@
 	});
 
 	onMount(() => {
-		game = new KonvaGame('container', window.innerWidth, window.innerHeight);
+		const el = document.getElementById('container')!;
+		game = new KonvaGame(
+			'container',
+			el.clientWidth || window.innerWidth,
+			el.clientHeight || window.innerHeight
+		);
 	});
 </script>
 

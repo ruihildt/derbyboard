@@ -257,7 +257,7 @@
 
 		<div
 			bind:this={trackEl}
-			class="relative h-1.5 cursor-pointer rounded-full bg-gray-200 {$isMobile
+			class="relative flex h-11 cursor-pointer items-center touch-none {$isMobile
 				? 'w-auto min-w-[6rem] flex-1'
 				: 'w-72 flex-none'}"
 			role="slider"
@@ -272,13 +272,17 @@
 			onkeydown={onTrackKey}
 		>
 			<div
-				class="absolute left-0 top-0 h-full rounded-full bg-primary-500 transition-[width] duration-75"
-				style="width: {pct}%"
-			></div>
-			<div
-				class="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-1 ring-primary-500"
-				style="left: {pct}%"
-			></div>
+				class="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-gray-200"
+			>
+				<div
+					class="absolute left-0 top-0 h-full rounded-full bg-primary-500 transition-[width] duration-75"
+					style="width: {pct}%"
+				></div>
+				<div
+					class="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-1 ring-primary-500"
+					style="left: {pct}%"
+				></div>
+			</div>
 		</div>
 
 		<div bind:this={caretRef} class="relative flex items-center">
