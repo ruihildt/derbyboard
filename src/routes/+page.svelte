@@ -100,7 +100,7 @@
 
 {#if !isReplaying}
 	<div
-		class="fixed right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] z-30"
+		class="fixed right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] z-[60]"
 	>
 		<Changelog bind:this={changelog} />
 	</div>
