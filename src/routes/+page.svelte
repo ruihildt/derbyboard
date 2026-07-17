@@ -6,6 +6,7 @@
 
 	import CaptureBar from '$lib/components/CaptureBar.svelte';
 	import Changelog from '$lib/components/Changelog.svelte';
+	import FullscreenToggle from '$lib/components/FullscreenToggle.svelte';
 	import Menu from '$lib/components/Menu.svelte';
 	import ReplayBar from '$lib/components/ReplayBar.svelte';
 	import RotateHint from '$lib/components/RotateHint.svelte';
@@ -120,6 +121,7 @@
 			class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] z-30 flex items-center gap-2"
 		>
 			<ZoomControl {game} />
+			<FullscreenToggle />
 		</div>
 	{:else}
 		<!-- Mobile: zoom grouped top-right. -->
@@ -127,6 +129,7 @@
 			class="fixed right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] z-30 flex items-center gap-2"
 		>
 			<ZoomControl {game} />
+			<FullscreenToggle />
 		</div>
 	{/if}
 {/if}

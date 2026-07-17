@@ -11,9 +11,7 @@
 		FolderOpenOutline,
 		ArrowDownToBracketOutline,
 		ArchiveOutline,
-		NewspaperOutline,
-		ExpandOutline,
-		MinimizeOutline
+		NewspaperOutline
 	} from 'flowbite-svelte-icons';
 
 	let {
@@ -71,29 +69,7 @@
 		dropdownOpen = false;
 		onOpenNews?.();
 	}
-
-	let isFullscreen = $state(typeof document !== 'undefined' && !!document.fullscreenElement);
-
-	function onFullscreenChange() {
-		isFullscreen = !!document.fullscreenElement;
-	}
-
-	async function toggleFullscreen() {
-		if (!document.fullscreenElement) {
-			await document.documentElement.requestFullscreen();
-		} else {
-			await document.exitFullscreen();
-		}
-		isFullscreen = !!document.fullscreenElement;
-	}
-
-	function handleToggleFullscreen() {
-		dropdownOpen = false;
-		toggleFullscreen();
-	}
 </script>
-
-<svelte:window onfullscreenchange={onFullscreenChange} />
 
 <Button
 	class="min-h-11 min-w-11 rounded-lg bg-white !p-1 hover:bg-primary-200"
@@ -137,17 +113,6 @@
 			<span>News</span>
 		</DropdownItem>
 	{/if}
-	<DropdownItem
-		class="flex items-center text-gray-700 hover:bg-primary-200"
-		onclick={handleToggleFullscreen}
-	>
-		{#if isFullscreen}
-			<MinimizeOutline class="mr-2 h-4 w-4" />
-		{:else}
-			<ExpandOutline class="mr-2 h-4 w-4" />
-		{/if}
-		<span>{isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}</span>
-	</DropdownItem>
 	<DropdownItem
 		class="flex items-center text-gray-700 hover:bg-primary-200"
 		href="https://github.com/ruihildt/derbyboard"
