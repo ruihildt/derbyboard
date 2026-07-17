@@ -67,7 +67,7 @@
 	});
 </script>
 
-<main class="h-[100dvh] w-[100dvw]">
+<main class="relative h-[100dvh] w-[100dvw] overflow-hidden">
 	<div id="container" class="absolute left-0 top-0 h-[100dvh] w-[100dvw]"></div>
 	{#if replayOverlay && replayFrame}
 		<ZoneOverlay zone={replayFrame.region} ratio={null} interactive={false} onchange={() => {}} />

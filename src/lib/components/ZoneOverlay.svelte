@@ -235,7 +235,7 @@
 		class="absolute shadow-[0_0_0_100vmax_rgba(0,0,0,0.55)]"
 		style="left: {box.x}px; top: {box.y}px; width: {box.w}px; height: {box.h}px; pointer-events: none; outline: {mode ===
 		'board'
-			? '0.5px solid var(--color-primary-600)'
+			? '1px solid var(--color-primary-600)'
 			: 'none'}; transition: {animating ? 'left 0.3s ease-out, top 0.3s ease-out' : 'none'};"
 	>
 		{#if watermark}
