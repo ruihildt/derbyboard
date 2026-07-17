@@ -4,7 +4,7 @@
 	import type { TimelineProject } from '$lib/recording/timeline/types';
 	import { captureSettings } from '$lib/stores/captureSettings';
 	import { isMobile } from '$lib/stores/viewport';
-	import { type CaptureFormat } from '$lib/utils/capture';
+	import { formatRatio, type CaptureFormat } from '$lib/utils/capture';
 	import CaptureModeSelect from './CaptureModeSelect.svelte';
 	import RecordControl from './RecordControl.svelte';
 	import RegionModeToggle from './RegionModeToggle.svelte';
@@ -31,8 +31,15 @@
 	let settingsOpen = $state(false);
 
 	function setFormat(format: CaptureFormat) {
-		// Reset the zone so the page re-initializes a default fitting the new format.
-		captureSettings.update((s) => ({ ...s, format, zone: undefined }));
+		captureSettings.update((s) => ({
+			...s,
+			format,
+			// Set the new default zone directly. Clearing to `undefined` makes
+			// captureZone falsy, unmounting the overlay and remounting it — which
+			// resets the centering baseline so the ratio-change centering never
+			// fires. Keeping a valid zone keeps it mounted so that effect runs.
+			zone: format === 'full' ? s.zone : game.defaultZone(formatRatio(format))
+		}));
 	}
 </script>
 

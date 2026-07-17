@@ -109,11 +109,18 @@
 		originH: number;
 	};
 	let drag: Drag | null = null;
+	let animating = $state(false);
+	let centerTimer: ReturnType<typeof setTimeout> | undefined;
 
 	function beginResize(e: PointerEvent, handle: Handle) {
 		if (!interactive) return;
 		e.preventDefault();
 		e.stopPropagation();
+		if (centerTimer) {
+			clearTimeout(centerTimer);
+			centerTimer = undefined;
+		}
+		animating = false;
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		drag = {
 			handle,
@@ -173,8 +180,47 @@
 		drag = null;
 		window.removeEventListener('pointermove', onPointerMove);
 		window.removeEventListener('pointerup', endDrag);
-		emit();
+		// Lock the resized size to its clamped value, then animate to page center.
+		width = box.w;
+		height = box.h;
+		centerZone();
 	}
+
+	// Slide the zone to the center of the page (size unchanged), then persist.
+	// The box's CSS transition performs the animation.
+	function centerZone() {
+		const targetLeft = (vw - box.w) / 2;
+		const targetTop = (vh - box.h) / 2;
+		animating = true;
+		// Defer the value change to the next frame so the transition style is
+		// applied first; otherwise the browser won't animate the move.
+		requestAnimationFrame(() => {
+			left = targetLeft;
+			top = targetTop;
+			if (centerTimer) clearTimeout(centerTimer);
+			centerTimer = setTimeout(() => {
+				animating = false;
+				emit();
+			}, 320);
+		});
+	}
+
+	// Re-center (animated) whenever the recording zone mode is toggled.
+	let prevMode = untrack(() => mode);
+	$effect(() => {
+		if (mode === prevMode || !interactive) return;
+		prevMode = mode;
+		centerZone();
+	});
+
+	// Re-center when the zone format changes too — this is the action available
+	// while edit mode is off (board mode), so centering triggers then as well.
+	let prevRatio = untrack(() => ratio);
+	$effect(() => {
+		if (ratio === prevRatio || !interactive) return;
+		prevRatio = ratio;
+		centerZone();
+	});
 
 	function onResize() {
 		vw = window.innerWidth;
@@ -187,7 +233,9 @@
 <div class="pointer-events-none absolute inset-0 z-20">
 	<div
 		class="absolute shadow-[0_0_0_100vmax_rgba(0,0,0,0.55)]"
-		style="left: {box.x}px; top: {box.y}px; width: {box.w}px; height: {box.h}px; pointer-events: none;"
+		style="left: {box.x}px; top: {box.y}px; width: {box.w}px; height: {box.h}px; pointer-events: none; transition: {animating
+			? 'left 0.3s ease-out, top 0.3s ease-out'
+			: 'none'};"
 	>
 		{#if watermark}
 			<WatermarkPreview />
