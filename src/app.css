@@ -26,3 +26,16 @@
 body {
 	@apply bg-canvas;
 }
+
+/* Stop the mobile "drag down to reload" affordance (pull-to-refresh). */
+html,
+body {
+	overscroll-behavior-y: contain;
+}
+
+/* The board owns its touches: no browser scroll/pinch/double-tap-zoom
+   hijack. Prerequisite for in-app pinch-zoom (Tier 2). */
+#container,
+#container canvas {
+	touch-action: none;
+}
