@@ -35,10 +35,9 @@
 			<h3
 				class="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"
 			>
-				General
+				Watermark
 			</h3>
 			<div>
-				<div class="mb-1 text-xs text-gray-500">Watermark</div>
 				<div class="flex flex-wrap gap-1">
 					{#each WATERMARK_SIZES as size (size)}
 						<button
