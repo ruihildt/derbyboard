@@ -19,14 +19,16 @@ The main goal is to make it as easy as possible sharing roller derby tactics and
 
 - Save and load board state
 - Reset board state
+- Save & reload animation sequences
 
 🎥 Recording Capabilities
 
 - High-quality video capture
 - Optional audio commentary
 - Direct browser recording
-- Download in .webm format
+- Download in .mp4 format
 - Capture the board as an image
+- Preview before download
 
 ### Potential ideas
 
@@ -34,14 +36,12 @@ The main goal is to make it as easy as possible sharing roller derby tactics and
 
 - Pre-configured set plays (starts, power jams, etc.)
 - Keyboard shortcuts for player control
-- Save & reload animation sequences
+
 
 🎮 Interactive Elements
 
-- Touch device support
 - Custom shape drawing tools (arrows, circles)
 - Embedded video titles
-- Preview before download
 - Webcam overlay integration
 
 🎨 Branding
