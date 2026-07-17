@@ -1,6 +1,7 @@
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { SceneCanvas } from 'konva/lib/Canvas.js';
 import type { KonvaGame } from '$lib/konva/KonvaGame';
+import type { WatermarkSize } from '$lib/konva/Watermark';
 import { colors } from '$lib/constants';
 import { interpolateSample } from '../timeline/interpolate';
 import type { TimelineProject } from '../timeline/types';
@@ -14,6 +15,8 @@ export interface VideoExportOptions {
 	fps: number;
 	/** Video bitrate in bits/sec. */
 	bitrate: number;
+	/** Watermark size stamped on each frame ('hidden' = off). */
+	watermark: WatermarkSize;
 	signal?: AbortSignal;
 	onProgress?: (framesRendered: number, totalFrames: number) => void;
 }
@@ -54,9 +57,19 @@ const AUDIO_BITRATE = 128_000;
  */
 export class TimelineVideoExporter {
 	async export(opts: VideoExportOptions): Promise<VideoExportResult> {
-		const { game, project, audioBlob, height, fps, bitrate, signal, onProgress } = opts;
+		const {
+			game,
+			project,
+			audioBlob,
+			height,
+			fps,
+			bitrate,
+			watermark: watermarkSize,
+			signal,
+			onProgress
+		} = opts;
 		const stage = game.getStage();
-		const watermark = game.getWatermark();
+		const watermark = watermarkSize !== 'hidden' ? game.getWatermark() : undefined;
 
 		const stageW = stage.width();
 		const stageH = stage.height();
@@ -276,7 +289,7 @@ export class TimelineVideoExporter {
 						workCtx.restore();
 						outCtx.drawImage(workScene._canvas, 0, 0, encodeWidth, encodeHeight);
 					}
-					if (watermark) watermark.draw(outCtx, encodeWidth, encodeHeight, encodePixelRatio);
+					if (watermark) watermark.draw(outCtx, encodeWidth, encodeHeight, watermarkSize);
 				}
 
 				const frame = new VideoFrame(outCanvas, {

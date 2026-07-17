@@ -17,11 +17,14 @@
 
 	function capture() {
 		const s = get(captureSettings);
-		const scale = get(exportSettings).image.scale;
+		const {
+			image: { scale },
+			watermark
+		} = get(exportSettings);
 		const dataUrl =
 			s.format === 'full'
-				? game.exportAsImage(scale)
-				: game.exportZoneImage(s.zone ?? game.defaultZone(formatRatio(s.format)), scale);
+				? game.exportAsImage(scale, watermark)
+				: game.exportZoneImage(s.zone ?? game.defaultZone(formatRatio(s.format)), scale, watermark);
 		const link = document.createElement('a');
 		link.download = `derbyboard-${new Date().toISOString().slice(0, 10)}.png`;
 		link.href = dataUrl;

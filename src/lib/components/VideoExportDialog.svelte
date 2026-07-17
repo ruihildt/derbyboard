@@ -55,6 +55,7 @@
 				height: QUALITY_HEIGHT[resolution],
 				fps,
 				bitrate: BITRATE_BY_QUALITY[resolution],
+				watermark: $exportSettings.watermark,
 				signal: controller.signal,
 				onProgress: (frames, total) => (progress = { frames, total })
 			});

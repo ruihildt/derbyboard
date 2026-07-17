@@ -18,7 +18,7 @@ import { KonvaTrackGeometry, type Point } from './KonvaTrackGeometry';
 import { KonvaPlayerManager } from './KonvaPlayerManager';
 import { KonvaPackManager } from './KonvaPackManager';
 import { KonvaRecorder } from './KonvaRecorder';
-import { Watermark } from './Watermark';
+import { Watermark, type WatermarkSize } from './Watermark';
 import type { CaptureZone } from '$lib/utils/capture';
 import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
 
@@ -697,19 +697,19 @@ export class KonvaGame {
 		}
 	}
 
-	exportAsImage(pixelRatio = 2): string {
+	exportAsImage(pixelRatio = 2, watermark: WatermarkSize = 'medium'): string {
 		const sourceCanvas = this.stage.toCanvas({ pixelRatio });
 		const canvas = document.createElement('canvas');
 		canvas.width = sourceCanvas.width;
 		canvas.height = sourceCanvas.height;
 		const ctx = canvas.getContext('2d')!;
 		ctx.drawImage(sourceCanvas, 0, 0);
-		this.watermark.draw(ctx, canvas.width, canvas.height, pixelRatio);
+		this.watermark.draw(ctx, canvas.width, canvas.height, watermark);
 		return canvas.toDataURL();
 	}
 
 	/** Captures a viewport sub-region as a PNG data URL (with watermark). */
-	exportZoneImage(zone: CaptureZone, pixelRatio = 2): string {
+	exportZoneImage(zone: CaptureZone, pixelRatio = 2, watermark: WatermarkSize = 'medium'): string {
 		const sourceCanvas = this.stage.toCanvas({
 			x: zone.xFrac * this.width,
 			y: zone.yFrac * this.height,
@@ -722,7 +722,7 @@ export class KonvaGame {
 		canvas.height = sourceCanvas.height;
 		const ctx = canvas.getContext('2d')!;
 		ctx.drawImage(sourceCanvas, 0, 0);
-		this.watermark.draw(ctx, canvas.width, canvas.height, pixelRatio);
+		this.watermark.draw(ctx, canvas.width, canvas.height, watermark);
 		return canvas.toDataURL();
 	}
 

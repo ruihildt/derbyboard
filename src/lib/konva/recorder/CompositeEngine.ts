@@ -41,7 +41,7 @@ export class CompositeEngine implements RecorderEngine {
 		}
 
 		if (watermark) {
-			watermark.draw(ctx, output.w, output.h, 1);
+			watermark.draw(ctx, output.w, output.h);
 		}
 	}
 

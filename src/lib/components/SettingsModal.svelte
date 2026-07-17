@@ -2,6 +2,7 @@
 	import { Modal } from 'flowbite-svelte';
 	import { ImageOutline, VideoCameraOutline } from 'flowbite-svelte-icons';
 	import { exportSettings, type ImageScale, type VideoFps } from '$lib/stores/exportSettings';
+	import type { WatermarkSize } from '$lib/konva/Watermark';
 	import type { Quality } from '$lib/utils/codec';
 
 	let {
@@ -17,11 +18,39 @@
 	const QUALITIES: Quality[] = ['720p', '1080p', '1440p', '2160p'];
 	const FPS_OPTIONS: VideoFps[] = [30, 60];
 	const SCALE_OPTIONS: ImageScale[] = [1, 2, 3, 4];
+	const WATERMARK_SIZES: WatermarkSize[] = ['hidden', 'small', 'medium', 'large'];
+	const WATERMARK_LABELS: Record<WatermarkSize, string> = {
+		hidden: 'Hidden',
+		small: 'Small',
+		medium: 'Medium',
+		large: 'Large'
+	};
 </script>
 
 <Modal bind:open size="sm">
 	<div class="px-5 pb-2 pt-4">
 		<h2 class="mb-4 text-lg font-semibold text-gray-800">Settings</h2>
+
+		<section class="mb-5">
+			<h3
+				class="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"
+			>
+				General
+			</h3>
+			<div>
+				<div class="mb-1 text-xs text-gray-500">Watermark</div>
+				<div class="flex flex-wrap gap-1">
+					{#each WATERMARK_SIZES as size (size)}
+						<button
+							class={pill($exportSettings.watermark === size)}
+							onclick={() => ($exportSettings = { ...$exportSettings, watermark: size })}
+						>
+							{WATERMARK_LABELS[size]}
+						</button>
+					{/each}
+				</div>
+			</div>
+		</section>
 
 		<section class="mb-5">
 			<h3

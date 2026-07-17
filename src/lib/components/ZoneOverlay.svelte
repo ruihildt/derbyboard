@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { CaptureZone } from '$lib/utils/capture';
+	import WatermarkPreview from './WatermarkPreview.svelte';
 
 	let {
 		zone,
 		ratio = null,
 		interactive = true,
 		mode = 'board',
+		watermark = false,
 		onchange
 	}: {
 		zone: CaptureZone;
@@ -15,6 +17,8 @@
 		interactive?: boolean;
 		/** 'edit' shows resize handles; 'board' is fully pass-through (visual guide). */
 		mode?: 'board' | 'edit';
+		/** Show the watermark preview inside the region. */
+		watermark?: boolean;
 		onchange: (zone: CaptureZone) => void;
 	} = $props();
 
@@ -223,6 +227,9 @@
 		tabindex="-1"
 		aria-label="Capture selection"
 	>
+		{#if watermark}
+			<WatermarkPreview />
+		{/if}
 		{#if interactive && mode === 'edit'}
 			<!-- Full-edge resize hit bands (the whole edge is draggable). -->
 			<div
