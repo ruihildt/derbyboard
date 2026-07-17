@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { CloseOutline } from 'flowbite-svelte-icons';
 
 	import { KonvaGame } from '$lib/konva/KonvaGame';
 
@@ -29,6 +30,7 @@
 		| undefined = $state();
 	let changelog: { open: () => void } | undefined = $state();
 	let loadError = $state('');
+	let notice = $state('');
 
 	let replayFrame = $state<TimelineFrame | null>(null);
 
@@ -134,6 +136,21 @@
 		class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-1 px-2"
 	>
 		<RotateHint />
+		{#if notice}
+			<div
+				class="flex max-w-[calc(100vw-1rem)] items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm text-gray-700 shadow-lg shadow-black/10"
+			>
+				<span class="text-center">{notice}</span>
+				<button
+					type="button"
+					class="flex h-6 w-6 flex-none items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+					onclick={() => (notice = '')}
+					aria-label="Dismiss"
+				>
+					<CloseOutline class="h-4 w-4" />
+				</button>
+			</div>
+		{/if}
 		{#if loadError}
 			<p class="rounded bg-white px-2 py-0.5 text-[10px] text-red-500 shadow">{loadError}</p>
 		{/if}
@@ -151,8 +168,12 @@
 	bind:this={replayBar}
 	{game}
 	disabled={isRecording}
-	onEnter={() => (isReplaying = true)}
+	onEnter={() => {
+		isReplaying = true;
+		notice = '';
+	}}
 	onExit={() => (isReplaying = false)}
 	onLoadFrame={(f) => (replayFrame = f)}
 	onLoadError={(m) => (loadError = m)}
+	onNotice={(m) => (notice = m)}
 />

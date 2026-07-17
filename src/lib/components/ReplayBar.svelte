@@ -22,6 +22,7 @@
 		onExit,
 		onLoadFrame,
 		onLoadError,
+		onNotice,
 		disabled = false
 	}: {
 		game: KonvaGame;
@@ -29,6 +30,7 @@
 		onExit?: () => void;
 		onLoadFrame?: (frame: TimelineFrame | null) => void;
 		onLoadError?: (msg: string) => void;
+		onNotice?: (msg: string) => void;
 		disabled?: boolean;
 	} = $props();
 
@@ -114,6 +116,16 @@
 	}
 
 	function enterReplay(project: TimelineProject, audioBlob: Blob | null) {
+		// Beyond the initial t=0 snapshot, there is nothing to replay. Show a
+		// message instead of an empty replay bar, unless audio was captured —
+		// then the bar still plays the audio over a static board.
+		const hasMovement = project.samples.length > 1;
+		const hasAudio = !!audioBlob && audioBlob.size > 0;
+		if (!hasMovement && !hasAudio) {
+			onNotice?.('Nothing to replay: no movement or audio was recorded.');
+			return;
+		}
+
 		closeReplay(false);
 
 		game.setReplayMode(true);
@@ -133,6 +145,9 @@
 			onEnd: () => {
 				playing = false;
 				currentTime = duration;
+			},
+			onDurationChange: (d) => {
+				duration = d;
 			}
 		});
 

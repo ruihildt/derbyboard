@@ -10,6 +10,8 @@ export interface TimelinePlayerOptions {
 	onTick?: (timeMs: number) => void;
 	/** Fires when playback reaches the end. */
 	onEnd?: () => void;
+	/** Fires when the effective duration changes (e.g. once audio metadata loads). */
+	onDurationChange?: (durationMs: number) => void;
 }
 
 /**
@@ -24,6 +26,7 @@ export class TimelinePlayer {
 	private audioUrl: string | null = null;
 	private onTick?: (timeMs: number) => void;
 	private onEnd?: () => void;
+	private onDurationChange?: (durationMs: number) => void;
 
 	private playing = false;
 	private speed = 1;
@@ -34,11 +37,17 @@ export class TimelinePlayer {
 	private clockStart = 0; // performance.now() at clock (re)start
 	private clockOffset = 0; // timeline time corresponding to clockStart
 
+	// Playback length contributed by the audio track (0 until its metadata
+	// loads). Lets a recording with audio but no board movement still play for
+	// the audio's full length instead of ending at the empty movement timeline.
+	private audioDurationMs = 0;
+
 	constructor(opts: TimelinePlayerOptions) {
 		this.game = opts.game;
 		this.project = opts.project;
 		this.onTick = opts.onTick;
 		this.onEnd = opts.onEnd;
+		this.onDurationChange = opts.onDurationChange;
 
 		if (opts.audioBlob && opts.audioBlob.size > 0) {
 			this.audioUrl = URL.createObjectURL(opts.audioBlob);
@@ -46,11 +55,12 @@ export class TimelinePlayer {
 			this.audioEl.src = this.audioUrl;
 			this.audioEl.playbackRate = this.speed;
 			this.audioEl.addEventListener('ended', this.handleAudioEnded);
+			this.audioEl.addEventListener('loadedmetadata', this.handleAudioMetadata);
 		}
 	}
 
 	getDuration(): number {
-		return this.project.durationMs;
+		return Math.max(this.project.durationMs, this.audioDurationMs);
 	}
 
 	getCurrentTime(): number {
@@ -71,9 +81,10 @@ export class TimelinePlayer {
 
 	play(): void {
 		if (this.playing) return;
-		if (this.project.samples.length === 0) return;
+		const duration = this.getDuration();
+		if (duration <= 0) return;
 		// Restart from the beginning if at the end.
-		if (this.currentTime >= this.project.durationMs) {
+		if (this.currentTime >= duration) {
 			this.seek(0);
 		}
 		this.playing = true;
@@ -116,7 +127,7 @@ export class TimelinePlayer {
 
 	/** Scrubs to a time; updates the master clock and the board. */
 	seek(t: number): void {
-		const clamped = Math.max(0, Math.min(t, this.project.durationMs));
+		const clamped = Math.max(0, Math.min(t, this.getDuration()));
 
 		if (this.audioEl) {
 			this.audioEl.currentTime = clamped / 1000;
@@ -134,6 +145,7 @@ export class TimelinePlayer {
 		this.pause();
 		if (this.audioEl) {
 			this.audioEl.removeEventListener('ended', this.handleAudioEnded);
+			this.audioEl.removeEventListener('loadedmetadata', this.handleAudioMetadata);
 			this.audioEl.src = '';
 		}
 		if (this.audioUrl) {
@@ -147,7 +159,7 @@ export class TimelinePlayer {
 			if (!this.playing) return;
 			const t = (this.audioEl?.currentTime ?? 0) * 1000;
 			this.applyAt(t);
-			if (t >= this.project.durationMs) {
+			if (t >= this.getDuration()) {
 				this.handleEnd();
 				return;
 			}
@@ -161,7 +173,7 @@ export class TimelinePlayer {
 			if (!this.playing) return;
 			const t = this.clockOffset + (performance.now() - this.clockStart) * this.speed;
 			this.applyAt(t);
-			if (t >= this.project.durationMs) {
+			if (t >= this.getDuration()) {
 				this.handleEnd();
 				return;
 			}
@@ -178,7 +190,7 @@ export class TimelinePlayer {
 	}
 
 	private applyAt(t: number): void {
-		const clamped = Math.max(0, Math.min(t, this.project.durationMs));
+		const clamped = Math.max(0, Math.min(t, this.getDuration()));
 		this.currentTime = clamped;
 		const sample = interpolateSample(this.project, clamped);
 		this.game.applySnapshot(sample);
@@ -187,11 +199,19 @@ export class TimelinePlayer {
 
 	private handleEnd = (): void => {
 		this.pause();
-		this.applyAt(this.project.durationMs);
+		this.applyAt(this.getDuration());
 		this.onEnd?.();
 	};
 
 	private handleAudioEnded = (): void => {
 		this.handleEnd();
+	};
+
+	private handleAudioMetadata = (): void => {
+		const d = this.audioEl?.duration;
+		if (typeof d === 'number' && isFinite(d) && d > 0) {
+			this.audioDurationMs = d * 1000;
+			this.onDurationChange?.(this.getDuration());
+		}
 	};
 }
