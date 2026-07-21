@@ -37,7 +37,6 @@ The main goal is to make it as easy as possible sharing roller derby tactics and
 - Pre-configured set plays (starts, power jams, etc.)
 - Keyboard shortcuts for player control
 
-
 🎮 Interactive Elements
 
 - Custom shape drawing tools (arrows, circles)

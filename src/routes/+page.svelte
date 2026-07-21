@@ -34,6 +34,7 @@
 	let notice = $state('');
 
 	let replayFrame = $state<TimelineFrame | null>(null);
+	let replaySource = $state<{ w: number; h: number } | null>(null);
 
 	type CaptureTab = 'video' | 'screenshot';
 	let activeTab = $state<CaptureTab>('video');
@@ -41,10 +42,17 @@
 	// 'edit' = resize handles hot. Only meaningful while a region is editable.
 	let regionMode = $state<'board' | 'edit'>('board');
 
-	// Replay uses the project's stored frame (non-interactive). Otherwise the
-	// shared capture selection overlay shows for any non-full format; it stays
-	// visible during recording (non-interactive) to mark the capture area.
-	let replayOverlay = $derived(!!replayFrame);
+	// Replay framing overlay. Region archives draw their capture region;
+	// full-frame archives draw the whole source viewport so the letterbox bars
+	// (window-vs-source aspect mismatch) are darkened too. The region case keeps
+	// its outline; full-frame suppresses it (the dark bars already delineate the
+	// frame). Otherwise the shared capture selection overlay shows for any
+	// non-full format and stays visible during recording to mark the capture area.
+	let replayZone = $derived(
+		isReplaying && replaySource
+			? (replayFrame?.region ?? { xFrac: 0, yFrac: 0, wFrac: 1, hFrac: 1 })
+			: undefined
+	);
 	let captureZone = $derived(
 		!isReplaying && $captureSettings.format !== 'full' ? $captureSettings.zone : undefined
 	);
@@ -72,8 +80,15 @@
 
 <main class="relative h-[100dvh] w-[100dvw] overflow-hidden">
 	<div id="container" class="absolute left-0 top-0 h-[100dvh] w-[100dvw]"></div>
-	{#if replayOverlay && replayFrame}
-		<ZoneOverlay zone={replayFrame.region} ratio={null} interactive={false} onchange={() => {}} />
+	{#if replayZone}
+		<ZoneOverlay
+			zone={replayZone}
+			source={replaySource ?? undefined}
+			ratio={null}
+			interactive={false}
+			mode={replayFrame ? 'board' : 'edit'}
+			onchange={() => {}}
+		/>
 	{:else if captureZone}
 		<ZoneOverlay
 			zone={captureZone}
@@ -176,7 +191,10 @@
 		notice = '';
 	}}
 	onExit={() => (isReplaying = false)}
-	onLoadFrame={(f) => (replayFrame = f)}
+	onLoadFrame={(f, s) => {
+		replayFrame = f;
+		replaySource = s;
+	}}
 	onLoadError={(m) => (loadError = m)}
 	onNotice={(m) => (notice = m)}
 />

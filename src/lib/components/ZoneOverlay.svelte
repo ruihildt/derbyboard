@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { CaptureZone } from '$lib/utils/capture';
+	import { fittedRegionRect, fitSourceToViewport, type CaptureZone } from '$lib/utils/capture';
 	import WatermarkPreview from './WatermarkPreview.svelte';
 
 	let {
@@ -9,6 +9,7 @@
 		interactive = true,
 		mode = 'board',
 		watermark = false,
+		source = undefined,
 		onchange
 	}: {
 		zone: CaptureZone;
@@ -19,6 +20,13 @@
 		mode?: 'board' | 'edit';
 		/** Show the watermark preview inside the region. */
 		watermark?: boolean;
+		/**
+		 * Canonical capture viewport. When set (replay/canonical mode), the box is
+		 * derived from `fittedRegionRect` (uniform fit) instead of the legacy
+		 * clamp/drag path, so it always matches the capture's aspect and the
+		 * board content's transform.
+		 */
+		source?: { w: number; h: number };
 		onchange: (zone: CaptureZone) => void;
 	} = $props();
 
@@ -75,7 +83,14 @@
 		};
 	}
 
-	const box = $derived(clampBox(left, top, width, height));
+	const box = $derived(
+		source
+			? (() => {
+					const r = fittedRegionRect(zone, source, fitSourceToViewport(source, { w: vw, h: vh }));
+					return { x: r.left, y: r.top, w: r.width, h: r.height };
+				})()
+			: clampBox(left, top, width, height)
+	);
 
 	// Re-sync local px from the controlled `zone` prop when it (or the viewport /
 	// ratio) changes externally — but never while a drag is in progress.

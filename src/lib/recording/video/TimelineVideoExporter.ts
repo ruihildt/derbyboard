@@ -99,8 +99,11 @@ export class TimelineVideoExporter {
 		const stage = game.getStage();
 		const watermark = watermarkSize !== 'hidden' ? game.getWatermark() : undefined;
 
-		const stageW = stage.width();
-		const stageH = stage.height();
+		// Canonical capture dims — the export must be independent of the live
+		// window. The render loop stages the board in pure source space (identity
+		// fit), so the crop is computed against source px.
+		const stageW = project.source.w;
+		const stageH = project.source.h;
 
 		// Output dimensions + screen-space crop.
 		let width: number;
@@ -304,7 +307,7 @@ export class TimelineVideoExporter {
 				if (videoError) throw videoError;
 
 				const tMs = (i / fps) * 1000;
-				game.applySnapshot(interpolateSample(project, tMs));
+				game.applySnapshotCanonical(interpolateSample(project, tMs), project.source);
 
 				if (outCtx) {
 					outCtx.fillStyle = colors.canvasBackground;

@@ -24,6 +24,9 @@ export class TimelineRecorder {
 	private startTime = 0;
 	private running = false;
 
+	/** Capture-time viewport size, frozen at record start (canonical). */
+	private source: { w: number; h: number } = { w: 0, h: 0 };
+
 	/** Number of in-flight drags; gates the fixed-rate capture loop. */
 	private activeDrags = 0;
 	private rafId: number | null = null;
@@ -42,6 +45,9 @@ export class TimelineRecorder {
 		this.startTime = performance.now();
 
 		const stage = this.game.getStage();
+		// Freeze the source dims once at record start so a mid-record resize
+		// can't corrupt the canonical capture dimensions.
+		this.source = { w: stage.width(), h: stage.height() };
 		this.lastZoom = stage.scaleX();
 
 		stage.on('dragstart', this.handleDragStart);
@@ -118,7 +124,8 @@ export class TimelineRecorder {
 				version: 1,
 				createdAt: new Date().toISOString(),
 				durationMs,
-				samples: this.samples
+				samples: this.samples,
+				source: this.source
 			},
 			durationMs
 		};

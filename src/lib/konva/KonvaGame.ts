@@ -20,7 +20,7 @@ import { KonvaPackManager } from './KonvaPackManager';
 import { KonvaRecorder } from './KonvaRecorder';
 import { KonvaGestureHandler } from './KonvaGestureHandler';
 import { Watermark, type WatermarkSize } from './Watermark';
-import type { CaptureZone } from '$lib/utils/capture';
+import { fitSourceToViewport, type CaptureFit, type CaptureZone } from '$lib/utils/capture';
 import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
 
 const FRAME_DEFAULT_MARGIN = 0.1;
@@ -43,6 +43,17 @@ export class KonvaGame {
 
 	/** When true, replay drives the board: editing is locked and pack logic is not double-run. */
 	private replayMode = false;
+
+	/**
+	 * Canonical capture dimensions for the active replay (null when not
+	 * replaying, or replaying without a known source — falls back to the live
+	 * viewport-center transform in that case).
+	 */
+	private replaySource: { w: number; h: number } | null = null;
+	/** Cached uniform fit of `replaySource` into the current viewport. */
+	private replayFit: CaptureFit = { scale: 1, offX: 0, offY: 0 };
+	/** Last replay sample rendered; used to re-render on resize while paused. */
+	private lastSample: TimelineSample | null = null;
 
 	private gestureHandler!: KonvaGestureHandler;
 
@@ -235,7 +246,21 @@ export class KonvaGame {
 		this.prevPortrait = this.isPortrait();
 		this.rebuildTrackAndPlayers();
 
-		if (this.replayMode) return; // replay drives the board; don't touch the view.
+		if (this.replayMode) {
+			// Replay drives the board. Recompute the source→viewport fit for the
+			// new viewport and re-render the last sample immediately so a paused
+			// replay doesn't leave a stale frame.
+			if (this.replaySource) {
+				this.replayFit = fitSourceToViewport(this.replaySource, {
+					w: this.width,
+					h: this.height
+				});
+				if (this.lastSample) {
+					this.renderSampleTransform(this.lastSample, this.replaySource, this.replayFit);
+				}
+			}
+			return;
+		}
 
 		if (orientationChanged) {
 			// Track shape vs viewport changed a lot: re-fit the whole track.
@@ -639,12 +664,27 @@ export class KonvaGame {
 	/**
 	 * Enters/exits replay mode. Entering locks the board (no dragging/panning);
 	 * exiting restores editing and reloads the user's saved board state.
+	 *
+	 * When entering with a `source`, the replay is canonical: every sample is
+	 * rendered through a uniform source→viewport fit so playback framing always
+	 * matches the capture's proportions and boundaries, regardless of window
+	 * size. Without a `source` the legacy viewport-center fallback is used.
 	 */
-	setReplayMode(enabled: boolean): void {
+	setReplayMode(enabled: boolean, source?: { w: number; h: number }): void {
 		this.replayMode = enabled;
 		this.stage.draggable(!enabled);
 		this.playerManager.setPlayersDraggable(!enabled);
-		if (!enabled) {
+		if (enabled) {
+			this.replaySource = source ?? null;
+			this.replayFit =
+				source !== undefined
+					? fitSourceToViewport(source, { w: this.width, h: this.height })
+					: { scale: 1, offX: 0, offY: 0 };
+			this.lastSample = null;
+		} else {
+			this.replaySource = null;
+			this.replayFit = { scale: 1, offX: 0, offY: 0 };
+			this.lastSample = null;
 			// Restore the user's board after replay.
 			this.loadState();
 		}
@@ -695,33 +735,116 @@ export class KonvaGame {
 	}
 
 	/**
+	 * Renders one replay sample through a uniform source→viewport fit. Player /
+	 * track reconciliation stays anchored at the *current* viewport center (the
+	 * existing invariant — track and players are both built at the current
+	 * center, so reconciliation must use the current center too). Only the stage
+	 * scale/position is composed with the fit, so the frame rectangle and the
+	 * board content share one transform and stay aligned.
+	 *
+	 * For a sample with view `{ zoom: z, relativeX: rx, relativeY: ry }`,
+	 * source `{ w: sw, h: sh }`, and current viewport `{ w: vw, h: vh }`:
+	 *
+	 *   sCx = sw/2, sCy = sh/2   (source center, capture-space)
+	 *   cCx = vw/2, cCy = vh/2   (current viewport center)
+	 *   p0  = (rx*sCx, ry*sCy)   (capture stage position)
+	 *   d   = (cCx - sCx, cCy - sCy)
+	 *   stage.scale = fit.scale * z
+	 *   stage.pos   = off + fit.scale * (p0 - z*d)
+	 *
+	 * This maps every capture-screen point `q` to `off + fit.scale*q` (uniform),
+	 * so the fitted region rect and the board content move together. Identity
+	 * check (viewport == source): fit.scale=1, off=0, d=0 ⇒ scale=z, pos=p0 ⇒
+	 * exact capture.
+	 */
+	private renderSampleTransform(
+		sample: TimelineSample,
+		source: { w: number; h: number },
+		fit: CaptureFit
+	): void {
+		// Roster / positions reconcile at the CURRENT viewport center (unchanged
+		// from the legacy applySnapshot path).
+		this.playerManager.reconcileTeamPlayers(sample.teamPlayers, this.width / 2, this.height / 2);
+		this.playerManager.reconcileSkatingOfficials(
+			sample.skatingOfficials,
+			this.width / 2,
+			this.height / 2
+		);
+		this.playerManager.setPlayersDraggable(false);
+		this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds(this.trackGeometry));
+
+		const z = sample.view.zoom;
+		const sCx = source.w / 2;
+		const sCy = source.h / 2;
+		const cCx = this.width / 2;
+		const cCy = this.height / 2;
+		const dx = cCx - sCx;
+		const dy = cCy - sCy;
+
+		this.stage.scale({ x: fit.scale * z, y: fit.scale * z });
+		this.stage.position({
+			x: fit.offX + fit.scale * (sample.view.relativeX * sCx - z * dx),
+			y: fit.offY + fit.scale * (sample.view.relativeY * sCy - z * dy)
+		});
+
+		this.packManager.determinePack();
+		this.trackSurfaceLayer.batchDraw();
+		this.trackLinesLayer.batchDraw();
+		this.engagementZoneLayer.batchDraw();
+		this.playersLayer.batchDraw();
+	}
+
+	/**
 	 * Reconciles the board to a sample (roster by id, positions, view) and redraws
 	 * the pack/engagement zone. Used by TimelinePlayer for replay.
+	 *
+	 * In canonical replay (a `source` was supplied to `setReplayMode`), renders
+	 * through the uniform source→viewport fit. Otherwise falls back to the
+	 * legacy viewport-center transform for any non-replay caller.
 	 */
 	applySnapshot(sample: TimelineSample): void {
 		const wasReplaying = this.replayMode;
 		this.replayMode = true;
 		try {
-			const centerX = this.width / 2;
-			const centerY = this.height / 2;
+			if (this.replaySource) {
+				this.renderSampleTransform(sample, this.replaySource, this.replayFit);
+			} else {
+				const centerX = this.width / 2;
+				const centerY = this.height / 2;
 
-			this.playerManager.reconcileTeamPlayers(sample.teamPlayers, centerX, centerY);
-			this.playerManager.reconcileSkatingOfficials(sample.skatingOfficials, centerX, centerY);
-			this.playerManager.setPlayersDraggable(false);
+				this.playerManager.reconcileTeamPlayers(sample.teamPlayers, centerX, centerY);
+				this.playerManager.reconcileSkatingOfficials(sample.skatingOfficials, centerX, centerY);
+				this.playerManager.setPlayersDraggable(false);
+				this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds(this.trackGeometry));
 
-			this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds(this.trackGeometry));
+				this.stage.scale({ x: sample.view.zoom, y: sample.view.zoom });
+				this.stage.position({
+					x: sample.view.relativeX * centerX,
+					y: sample.view.relativeY * centerY
+				});
 
-			this.stage.scale({ x: sample.view.zoom, y: sample.view.zoom });
-			this.stage.position({
-				x: sample.view.relativeX * centerX,
-				y: sample.view.relativeY * centerY
-			});
+				this.packManager.determinePack();
+				this.trackSurfaceLayer.batchDraw();
+				this.trackLinesLayer.batchDraw();
+				this.engagementZoneLayer.batchDraw();
+				this.playersLayer.batchDraw();
+			}
+			this.lastSample = sample;
+		} finally {
+			this.replayMode = wasReplaying;
+		}
+	}
 
-			this.packManager.determinePack();
-			this.trackSurfaceLayer.batchDraw();
-			this.trackLinesLayer.batchDraw();
-			this.engagementZoneLayer.batchDraw();
-			this.playersLayer.batchDraw();
+	/**
+	 * Renders a sample in pure source space (identity fit: scale=1, off=0) so the
+	 * export crop is capture-canonical regardless of the live window. Used by the
+	 * mp4/png exporter, which stages the board at source dims before cropping.
+	 */
+	applySnapshotCanonical(sample: TimelineSample, source: { w: number; h: number }): void {
+		const wasReplaying = this.replayMode;
+		this.replayMode = true;
+		try {
+			this.renderSampleTransform(sample, source, { scale: 1, offX: 0, offY: 0 });
 		} finally {
 			this.replayMode = wasReplaying;
 		}

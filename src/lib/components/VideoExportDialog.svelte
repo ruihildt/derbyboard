@@ -60,13 +60,15 @@
 
 	const dims = $derived.by(() => {
 		const h = QUALITY_HEIGHT[$exportSettings.video.resolution];
-		const stage = game.getStage();
+		// Canonical aspect from the capture source, not the live stage, so the
+		// preview dims match what the exporter will actually produce.
+		const { w: sw, h: sh } = project.source;
 		if (project.frame) {
 			const z = project.frame.region;
-			const ar = (z.wFrac * stage.width()) / (z.hFrac * stage.height());
+			const ar = (z.wFrac * sw) / (z.hFrac * sh);
 			return { w: Math.round(h * ar), h };
 		}
-		return { w: Math.round((h * stage.width()) / stage.height()), h };
+		return { w: Math.round((h * sw) / sh), h };
 	});
 	const pct = $derived(
 		progress.total > 0 ? Math.round((progress.frames / progress.total) * 100) : 0

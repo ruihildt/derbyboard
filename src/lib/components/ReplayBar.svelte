@@ -28,7 +28,7 @@
 		game: KonvaGame;
 		onEnter?: () => void;
 		onExit?: () => void;
-		onLoadFrame?: (frame: TimelineFrame | null) => void;
+		onLoadFrame?: (frame: TimelineFrame | null, source: { w: number; h: number } | null) => void;
 		onLoadError?: (msg: string) => void;
 		onNotice?: (msg: string) => void;
 		disabled?: boolean;
@@ -128,7 +128,7 @@
 
 		closeReplay(false);
 
-		game.setReplayMode(true);
+		game.setReplayMode(true, project.source);
 		onEnter?.();
 
 		project.frame = normalizeFrame(project.frame);
@@ -156,7 +156,7 @@
 		currentTime = 0;
 		player.seek(0);
 
-		onLoadFrame?.(project.frame ?? null);
+		onLoadFrame?.(project.frame ?? null, project.source);
 		onLoadError?.('');
 	}
 
@@ -168,7 +168,7 @@
 		if (restore) {
 			game.setReplayMode(false);
 			onExit?.();
-			onLoadFrame?.(null);
+			onLoadFrame?.(null, null);
 		}
 		playing = false;
 		currentTime = 0;

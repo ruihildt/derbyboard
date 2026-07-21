@@ -44,4 +44,6 @@ export interface TimelineProject {
 	samples: TimelineSample[];
 	audio?: TimelineAudioMeta;
 	frame?: TimelineFrame;
+	/** Capture-time viewport size in CSS px (canonical for replay + export). */
+	source: { w: number; h: number };
 }
