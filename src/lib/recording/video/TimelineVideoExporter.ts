@@ -50,12 +50,40 @@ const AUDIO_BITRATE = 128_000;
 
 /**
  * Renders a recorded timeline to an mp4 via WebCodecs. Each frame is rasterized
- * from the live stage with `stage.toCanvas` at the target resolution (sharp —
- * vector re-rasterization, not a pixel upscale), then hardware-encoded to H.264.
- * Audio (webm/opus) is decoded to PCM and re-encoded to AAC. Requires WebCodecs
+ * from the live stage at the target resolution (sharp — vector re-rasterization,
+ * not a pixel upscale), then hardware-encoded to H.264. Audio (webm/opus) is
+ * decoded to PCM and re-encoded to AAC. Requires WebCodecs
  * `VideoEncoder`/`AudioEncoder`.
+ *
+ * Browser policy (Firefox and Chrome) clamps `setTimeout` to ≥1s in background
+ * tabs, which would silently starve the per-frame yield loop. The dialog calls
+ * `setPaused(document.hidden)` on `visibilitychange` so the loop blocks cleanly
+ * until the tab is foregrounded again — see `waitIfPaused` below.
  */
 export class TimelineVideoExporter {
+	/**
+	 * Visibility-aware pause. The `signal?.aborted` check inside the render loop
+	 * runs BEFORE this gate so cancel still wins while paused.
+	 */
+	private paused = false;
+	private resumeResolve: (() => void) | null = null;
+
+	setPaused(paused: boolean): void {
+		this.paused = paused;
+		if (!paused && this.resumeResolve) {
+			const resolve = this.resumeResolve;
+			this.resumeResolve = null;
+			resolve();
+		}
+	}
+
+	private waitIfPaused(): Promise<void> {
+		if (!this.paused) return Promise.resolve();
+		return new Promise((resolve) => {
+			this.resumeResolve = resolve;
+		});
+	}
+
 	async export(opts: VideoExportOptions): Promise<VideoExportResult> {
 		const {
 			game,
@@ -268,6 +296,11 @@ export class TimelineVideoExporter {
 		try {
 			for (let i = 0; i < totalFrames; i++) {
 				if (signal?.aborted) throw new DOMException('Export aborted', 'AbortError');
+				// Abort check first (Phase A); then the pause gate. Stays paused
+				// across iterations until `setPaused(false)` resolves
+				// `waitIfPaused()`.
+				await this.waitIfPaused();
+				if (signal?.aborted) throw new DOMException('Export aborted', 'AbortError');
 				if (videoError) throw videoError;
 
 				const tMs = (i / fps) * 1000;
@@ -383,8 +416,8 @@ async function pickVideoConfig(
 	}
 	// Diagnostic: no H.264 config worked. Probe what this backend CAN encode and
 	// whether macroblock-aligned dimensions help, so the logs point at the real
-	// fallback (a different codec/container, or a different browser) instead of a
-	// bare "not supported" error.
+	// fallback (a different codec/container, or a different browser) instead of
+	// a bare "not supported" error.
 	console.warn('[video] no H.264 config supported; probing alternatives...');
 	const probes: { codec: string; label: string }[] = [
 		{ codec: 'avc1.640033', label: 'H.264 High (aligned dims)' },

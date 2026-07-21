@@ -26,6 +26,31 @@
 	let progress = $state({ frames: 0, total: 0 });
 	let errorMsg = $state('');
 	let controller: AbortController | null = null;
+	let exporter: TimelineVideoExporter | null = null;
+	let paused = $state(false);
+
+	// Visibility-aware pause: when the tab is hidden, the browser clamps
+	// `setTimeout` to ≥1s and the per-frame yield loop collapses to ~1fps.
+	// Rather than burn CPU spinning against the throttle, drive the exporter's
+	// pause flag from `visibilitychange`. The listener is scoped to the
+	// 'exporting' phase so it can't leak across exports.
+	$effect(() => {
+		if (phase !== 'exporting') return;
+		const onVisibility = () => {
+			const hidden = document.hidden;
+			paused = hidden;
+			exporter?.setPaused(hidden);
+		};
+		// Sync once at attach in case the tab is already hidden when export starts.
+		onVisibility();
+		document.addEventListener('visibilitychange', onVisibility);
+		return () => {
+			document.removeEventListener('visibilitychange', onVisibility);
+			// Release the exporter's pause gate if it was held, so the abort path
+			// below can complete.
+			exporter?.setPaused(false);
+		};
+	});
 
 	const dims = $derived.by(() => {
 		const h = QUALITY_HEIGHT[$exportSettings.video.resolution];
@@ -44,9 +69,10 @@
 	async function runExport() {
 		phase = 'exporting';
 		progress = { frames: 0, total: 0 };
+		paused = false;
 		controller = new AbortController();
 		const { resolution, fps } = $exportSettings.video;
-		const exporter = new TimelineVideoExporter();
+		exporter = new TimelineVideoExporter();
 		try {
 			const result = await exporter.export({
 				game,
@@ -71,6 +97,8 @@
 			phase = 'error';
 		} finally {
 			controller = null;
+			exporter = null;
+			paused = false;
 		}
 	}
 
@@ -120,6 +148,11 @@
 				>
 			</div>
 		{:else if phase === 'exporting'}
+			{#if paused}
+				<p class="mb-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+					Paused — this tab is in the background. Bring it to the foreground to continue.
+				</p>
+			{/if}
 			<p class="mb-2 text-sm text-gray-600">Exporting… {progress.frames} / {progress.total}</p>
 			<div class="mb-4 h-2 w-full overflow-hidden rounded-full bg-gray-200">
 				<div class="h-full bg-primary-500 transition-all" style="width: {pct}%"></div>
