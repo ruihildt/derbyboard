@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Button } from 'flowbite-svelte';
+	import { Alert, Button } from 'flowbite-svelte';
+	import { InfoCircleSolid } from 'flowbite-svelte-icons';
 	import { TimelineVideoExporter } from '$lib/recording/video/TimelineVideoExporter';
 	import { BITRATE_BY_QUALITY } from '$lib/utils/codec';
 	import { QUALITY_HEIGHT } from '$lib/utils/recording';
@@ -37,9 +38,14 @@
 	$effect(() => {
 		if (phase !== 'exporting') return;
 		const onVisibility = () => {
-			const hidden = document.hidden;
-			paused = hidden;
-			exporter?.setPaused(hidden);
+			// Pause cleanly when the tab is hidden (the browser clamps setTimeout
+			// to ≥1s, which would silently stall the per-frame yield loop). Do NOT
+			// auto-resume when the tab comes back — the user must click Resume so
+			// they explicitly opt back into the (potentially long) encode.
+			if (document.hidden) {
+				paused = true;
+				exporter?.setPaused(true);
+			}
 		};
 		// Sync once at attach in case the tab is already hidden when export starts.
 		onVisibility();
@@ -103,8 +109,21 @@
 	}
 
 	function cancel(): void {
-		if (controller) controller.abort();
-		else onClose();
+		if (controller) {
+			// Release the pause gate so the render loop wakes from `waitIfPaused()`
+			// and observes the abort signal immediately. Without this, cancel
+			// would hang until the user clicked Resume.
+			exporter?.setPaused(false);
+			controller.abort();
+		} else {
+			onClose();
+		}
+	}
+
+	/** Manual pause/resume toggle. Auto-pause still fires on `visibilitychange`. */
+	function togglePause(): void {
+		paused = !paused;
+		exporter?.setPaused(paused);
 	}
 
 	function download(blob: Blob): void {
@@ -122,7 +141,7 @@
 </script>
 
 <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-	<div class="w-80 rounded-lg bg-white p-5 shadow-xl">
+	<div class="w-96 rounded-lg bg-white p-5 shadow-xl">
 		<h3 class="mb-4 text-lg font-semibold text-gray-800">Export video</h3>
 
 		{#if !webcodecsSupported}
@@ -136,7 +155,16 @@
 			<p class="mb-1 text-sm text-gray-700">
 				{$exportSettings.video.resolution} · {$exportSettings.video.fps} fps
 			</p>
-			<p class="mb-4 text-[10px] text-gray-400">Output: {dims.w}×{dims.h}px</p>
+			<p class="mb-3 text-[10px] text-gray-400">Output: {dims.w}×{dims.h}px</p>
+			<Alert class="mb-4">
+				{#snippet icon()}
+					<InfoCircleSolid class="h-7 w-7" />
+				{/snippet}
+				<span class="text-xs">
+					Keep this tab focused while exporting. Switching tabs or minimizing pauses the export
+					until you return.
+				</span>
+			</Alert>
 
 			<div class="flex justify-end gap-2">
 				<Button class="bg-gray-100 !p-2 text-sm text-gray-700 hover:bg-gray-200" onclick={onClose}
@@ -149,15 +177,24 @@
 			</div>
 		{:else if phase === 'exporting'}
 			{#if paused}
-				<p class="mb-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
-					Paused — this tab is in the background. Bring it to the foreground to continue.
-				</p>
+				<Alert class="mb-3">
+					{#snippet icon()}
+						<InfoCircleSolid class="h-7 w-7" />
+					{/snippet}
+					<span class="text-xs">Paused — click Resume to continue the export.</span>
+				</Alert>
 			{/if}
 			<p class="mb-2 text-sm text-gray-600">Exporting… {progress.frames} / {progress.total}</p>
 			<div class="mb-4 h-2 w-full overflow-hidden rounded-full bg-gray-200">
 				<div class="h-full bg-primary-500 transition-all" style="width: {pct}%"></div>
 			</div>
-			<div class="flex justify-end">
+			<div class="flex justify-end gap-2">
+				<Button
+					class="bg-primary-500 !p-2 text-sm text-white hover:bg-primary-600"
+					onclick={togglePause}
+				>
+					{paused ? 'Resume' : 'Pause'}
+				</Button>
 				<Button class="bg-gray-100 !p-2 text-sm text-gray-700 hover:bg-gray-200" onclick={cancel}
 					>Cancel</Button
 				>
