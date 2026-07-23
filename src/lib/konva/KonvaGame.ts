@@ -107,7 +107,7 @@ export class KonvaGame {
 		// 4. Players (top)
 		this.stage.add(this.playersLayer);
 
-		this.playerManager = new KonvaPlayerManager(this.playersLayer, this.trackGeometry);
+		this.playerManager = new KonvaPlayerManager(this.playersLayer);
 		this.packManager = new KonvaPackManager(
 			this.playerManager,
 			this.playersLayer,
@@ -298,7 +298,7 @@ export class KonvaGame {
 		this.trackGeometry.addTrackLinesToLayer(this.trackLinesLayer);
 
 		// Reinitialize player manager with fresh track
-		this.playerManager = new KonvaPlayerManager(this.playersLayer, this.trackGeometry);
+		this.playerManager = new KonvaPlayerManager(this.playersLayer);
 
 		// Either load from state or default lineup based on current state
 		const state = get(boardState);
@@ -593,7 +593,7 @@ export class KonvaGame {
 		this.loadViewSettings();
 
 		// Create a new player manager and load players from state
-		this.playerManager = new KonvaPlayerManager(this.playersLayer, this.trackGeometry);
+		this.playerManager = new KonvaPlayerManager(this.playersLayer);
 		this.playerManager.initialLoad();
 
 		// Update pack manager with new player manager
@@ -771,7 +771,7 @@ export class KonvaGame {
 			this.height / 2
 		);
 		this.playerManager.setPlayersDraggable(false);
-		this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds(this.trackGeometry));
+		this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds());
 
 		const z = sample.view.zoom;
 		const sCx = source.w / 2;
@@ -814,8 +814,8 @@ export class KonvaGame {
 
 				this.playerManager.reconcileTeamPlayers(sample.teamPlayers, centerX, centerY);
 				this.playerManager.reconcileSkatingOfficials(sample.skatingOfficials, centerX, centerY);
-				this.playerManager.setPlayersDraggable(false);
-				this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds(this.trackGeometry));
+			this.playerManager.setPlayersDraggable(false);
+			this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds());
 
 				this.stage.scale({ x: sample.view.zoom, y: sample.view.zoom });
 				this.stage.position({

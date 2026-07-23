@@ -28,6 +28,7 @@ import {
 	computePartialTrackShape2D,
 	PACK_MEASURING_METHODS
 } from 'roller-derby-track-utils';
+import { pxToMeter, isInBounds } from '$lib/trackMath';
 
 let failures = 0;
 const check = (label: string, cond: boolean, detail = '') => {
@@ -93,6 +94,33 @@ const ezPath = computePartialTrackShape2D({
 const preview = ezPath.length > 90 ? ezPath.slice(0, 90) + '…' : ezPath;
 console.log(`  EZ path data (${ezPath.length} chars): ${preview}`);
 check('EZ path is a move-started, closed SVG path', /^M[\d.-]/.test(ezPath) && ezPath.trimEnd().endsWith('Z'));
+
+console.log('\n=== trackMath px↔meter adapter (orientation + in-bounds) ===');
+const center = { x: 500, y: 400 };
+const origin = pxToMeter({ x: 500, y: 400 }, center);
+check('viewport center maps to meter (0, 0)', origin.x === 0 && origin.y === 0, `got (${origin.x}, ${origin.y})`);
+
+// A point 5.33 m to the RIGHT of Derbyboard center is the LEFT turn (C2) in
+// package space -> meter x ~= -5.33 (x is mirrored across the vertical axis).
+const rightTurn = pxToMeter({ x: 500 + 5.33 * 35, y: 400 }, center);
+check(
+	'Derbyboard-right maps to package-left (x mirrored)',
+	Math.abs(rightTurn.x - -5.33) < 1e-9 && rightTurn.y === 0,
+	`got (${rightTurn.x}, ${rightTurn.y})`
+);
+
+// A point 5.41 m ABOVE Derbyboard center is the TOP straight in both spaces ->
+// meter y ~= -5.41 (y preserved; both axes point down).
+const topStraight = pxToMeter({ x: 500, y: 400 - 5.41 * 35 }, center);
+check(
+	'Derbyboard-top maps to package-top (y preserved)',
+	topStraight.x === 0 && Math.abs(topStraight.y - -5.41) < 1e-9,
+	`got (${topStraight.x}, ${topStraight.y})`
+);
+
+check('infield center (0, 0) is out of bounds', isInBounds({ x: 0, y: 0 }) === false);
+check('top-straight measurement line (0, -5.41) is in bounds', isInBounds({ x: 0, y: -5.41 }) === true);
+check('outside the top boundary (0, -9) is out of bounds', isInBounds({ x: 0, y: -9 }) === false);
 
 console.log(`\n=== ${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`} ===\n`);
 process.exit(failures === 0 ? 0 : 1);

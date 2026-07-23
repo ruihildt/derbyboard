@@ -1,7 +1,7 @@
 import Konva from 'konva';
-import { colors, LINE_WIDTH } from '$lib/constants';
+import { colors } from '$lib/constants';
 import { KonvaPlayer } from './KonvaPlayer';
-import type { KonvaTrackGeometry } from './KonvaTrackGeometry';
+import { isInBounds, pxToMeter } from '$lib/trackMath';
 
 export enum TeamPlayerRole {
 	jammer = 'jammer',
@@ -52,7 +52,6 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 		layer: Konva.Layer,
 		team: TeamPlayerTeam,
 		role: TeamPlayerRole,
-		trackGeometry: KonvaTrackGeometry,
 		id?: string
 	) {
 		super(x, y, layer);
@@ -74,7 +73,7 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 		});
 
 		this.setupVisualElements();
-		this.updateInBounds(trackGeometry);
+		this.updateInBounds();
 	}
 
 	/**
@@ -133,36 +132,17 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 	}
 
 	/**
-	 * Updates the player's in-bounds status and visual appearance
+	 * Updates the player's in-bounds status and visual appearance using the
+	 * package's analytic boundary test (skater modelled as a SKATER_RADIUS
+	 * circle), converting the Konva pixel position to package meters.
 	 */
+	public updateInBounds(): void {
+		const stage = this.group.getStage();
+		if (!stage) return;
 
-	public updateInBounds(trackGeometry: KonvaTrackGeometry): void {
-		const circle = this.circle;
-		const pos = this.getPosition();
-		const radius = circle.radius();
-		const strokeWidth = circle.strokeWidth();
-		const checkRadius = radius + strokeWidth - LINE_WIDTH * 0.9;
-
-		try {
-			for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 16) {
-				const checkX = pos.x + checkRadius * Math.cos(angle);
-				const checkY = pos.y + checkRadius * Math.sin(angle);
-
-				const zoneKey = trackGeometry.determineZone({ x: checkX, y: checkY });
-				if (zoneKey === 0) {
-					this.isInBounds = false;
-					this.circle.stroke(colors.outOfBounds);
-					return;
-				}
-			}
-
-			this.isInBounds = true;
-			this.circle.stroke(colors.inBounds);
-		} catch (error) {
-			console.error('Error checking bounds:', error);
-			this.isInBounds = false;
-			this.circle.stroke(colors.outOfBounds);
-		}
+		const center = { x: stage.width() / 2, y: stage.height() / 2 };
+		this.isInBounds = isInBounds(pxToMeter(this.getPosition(), center));
+		this.circle.stroke(this.isInBounds ? colors.inBounds : colors.outOfBounds);
 	}
 
 	/**

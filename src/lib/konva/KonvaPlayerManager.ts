@@ -3,7 +3,6 @@ import Konva from 'konva';
 import { KonvaTeamPlayer, TeamPlayerRole, TeamPlayerTeam } from './KonvaTeamPlayer';
 import { KonvaSkatingOfficial, SkatingOfficialRole } from './KonvaSkatingOfficial';
 import type { KonvaPlayer } from './KonvaPlayer';
-import type { KonvaTrackGeometry } from './KonvaTrackGeometry';
 import { get } from 'svelte/store';
 import { boardState, type KonvaBoardState } from '$lib/stores/konvaBoardState';
 import type { TeamPlayerPosition, SkatingOfficialPosition } from '$lib/stores/konvaBoardState';
@@ -12,15 +11,13 @@ import defaultLineup from '$lib/data/start-flat.json';
 
 export class KonvaPlayerManager {
 	private layer: Konva.Layer;
-	private trackGeometry: KonvaTrackGeometry;
 	private collisionSystem: CollisionSystem;
 
 	private teamPlayers: KonvaTeamPlayer[] = [];
 	private skatingOfficials: KonvaSkatingOfficial[] = [];
 
-	constructor(layer: Konva.Layer, trackGeometry: KonvaTrackGeometry) {
+	constructor(layer: Konva.Layer) {
 		this.layer = layer;
-		this.trackGeometry = trackGeometry;
 		this.collisionSystem = new CollisionSystem(layer);
 	}
 
@@ -35,7 +32,7 @@ export class KonvaPlayerManager {
 
 			const player = target.getAttr('player');
 			if (player instanceof KonvaTeamPlayer) {
-				player.updateInBounds(this.trackGeometry);
+				player.updateInBounds();
 			}
 		}
 	}
@@ -51,15 +48,15 @@ export class KonvaPlayerManager {
 		const otherPlayer = evt.otherPlayer;
 
 		if (player instanceof KonvaTeamPlayer) {
-			player.updateInBounds(this.trackGeometry);
+			player.updateInBounds();
 		}
 		if (otherPlayer instanceof KonvaTeamPlayer) {
-			otherPlayer.updateInBounds(this.trackGeometry);
+			otherPlayer.updateInBounds();
 		}
 	}
 
 	addTeamPlayer(x: number, y: number, team: TeamPlayerTeam, role: TeamPlayerRole, id?: string) {
-		const player = new KonvaTeamPlayer(x, y, this.layer, team, role, this.trackGeometry, id);
+		const player = new KonvaTeamPlayer(x, y, this.layer, team, role, id);
 		this.teamPlayers.push(player);
 		return player;
 	}
@@ -129,7 +126,6 @@ export class KonvaPlayerManager {
 						this.layer,
 						pos.team as TeamPlayerTeam,
 						pos.role,
-						this.trackGeometry,
 						id
 					);
 				} else {
