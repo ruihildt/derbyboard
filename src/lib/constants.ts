@@ -1,3 +1,12 @@
+import {
+	C1,
+	C2,
+	C1_OUTER,
+	RADIUS_INNER,
+	F_OUTER_TOP,
+	ENGAGEMENT_ZONE_DISTANCE_TO_PACK
+} from 'roller-derby-track-utils';
+
 // Base scaling
 export const TRACK_SCALE = 35;
 export const LINE_WIDTH = TRACK_SCALE / 10;
@@ -5,16 +14,20 @@ export const TEN_FEET_LINE_WIDTH = TRACK_SCALE / 20;
 export const PLAYER_RADIUS = TRACK_SCALE / 2.4;
 export const PLAYER_STROKE_WIDTH = TRACK_SCALE / 13;
 
-// Primitive track points
-export const CENTER_POINT_OFFSET = 5.33 * TRACK_SCALE; // Distance from center in meters
-export const VERTICAL_OFFSET_1 = 3.81 * TRACK_SCALE; // First vertical offset in meters
-export const VERTICAL_OFFSET_2 = 0.3 * TRACK_SCALE; // Second vertical offset in meters
-export const OUTER_VERTICAL_OFFSET_1 = 8.38 * TRACK_SCALE; // First outer vertical offset in meters
-export const OUTER_VERTICAL_OFFSET_2 = 7.78 * TRACK_SCALE; // Second outer vertical offset in meters
+// Track dimensions sourced from roller-derby-track-utils (metres) so the package
+// is the single source of truth for the track geometry. All values are
+// metres * TRACK_SCALE (rendered pixels). The package's exact values (e.g. the
+// 0.305 m outer offset, 8.385/7.775 m slanted-outer ends) align the drawn track
+// with the package-derived engagement-zone overlay.
+export const CENTER_POINT_OFFSET = C1.x * TRACK_SCALE; // turn-centre x (5.33 m)
+export const VERTICAL_OFFSET_1 = RADIUS_INNER * TRACK_SCALE; // inner radius (3.81 m)
+export const VERTICAL_OFFSET_2 = Math.abs(C1_OUTER.y) * TRACK_SCALE; // outer turn-centre offset (0.305 m)
+export const OUTER_VERTICAL_OFFSET_1 = Math.abs(F_OUTER_TOP(C1.x)) * TRACK_SCALE; // wide outer end (8.385 m)
+export const OUTER_VERTICAL_OFFSET_2 = Math.abs(F_OUTER_TOP(C2.x)) * TRACK_SCALE; // narrow outer end (7.775 m)
 
 // Common distances to draw track and do pack calculations
 export const TENFEET = 3.05 * TRACK_SCALE;
-export const TWENTYFEET = 6.1 * TRACK_SCALE;
+export const TWENTYFEET = ENGAGEMENT_ZONE_DISTANCE_TO_PACK * TRACK_SCALE; // engagement-zone distance (6.1 m)
 export const THIRTYFEET = 9.15 * TRACK_SCALE;
 export const TENFEETLINE = 0.8 * TRACK_SCALE;
 export const TURNSEGMENT = 2.15 * TRACK_SCALE;

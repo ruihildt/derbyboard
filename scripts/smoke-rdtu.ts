@@ -29,6 +29,15 @@ import {
 	PACK_MEASURING_METHODS
 } from 'roller-derby-track-utils';
 import { analyzePack, engagementZonePathData, pxToMeter, isInBounds } from '$lib/trackMath';
+import {
+	CENTER_POINT_OFFSET,
+	VERTICAL_OFFSET_1,
+	VERTICAL_OFFSET_2,
+	OUTER_VERTICAL_OFFSET_1,
+	OUTER_VERTICAL_OFFSET_2,
+	TWENTYFEET,
+	TRACK_SCALE
+} from '$lib/constants';
 
 let failures = 0;
 const check = (label: string, cond: boolean, detail = '') => {
@@ -174,6 +183,15 @@ check(
 	isInBounds({ x: 0, y: -3.5 }) === false
 );
 check('fully inside the infield (0, -3.0) is out of bounds', isInBounds({ x: 0, y: -3.0 }) === false);
+
+console.log('\n=== track constants re-based on package (metres) ===');
+const m = (px: number) => px / TRACK_SCALE;
+check('CENTER_POINT_OFFSET = 5.33 m', Math.abs(m(CENTER_POINT_OFFSET) - 5.33) < 1e-9);
+check('VERTICAL_OFFSET_1 = 3.81 m', Math.abs(m(VERTICAL_OFFSET_1) - 3.81) < 1e-9);
+check('VERTICAL_OFFSET_2 = 0.305 m', Math.abs(m(VERTICAL_OFFSET_2) - 0.305) < 1e-9);
+check('OUTER_VERTICAL_OFFSET_1 = 8.385 m', Math.abs(m(OUTER_VERTICAL_OFFSET_1) - 8.385) < 1e-9);
+check('OUTER_VERTICAL_OFFSET_2 = 7.775 m', Math.abs(m(OUTER_VERTICAL_OFFSET_2) - 7.775) < 1e-9);
+check('TWENTYFEET = 6.1 m', Math.abs(m(TWENTYFEET) - 6.1) < 1e-9);
 
 console.log(`\n=== ${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`} ===\n`);
 process.exit(failures === 0 ? 0 : 1);
