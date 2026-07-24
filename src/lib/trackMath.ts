@@ -21,7 +21,11 @@ import {
 	F_OUTER_BOTTOM,
 	F_OUTER_TOP,
 	RADIUS_INNER,
-	RADIUS_OUTER
+	RADIUS_OUTER,
+	getSkatersWDPPivotLineDistance,
+	getSkatersWDPInPlayPackSkater,
+	getSortedOutermostSkaters,
+	PACK_MEASURING_METHODS
 } from 'roller-derby-track-utils';
 import { PLAYER_RADIUS, TRACK_SCALE } from '$lib/constants';
 
@@ -75,4 +79,52 @@ export function isInBounds(pos: MeterPoint, radiusM: number = PLAYER_RADIUS_M): 
 
 	// Bottom straight (+y): entire circle must sit within [RADIUS_INNER, F_OUTER_BOTTOM].
 	return y >= RADIUS_INNER + r && y <= F_OUTER_BOTTOM(x) - r;
+}
+
+// --------------------------------------------------------------------------- //
+// Pack detection (roller-derby-track-utils)
+// --------------------------------------------------------------------------- //
+
+export type PackMethod = (typeof PACK_MEASURING_METHODS)[keyof typeof PACK_MEASURING_METHODS];
+
+/** A skater in package meter space, carrying Derbyboard's own in-bounds flag. */
+export interface MeterSkater {
+	id: string;
+	x: number;
+	y: number;
+	team: string;
+	isJammer: boolean;
+	inBounds: boolean;
+}
+
+/** A skater enriched by the package's pack pipeline. */
+export interface DerivedSkater extends MeterSkater {
+	pivotLineDist: number;
+	inPlay: boolean;
+	packSkater: boolean;
+}
+
+/**
+ * Run the package's pack pipeline over meter skaters. The input skaters must
+ * already carry `inBounds` (Derbyboard sets it from the player's own bounds
+ * check, so pack eligibility matches the visual indicator); this adds
+ * pivotLineDist, inPlay and packSkater. The default SECTOR method matches the
+ * previous hip-to-hip behaviour.
+ */
+export function analyzePack(
+	skaters: MeterSkater[],
+	method: PackMethod = PACK_MEASURING_METHODS.SECTOR
+): DerivedSkater[] {
+	const withPivot = getSkatersWDPPivotLineDistance(skaters);
+	// The package's generic infers its constraint, so the TS return type drops the
+	// enriched fields; they are present at runtime (verified by the smoke test).
+	return getSkatersWDPInPlayPackSkater(withPivot, { method }) as unknown as DerivedSkater[];
+}
+
+/** Returns the pack's two outermost skaters as [rearmost, foremost], or null. */
+export function packEndpoints(pack: DerivedSkater[]): [DerivedSkater, DerivedSkater] | null {
+	if (pack.length < 2) return null;
+	const endpoints = getSortedOutermostSkaters(pack);
+	if (!endpoints || endpoints.length !== 2) return null;
+	return [endpoints[0], endpoints[1]] as unknown as [DerivedSkater, DerivedSkater];
 }

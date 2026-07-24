@@ -1,6 +1,14 @@
 import Konva from 'konva';
-import { colors, TENFEET } from '$lib/constants';
-import { KonvaTeamPlayer, TeamPlayerRole } from './KonvaTeamPlayer';
+import { colors } from '$lib/constants';
+import {
+	analyzePack,
+	packEndpoints,
+	pxToMeter,
+	type DerivedSkater,
+	type MeterPoint,
+	type MeterSkater
+} from '$lib/trackMath';
+import { KonvaTeamPlayer } from './KonvaTeamPlayer';
 import { KonvaTrackGeometry, ZoneType, type Point } from './KonvaTrackGeometry';
 import type { KonvaPlayerManager } from './KonvaPlayerManager';
 
@@ -26,10 +34,15 @@ export class KonvaPackManager {
 		this.toggleDebugMode(false);
 	}
 
+	/**
+	 * Recomputes pack membership, in-play status, rearmost/foremost and the
+	 * engagement-zone overlay using roller-derby-track-utils. Pack eligibility
+	 * uses each blocker's own in-bounds flag so it matches the visual indicator.
+	 */
 	determinePack() {
 		const blockers = this.playerManager.getBlockers();
 
-		// Reset all players pack related properties first
+		// Reset all pack-related state first.
 		blockers.forEach((p) => {
 			p.isInPack = false;
 			p.isRearmost = false;
@@ -37,27 +50,35 @@ export class KonvaPackManager {
 			p.updateEngagementZoneStatus(false);
 		});
 
-		const inBoundsBlockers = blockers.filter(
-			(p) => p.isInBounds && (p.role === TeamPlayerRole.blocker || p.role === TeamPlayerRole.pivot)
-		);
+		const center = this.center();
+		const skaters: MeterSkater[] = blockers.map((p) => {
+			const m = pxToMeter(p.getPosition(), center);
+			return { id: p.id, x: m.x, y: m.y, team: p.team, isJammer: false, inBounds: p.isInBounds };
+		});
 
-		const groups = this.groupBlockers(inBoundsBlockers);
-		const validGroups = groups.filter(this.isValidGroup);
+		const derived = analyzePack(skaters);
+		const byId = new Map<string, DerivedSkater>(derived.map((s) => [s.id, s]));
 
-		const maxSize = Math.max(...validGroups.map((g) => g.length), 0);
-		const largestGroups = validGroups.filter((g) => g.length === maxSize);
+		// Map pack membership and in-play back onto the players.
+		blockers.forEach((p) => {
+			const d = byId.get(p.id);
+			p.isInPack = !!d?.packSkater;
+			p.updateEngagementZoneStatus(!!d?.inPlay);
+		});
 
-		if (largestGroups.length === 1) {
-			const packGroup = largestGroups[0];
-			this.updatePackStatus(blockers, packGroup);
-			this.updateRearAndForemostPlayers(packGroup);
-			this.updateEngagementZone(packGroup);
+		const packDerived = derived.filter((s) => s.packSkater);
+		if (packDerived.length >= 2) {
+			// Rearmost / foremost from the package's sorted outermost pack skaters.
+			const endpoints = packEndpoints(packDerived);
+			if (endpoints) {
+				const rear = blockers.find((p) => p.id === endpoints[0].id);
+				const fore = blockers.find((p) => p.id === endpoints[1].id);
+				if (rear) rear.isRearmost = true;
+				if (fore) fore.isForemost = true;
+			}
+			this.updateEngagementZone(blockers.filter((p) => p.isInPack));
 		} else {
-			// Split pack case - update all players to show no pack
-			blockers.forEach((p) => {
-				p.isInPack = false;
-				p.updateEngagementZoneStatus(false);
-			});
+			// No pack (split / none).
 			this.engagementZonePath.hide();
 		}
 
@@ -65,42 +86,15 @@ export class KonvaPackManager {
 		this.playersLayer.batchDraw();
 	}
 
-	private isValidGroup(group: KonvaTeamPlayer[]): boolean {
-		return group.some((p) => p.team === 'A') && group.some((p) => p.team === 'B');
+	private center(): MeterPoint {
+		const stage = this.playersLayer.getStage();
+		return { x: (stage?.width() ?? 0) / 2, y: (stage?.height() ?? 0) / 2 };
 	}
 
-	private groupBlockers(blockers: KonvaTeamPlayer[]): KonvaTeamPlayer[][] {
-		const groups: KonvaTeamPlayer[][] = [];
-		const ungrouped = [...blockers];
-
-		while (ungrouped.length > 0) {
-			const group = [ungrouped.pop()!];
-			let i = 0;
-			while (i < group.length) {
-				const current = group[i];
-				const currentNode = current.getNode();
-
-				for (let j = ungrouped.length - 1; j >= 0; j--) {
-					const targetNode = ungrouped[j].getNode();
-					const dx = currentNode.x() - targetNode.x();
-					const dy = currentNode.y() - targetNode.y();
-					if (Math.sqrt(dx * dx + dy * dy) <= TENFEET) {
-						group.push(ungrouped.splice(j, 1)[0]);
-					}
-				}
-				i++;
-			}
-			groups.push(group);
-		}
-		return groups;
-	}
-
-	private updatePackStatus(teamPlayers: KonvaTeamPlayer[], packGroup: KonvaTeamPlayer[]) {
-		teamPlayers.forEach((player) => {
-			player.isInPack = packGroup.includes(player);
-			player.updateEngagementZoneStatus(player.isInEngagementZone);
-		});
-	}
+	// --- Engagement-zone overlay rendering -------------------------------------
+	// NOTE: geometry here still comes from KonvaTrackGeometry. Step 3 will replace
+	// this with the package's computePartialTrackShape2D so the overlay matches the
+	// package-derived membership exactly.
 
 	private updateEngagementZone(packGroup: KonvaTeamPlayer[]) {
 		const rearmost = packGroup.find((p) => p.isRearmost);
@@ -193,13 +187,6 @@ export class KonvaPackManager {
 		this.engagementZonePath.data(pathData);
 		this.engagementZonePath.show();
 
-		// After drawing engagement zone, check which players are in it
-		this.playerManager.getBlockers().forEach((player) => {
-			const point = { x: player.getNode().x(), y: player.getNode().y() };
-			const isInEngagementZone = this.isPointInEngagementZone(point);
-			player.updateEngagementZoneStatus(isInEngagementZone);
-		});
-
 		this.engagementZoneLayer.batchDraw();
 	}
 
@@ -217,108 +204,6 @@ export class KonvaPackManager {
 		}
 	}
 
-	private updateRearAndForemostPlayers(packGroup: KonvaTeamPlayer[]): void {
-		// Reset all players
-		packGroup.forEach((player) => {
-			player.isRearmost = false;
-			player.isForemost = false;
-		});
-
-		const packBlockers = packGroup.filter((player) => player.isInPack);
-		if (packBlockers.length < 2) return;
-
-		let zones = [
-			...new Set(
-				packBlockers.map((p) => {
-					const point = { x: p.getNode().x(), y: p.getNode().y() };
-					return this.trackGeometry.determineZone(point);
-				})
-			)
-		];
-
-		// Sort zones based on special cases involving zone 4
-		if (zones.includes(4)) {
-			if (zones.includes(1) && zones.includes(2)) {
-				zones.sort();
-				zones = [4, 1, 2];
-			} else if (zones.includes(1) && zones.includes(3)) {
-				zones = [3, 4, 1];
-			} else if (zones.includes(2) && zones.includes(3)) {
-				zones = [2, 3, 4];
-			} else if (zones.includes(1)) {
-				zones = [4, 1];
-			} else if (zones.includes(3)) {
-				zones = [3, 4];
-			}
-		} else {
-			zones.sort();
-		}
-
-		this.zones = zones;
-
-		const firstZone = zones[0];
-		const lastZone = zones[zones.length - 1];
-
-		const firstZoneBlockers = packBlockers.filter((p) => {
-			const point = { x: p.getNode().x(), y: p.getNode().y() };
-			return this.trackGeometry.determineZone(point) === firstZone;
-		});
-		const lastZoneBlockers = packBlockers.filter((p) => {
-			const point = { x: p.getNode().x(), y: p.getNode().y() };
-			return this.trackGeometry.determineZone(point) === lastZone;
-		});
-
-		if (firstZoneBlockers.length > 0) {
-			const rearmost = this.findRearmost(firstZoneBlockers, firstZone);
-			rearmost.isRearmost = true;
-		}
-
-		if (lastZoneBlockers.length > 0) {
-			const foremost = this.findForemost(lastZoneBlockers, lastZone);
-			foremost.isForemost = true;
-		}
-	}
-
-	private findRearmost(blockers: KonvaTeamPlayer[], zone: number): KonvaTeamPlayer {
-		if (zone === 1) {
-			return blockers.reduce((rear, player) =>
-				player.getNode().x() > rear.getNode().x() ? player : rear
-			);
-		}
-		if (zone === 2) {
-			const turn = this.trackGeometry.zones[2];
-			return this.getPlayerByAngle(blockers, turn.centerInner.x, turn.centerInner.y, 'max');
-		}
-		if (zone === 3) {
-			return blockers.reduce((rear, player) =>
-				player.getNode().x() < rear.getNode().x() ? player : rear
-			);
-		}
-		// zone 4
-		const turn = this.trackGeometry.zones[4];
-		return this.getPlayerByAngle(blockers, turn.centerInner.x, turn.centerInner.y, 'max');
-	}
-
-	private findForemost(blockers: KonvaTeamPlayer[], zone: number): KonvaTeamPlayer {
-		if (zone === 1) {
-			return blockers.reduce((fore, player) =>
-				player.getNode().x() < fore.getNode().x() ? player : fore
-			);
-		}
-		if (zone === 2) {
-			const turn = this.trackGeometry.zones[2];
-			return this.getPlayerByAngle(blockers, turn.centerInner.x, turn.centerInner.y, 'min');
-		}
-		if (zone === 3) {
-			return blockers.reduce((fore, player) =>
-				player.getNode().x() > fore.getNode().x() ? player : fore
-			);
-		}
-		// zone 4
-		const turn = this.trackGeometry.zones[4];
-		return this.getPlayerByAngle(blockers, turn.centerInner.x, turn.centerInner.y, 'min');
-	}
-
 	private calculateEngagementZonePoints(rearmost: KonvaTeamPlayer, foremost: KonvaTeamPlayer) {
 		const rearmostPosition = { x: rearmost.getNode().x(), y: rearmost.getNode().y() };
 		const foremostPosition = { x: foremost.getNode().x(), y: foremost.getNode().y() };
@@ -327,41 +212,6 @@ export class KonvaPackManager {
 			rearPoint: this.trackGeometry.getPointBehindOnMidtrack(rearmostPosition),
 			forePoint: this.trackGeometry.getPointAheadOnMidtrack(foremostPosition)
 		};
-	}
-
-	private isPointInEngagementZone(point: Point): boolean {
-		return (
-			this.engagementZonePath.isVisible() &&
-			this.trackGeometry.isPointInPath(new Path2D(this.engagementZonePath.data()), point)
-		);
-	}
-
-	private getPlayerByAngle(
-		blockers: KonvaTeamPlayer[],
-		centerX: number,
-		centerY: number,
-		type: 'min' | 'max'
-	): KonvaTeamPlayer {
-		return blockers.reduce((selected, player) => {
-			const currentAngle = Math.atan2(
-				player.getNode().x() - centerX,
-				-(player.getNode().y() - centerY)
-			);
-			const selectedAngle = Math.atan2(
-				selected.getNode().x() - centerX,
-				-(selected.getNode().y() - centerY)
-			);
-			const normalizedCurrent = (currentAngle + 2 * Math.PI) % (2 * Math.PI);
-			const normalizedSelected = (selectedAngle + 2 * Math.PI) % (2 * Math.PI);
-
-			return type === 'max'
-				? normalizedCurrent > normalizedSelected
-					? player
-					: selected
-				: normalizedCurrent < normalizedSelected
-					? player
-					: selected;
-		});
 	}
 
 	// DEBUGGING
