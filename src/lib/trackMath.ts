@@ -27,6 +27,7 @@ import {
 	isSkaterInEngagementZone,
 	getSortedOutermostSkaters,
 	getSortedPackBoundaries,
+	getEngagementZoneIntersectionsRectangle,
 	computePartialTrackShape2D,
 	ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
 	PACK_MEASURING_METHODS
@@ -184,12 +185,46 @@ export function engagementZonePathData(
 	pack: DerivedSkater[],
 	method: PackMethod = PACK_MEASURING_METHODS.SECTOR
 ): string | null {
-	const boundaries = getSortedPackBoundaries(pack);
-	if (!boundaries) return null;
-	const [rear, fore] = boundaries;
-	return computePartialTrackShape2D({
-		p1: rear - ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
-		p2: fore + ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
-		method
+	if (method === PACK_MEASURING_METHODS.SECTOR) {
+		const boundaries = getSortedPackBoundaries(pack);
+		if (!boundaries) return null;
+		const [rear, fore] = boundaries;
+		return partialTrackShape2D({
+			p1: rear - ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
+			p2: fore + ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
+			method
+		});
+	}
+
+	// RECTANGLE: the engagement-zone boundary is the perpendicular rectangle
+	// ENGAGEMENT_ZONE_DISTANCE_TO_PACK beyond each outermost pack skater (built
+	// into getEngagementZoneIntersectionsRectangle); draw between those corners.
+	const endpoints = packEndpoints(pack);
+	if (!endpoints) return null;
+	const [back, front] = endpoints;
+	const backIntersection = getEngagementZoneIntersectionsRectangle(back, { front: false });
+	const frontIntersection = getEngagementZoneIntersectionsRectangle(front, { front: true });
+	if (
+		!backIntersection ||
+		!frontIntersection ||
+		!backIntersection.inside ||
+		!backIntersection.outside ||
+		!frontIntersection.inside ||
+		!frontIntersection.outside
+	) {
+		return null;
+	}
+	return partialTrackShape2D({
+		p1: backIntersection,
+		p2: frontIntersection,
+		method: PACK_MEASURING_METHODS.RECTANGLE
 	});
 }
+
+// computePartialTrackShape2D is method-overloaded at runtime but its .d.ts types
+// p1/p2 as numbers; the RECTANGLE branch needs {inside, outside} corner objects.
+const partialTrackShape2D = computePartialTrackShape2D as unknown as (options: {
+	p1: number | { inside: unknown; outside: unknown };
+	p2: number | { inside: unknown; outside: unknown };
+	method: PackMethod;
+}) => string;

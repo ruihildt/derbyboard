@@ -612,6 +612,11 @@ export class KonvaGame {
 		this.stage.batchDraw();
 	}
 
+	/** Recomputes pack/in-play/EZ (e.g. after a board-settings change). */
+	refreshPack() {
+		this.packManager.determinePack();
+	}
+
 	resetBoard() {
 		// Reset stage position and scale
 		this.stage.position({ x: 0, y: 0 });

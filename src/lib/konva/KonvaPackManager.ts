@@ -1,4 +1,5 @@
 import Konva from 'konva';
+import { get } from 'svelte/store';
 import { colors, TRACK_SCALE } from '$lib/constants';
 import {
 	analyzePack,
@@ -7,8 +8,10 @@ import {
 	pxToMeter,
 	type DerivedSkater,
 	type MeterPoint,
-	type MeterSkater
+	type MeterSkater,
+	type PackMethod
 } from '$lib/trackMath';
+import { boardSettings } from '$lib/stores/boardSettings';
 import type { KonvaPlayerManager } from './KonvaPlayerManager';
 
 export class KonvaPackManager {
@@ -48,12 +51,13 @@ export class KonvaPackManager {
 		});
 
 		const center = this.center();
+		const method = get(boardSettings).packMethod;
 		const skaters: MeterSkater[] = blockers.map((p) => {
 			const m = pxToMeter(p.getPosition(), center);
 			return { id: p.id, x: m.x, y: m.y, team: p.team, isJammer: false, inBounds: p.isInBounds };
 		});
 
-		const derived = analyzePack(skaters);
+		const derived = analyzePack(skaters, method);
 		const byId = new Map<string, DerivedSkater>(derived.map((s) => [s.id, s]));
 
 		// Map pack membership and in-play back onto the players.
@@ -73,7 +77,7 @@ export class KonvaPackManager {
 				if (rear) rear.isRearmost = true;
 				if (fore) fore.isForemost = true;
 			}
-			this.updateEngagementZone(packDerived);
+			this.updateEngagementZone(packDerived, method);
 		} else {
 			// No pack (split / none).
 			this.engagementZonePath.hide();
@@ -88,8 +92,8 @@ export class KonvaPackManager {
 		return { x: (stage?.width() ?? 0) / 2, y: (stage?.height() ?? 0) / 2 };
 	}
 
-	private updateEngagementZone(packDerived: DerivedSkater[]) {
-		const pathData = engagementZonePathData(packDerived);
+	private updateEngagementZone(packDerived: DerivedSkater[], method: PackMethod) {
+		const pathData = engagementZonePathData(packDerived, method);
 		if (!pathData) {
 			this.engagementZonePath.hide();
 			return;

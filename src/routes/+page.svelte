@@ -5,6 +5,7 @@
 	import { KonvaGame } from '$lib/konva/KonvaGame';
 
 	import CaptureBar from '$lib/components/CaptureBar.svelte';
+	import BoardSettings from '$lib/components/BoardSettings.svelte';
 	import Changelog from '$lib/components/Changelog.svelte';
 	import FullscreenToggle from '$lib/components/FullscreenToggle.svelte';
 	import Menu from '$lib/components/Menu.svelte';
@@ -30,6 +31,7 @@
 		  }
 		| undefined = $state();
 	let changelog: { open: () => void } | undefined = $state();
+	let boardSettingsModal: { open: () => void } | undefined = $state();
 	let loadError = $state('');
 	let notice = $state('');
 
@@ -117,6 +119,7 @@
 				replayBar?.load();
 			}}
 			onOpenNews={() => changelog?.open()}
+			onOpenBoardSettings={() => boardSettingsModal?.open()}
 		/>
 	</div>
 {/if}
@@ -128,6 +131,8 @@
 		<Changelog bind:this={changelog} />
 	</div>
 {/if}
+
+<BoardSettings bind:this={boardSettingsModal} {game} />
 
 {#if !isReplaying}
 	{#if !$isMobile}

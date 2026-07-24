@@ -11,17 +11,20 @@
 		FolderOpenOutline,
 		ArrowDownToBracketOutline,
 		ArchiveOutline,
-		NewspaperOutline
+		NewspaperOutline,
+		CogOutline
 	} from 'flowbite-svelte-icons';
 
 	let {
 		game,
 		onOpenArchive,
-		onOpenNews
+		onOpenNews,
+		onOpenBoardSettings
 	}: {
 		game: KonvaGame;
 		onOpenArchive?: () => void;
 		onOpenNews?: () => void;
+		onOpenBoardSettings?: () => void;
 	} = $props();
 
 	let dropdownOpen = $state(false);
@@ -69,6 +72,11 @@
 		dropdownOpen = false;
 		onOpenNews?.();
 	}
+
+	function handleOpenBoardSettings() {
+		dropdownOpen = false;
+		onOpenBoardSettings?.();
+	}
 </script>
 
 <Button
@@ -103,6 +111,13 @@
 	>
 		<ArchiveOutline class="mr-2 h-4 w-4" />
 		<span>Open recording</span>
+	</DropdownItem>
+	<DropdownItem
+		class="flex items-center text-gray-700 hover:bg-primary-200"
+		onclick={handleOpenBoardSettings}
+	>
+		<CogOutline class="mr-2 h-4 w-4" />
+		<span>Board settings</span>
 	</DropdownItem>
 	{#if $isMobile}
 		<DropdownItem

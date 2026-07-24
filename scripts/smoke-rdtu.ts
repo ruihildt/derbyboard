@@ -140,6 +140,40 @@ check(
 	`got inPlay=${distant.inPlay}`
 );
 
+console.log('\n=== RECTANGLE method validation ===');
+// Same scenario as SECTOR: two close mixed blockers + a distant one. On a
+// straight, RECTANGLE and SECTOR distances coincide, so both methods must agree
+// on pack membership, and the distant blocker must be out of play.
+const rectRaw = [
+	{ id: 1, x: 0, y: -5.41, team: 'A' },
+	{ id: 2, x: 2, y: -5.41, team: 'B' },
+	{ id: 3, x: 0, y: -6.2, team: 'A', isJammer: true },
+	{ id: 4, x: 0, y: 5.41, team: 'A' }
+];
+const rectBounds = getSkatersWDPInBounds(rectRaw);
+const rectDerived = analyzePack(rectBounds, PACK_MEASURING_METHODS.RECTANGLE);
+const rectPack = rectDerived.filter((s) => s.packSkater);
+check(
+	'RECTANGLE finds the two top-straight blockers as the pack',
+	rectPack.length === 2 && rectPack.every((s) => s.id === 1 || s.id === 2)
+);
+check(
+	'RECTANGLE: distant blocker is NOT in play',
+	rectDerived.find((s) => s.id === 4)!.inPlay === false
+);
+const secDerived = analyzePack(rectBounds, PACK_MEASURING_METHODS.SECTOR);
+const membershipAgrees = rectDerived.every(
+	(s) => s.packSkater === secDerived.find((t) => t.id === s.id)?.packSkater
+);
+check('RECTANGLE agrees with SECTOR on pack membership (straight)', membershipAgrees);
+
+const rectEz = engagementZonePathData(rectPack, PACK_MEASURING_METHODS.RECTANGLE);
+check(
+	'RECTANGLE engagement-zone path is a closed SVG path',
+	typeof rectEz === 'string' && /^M/.test(rectEz) && rectEz.endsWith('Z'),
+	`${(rectEz || '').length} chars`
+);
+
 console.log('\n=== trackMath px↔meter adapter (orientation + in-bounds) ===');
 const center = { x: 500, y: 400 };
 const origin = pxToMeter({ x: 500, y: 400 }, center);
