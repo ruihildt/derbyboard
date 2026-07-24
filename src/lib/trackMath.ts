@@ -6,13 +6,24 @@
  * Coordinate model:
  *  - Derbyboard renders in pixels, track centered at the viewport center, with
  *    1 m = TRACK_SCALE px.
- *  - Derbyboard's track is the package's track REFLECTED ACROSS THE VERTICAL
- *    AXIS: the pivot line is on the LEFT in Derbyboard but on the RIGHT
- *    (C1, +5.33 m) in the package. So x is negated; y is preserved (both axes
- *    point down — screen y-down, package top-straight at negative y).
+ *  - Derbyboard's track surface matches the package's track DIRECTLY: same
+ *    inner/outer radii, same slanted outer straight, and the same wide/narrow
+ *    corners (top-right & bottom-left are the wide ends). So both axes are
+ *    preserved — origin at the viewport center, screen y-down matches the
+ *    package's top-straight at negative y. Only the pivot LINE marking differs
+ *    in placement between the two, which does not affect bounds.
  */
-import { getSkatersWDPInBounds } from 'roller-derby-track-utils';
-import { TRACK_SCALE } from '$lib/constants';
+import {
+	C1,
+	C2,
+	C1_OUTER,
+	C2_OUTER,
+	F_OUTER_BOTTOM,
+	F_OUTER_TOP,
+	RADIUS_INNER,
+	RADIUS_OUTER
+} from 'roller-derby-track-utils';
+import { PLAYER_RADIUS, TRACK_SCALE } from '$lib/constants';
 
 export interface MeterPoint {
 	x: number;
@@ -22,23 +33,46 @@ export interface MeterPoint {
 /** Konva stage-space px -> package meters, given the viewport center in px. */
 export function pxToMeter(pos: MeterPoint, center: MeterPoint): MeterPoint {
 	return {
-		x: (center.x - pos.x) / TRACK_SCALE,
+		x: (pos.x - center.x) / TRACK_SCALE,
 		y: (pos.y - center.y) / TRACK_SCALE
 	};
 }
 
-/** Package meters -> Konva stage-space px, given the viewport center in px. */
-export function meterToPx(pos: MeterPoint, center: MeterPoint): MeterPoint {
-	return {
-		x: center.x - pos.x * TRACK_SCALE,
-		y: center.y + pos.y * TRACK_SCALE
-	};
-}
+/** Player drawn radius expressed in meters (the in-bounds circle size). */
+const PLAYER_RADIUS_M = PLAYER_RADIUS / TRACK_SCALE;
 
 /**
- * Whether a meter-space position is in bounds, using the package's analytic
- * boundary test (skater modelled as a SKATER_RADIUS circle, 0.3 m).
+ * Whether a meter-space position is in bounds, using the package's track
+ * geometry with a STRICT boundary model: the skater is out of bounds as soon as
+ * any part of its circular hitbox touches or extends beyond a track boundary.
+ * Equivalently, the skater is in bounds only when the entire hitbox sits inside
+ * the track. The skater is modelled as a circle of its drawn radius; the track
+ * geometry itself comes from the package's constants, so track-dimension updates
+ * are picked up — only the margin model is local.
  */
-export function isInBounds(pos: MeterPoint): boolean {
-	return getSkatersWDPInBounds([pos])[0]?.inBounds === true;
+export function isInBounds(pos: MeterPoint, radiusM: number = PLAYER_RADIUS_M): boolean {
+	const { x, y } = pos;
+	const r = radiusM;
+
+	// Right turn (package x > C1): entire circle must sit inside the annulus.
+	if (x > C1.x) {
+		const dInner = Math.hypot(x - C1.x, y - C1.y);
+		const dOuter = Math.hypot(x - C1_OUTER.x, y - C1_OUTER.y);
+		return dInner > RADIUS_INNER + r && dOuter < RADIUS_OUTER - r;
+	}
+
+	// Top straight (-y): entire circle must sit within [F_OUTER_TOP, -RADIUS_INNER].
+	if (x <= C1.x && x >= C2.x && y <= 0) {
+		return y <= -RADIUS_INNER - r && y >= F_OUTER_TOP(x) + r;
+	}
+
+	// Left turn (package x < C2): entire circle must sit inside the annulus.
+	if (x < C2.x) {
+		const dInner = Math.hypot(x - C2.x, y - C2.y);
+		const dOuter = Math.hypot(x - C2_OUTER.x, y - C2_OUTER.y);
+		return dInner > RADIUS_INNER + r && dOuter < RADIUS_OUTER - r;
+	}
+
+	// Bottom straight (+y): entire circle must sit within [RADIUS_INNER, F_OUTER_BOTTOM].
+	return y >= RADIUS_INNER + r && y <= F_OUTER_BOTTOM(x) - r;
 }

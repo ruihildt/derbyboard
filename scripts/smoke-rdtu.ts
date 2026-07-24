@@ -100,12 +100,13 @@ const center = { x: 500, y: 400 };
 const origin = pxToMeter({ x: 500, y: 400 }, center);
 check('viewport center maps to meter (0, 0)', origin.x === 0 && origin.y === 0, `got (${origin.x}, ${origin.y})`);
 
-// A point 5.33 m to the RIGHT of Derbyboard center is the LEFT turn (C2) in
-// package space -> meter x ~= -5.33 (x is mirrored across the vertical axis).
+// A point 5.33 m to the RIGHT of Derbyboard center is the RIGHT turn (C1) in
+// package space too -> meter x ~= +5.33. The track surface matches the package
+// directly (same wide/narrow corners), so there is NO horizontal flip.
 const rightTurn = pxToMeter({ x: 500 + 5.33 * 35, y: 400 }, center);
 check(
-	'Derbyboard-right maps to package-left (x mirrored)',
-	Math.abs(rightTurn.x - -5.33) < 1e-9 && rightTurn.y === 0,
+	'Derbyboard-right maps to package-right (direct, no flip)',
+	Math.abs(rightTurn.x - 5.33) < 1e-9 && rightTurn.y === 0,
 	`got (${rightTurn.x}, ${rightTurn.y})`
 );
 
@@ -118,9 +119,25 @@ check(
 	`got (${topStraight.x}, ${topStraight.y})`
 );
 
+// Regression: a skater fully inside the WIDE top-right corner must stay in
+// bounds. (4, -7.5) is ~0.8 m inside the outer boundary there. An x-flipped
+// mapping would place it on the narrow side and (with the strict margin) mark
+// it out of bounds — this guards against that.
+const wideCorner = pxToMeter({ x: 500 + 4 * 35, y: 400 - 7.5 * 35 }, center);
+check(
+	'skater fully inside the wide top-right corner is in bounds',
+	isInBounds(wideCorner) === true,
+	`at (${wideCorner.x.toFixed(2)}, ${wideCorner.y.toFixed(2)})`
+);
+
 check('infield center (0, 0) is out of bounds', isInBounds({ x: 0, y: 0 }) === false);
-check('top-straight measurement line (0, -5.41) is in bounds', isInBounds({ x: 0, y: -5.41 }) === true);
-check('outside the top boundary (0, -9) is out of bounds', isInBounds({ x: 0, y: -9 }) === false);
+check('fully inside the top straight (0, -5.41) is in bounds', isInBounds({ x: 0, y: -5.41 }) === true);
+check('past the outer boundary (0, -9) is out of bounds', isInBounds({ x: 0, y: -9 }) === false);
+check(
+	'hitbox touching/crossing the inner edge (0, -3.5) is out of bounds (strict)',
+	isInBounds({ x: 0, y: -3.5 }) === false
+);
+check('fully inside the infield (0, -3.0) is out of bounds', isInBounds({ x: 0, y: -3.0 }) === false);
 
 console.log(`\n=== ${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`} ===\n`);
 process.exit(failures === 0 ? 0 : 1);
