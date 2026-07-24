@@ -111,8 +111,7 @@ export class KonvaGame {
 		this.packManager = new KonvaPackManager(
 			this.playerManager,
 			this.playersLayer,
-			this.engagementZoneLayer,
-			this.trackGeometry
+			this.engagementZoneLayer
 		);
 
 		// Register a single delegated handler for player interactions.
@@ -312,8 +311,7 @@ export class KonvaGame {
 		this.packManager = new KonvaPackManager(
 			this.playerManager,
 			this.playersLayer,
-			this.engagementZoneLayer,
-			this.trackGeometry
+			this.engagementZoneLayer
 		);
 
 		// Recalculate pack
@@ -600,8 +598,7 @@ export class KonvaGame {
 		this.packManager = new KonvaPackManager(
 			this.playerManager,
 			this.playersLayer,
-			this.engagementZoneLayer,
-			this.trackGeometry
+			this.engagementZoneLayer
 		);
 
 		// Recalculate pack and engagement zone

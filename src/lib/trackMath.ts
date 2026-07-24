@@ -23,8 +23,12 @@ import {
 	RADIUS_INNER,
 	RADIUS_OUTER,
 	getSkatersWDPPivotLineDistance,
-	getSkatersWDPInPlayPackSkater,
+	getPack,
+	isSkaterInEngagementZone,
 	getSortedOutermostSkaters,
+	getSortedPackBoundaries,
+	computePartialTrackShape2D,
+	ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
 	PACK_MEASURING_METHODS
 } from 'roller-derby-track-utils';
 import { PLAYER_RADIUS, TRACK_SCALE } from '$lib/constants';
@@ -110,15 +114,55 @@ export interface DerivedSkater extends MeterSkater {
  * check, so pack eligibility matches the visual indicator); this adds
  * pivotLineDist, inPlay and packSkater. The default SECTOR method matches the
  * previous hip-to-hip behaviour.
+ *
+ * This does NOT use the package's getSkatersWDPInPlayPackSkater: that function
+ * builds packBoundaries once and passes the SAME array into isSkaterInEngagementZone
+ * for every skater, and the SECTOR branch MUTATES it (boundaries[0] -= EZ,
+ * boundaries[1] += EZ) — so the engagement zone grows ~20 ft per skater and
+ * eventually marks everyone in play. Here we compute packBoundaries once and
+ * pass a fresh copy per skater, so the zone stays correct.
  */
+// The package's .d.ts types isSkaterInEngagementZone as a single options object,
+// but the runtime is positional (skater, packBoundaries, method); use the real form.
+const isInEngagementZone = isSkaterInEngagementZone as unknown as (
+	skater: MeterSkater & { pivotLineDist: number },
+	packBoundaries: number[] | DerivedSkater[],
+	method: PackMethod
+) => boolean;
+
 export function analyzePack(
 	skaters: MeterSkater[],
 	method: PackMethod = PACK_MEASURING_METHODS.SECTOR
 ): DerivedSkater[] {
 	const withPivot = getSkatersWDPPivotLineDistance(skaters);
-	// The package's generic infers its constraint, so the TS return type drops the
-	// enriched fields; they are present at runtime (verified by the smoke test).
-	return getSkatersWDPInPlayPackSkater(withPivot, { method }) as unknown as DerivedSkater[];
+	// The package's pack functions are typed for id:number / team:'A'|'B';
+	// Derbyboard uses strings (runtime-compatible), so cast at this boundary.
+	const pack = getPack(withPivot as unknown as Parameters<typeof getPack>[0], { method }) as
+		| DerivedSkater[]
+		| null;
+
+	let boundaries: number[] | DerivedSkater[] | null = null;
+	if (pack) {
+		if (method === PACK_MEASURING_METHODS.SECTOR) {
+			const b = getSortedPackBoundaries(pack);
+			if (b) boundaries = b as number[];
+		} else {
+			const b = getSortedOutermostSkaters(pack);
+			if (b) boundaries = b as unknown as DerivedSkater[];
+		}
+	}
+
+	return withPivot.map((skater) => {
+		const packSkater = !!pack && skater.inBounds && pack.some((e) => e.id === skater.id);
+		let inPlay = false;
+		if (skater.isJammer) {
+			inPlay = skater.inBounds;
+		} else if (skater.inBounds && boundaries) {
+			// Fresh copy per call: the package's SECTOR branch mutates the array.
+			inPlay = isInEngagementZone(skater, [...boundaries] as number[] | DerivedSkater[], method);
+		}
+		return { ...skater, inPlay, packSkater };
+	}) as unknown as DerivedSkater[];
 }
 
 /** Returns the pack's two outermost skaters as [rearmost, foremost], or null. */
@@ -127,4 +171,25 @@ export function packEndpoints(pack: DerivedSkater[]): [DerivedSkater, DerivedSka
 	const endpoints = getSortedOutermostSkaters(pack);
 	if (!endpoints || endpoints.length !== 2) return null;
 	return [endpoints[0], endpoints[1]] as unknown as [DerivedSkater, DerivedSkater];
+}
+
+/**
+ * Build the engagement-zone overlay as an SVG path-data string in package
+ * METERS. The zone is the pack's pivotLineDist boundaries extended by
+ * ENGAGEMENT_ZONE_DISTANCE_TO_PACK on each side — the same extension the
+ * package uses for in-play membership, so the overlay matches who is marked
+ * in-play. Returns null when there is no pack.
+ */
+export function engagementZonePathData(
+	pack: DerivedSkater[],
+	method: PackMethod = PACK_MEASURING_METHODS.SECTOR
+): string | null {
+	const boundaries = getSortedPackBoundaries(pack);
+	if (!boundaries) return null;
+	const [rear, fore] = boundaries;
+	return computePartialTrackShape2D({
+		p1: rear - ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
+		p2: fore + ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
+		method
+	});
 }

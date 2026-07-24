@@ -28,7 +28,7 @@ import {
 	computePartialTrackShape2D,
 	PACK_MEASURING_METHODS
 } from 'roller-derby-track-utils';
-import { pxToMeter, isInBounds } from '$lib/trackMath';
+import { analyzePack, engagementZonePathData, pxToMeter, isInBounds } from '$lib/trackMath';
 
 let failures = 0;
 const check = (label: string, cond: boolean, detail = '') => {
@@ -94,6 +94,42 @@ const ezPath = computePartialTrackShape2D({
 const preview = ezPath.length > 90 ? ezPath.slice(0, 90) + '…' : ezPath;
 console.log(`  EZ path data (${ezPath.length} chars): ${preview}`);
 check('EZ path is a move-started, closed SVG path', /^M[\d.-]/.test(ezPath) && ezPath.trimEnd().endsWith('Z'));
+
+// engagementZonePathData wraps the pack-only shape but extends the boundaries by
+// the engagement-zone distance, so its path must be longer than the pack shape.
+const ezWrapper = engagementZonePathData(packSkaters);
+check(
+	'engagementZonePathData returns a longer (EZ-extended) closed path',
+	typeof ezWrapper === 'string' &&
+		/^M/.test(ezWrapper) &&
+		ezWrapper.endsWith('Z') &&
+		ezWrapper.length > ezPath.length
+);
+
+console.log('\n=== in-play drift regression (distant blocker must NOT be in play) ===');
+// A 5-skater mixed pack on the top straight, plus one lone blocker far away on
+// the bottom straight. The lone blocker is well outside the engagement zone.
+// The package's getSkatersWDPInPlayPackSkater mutates the shared packBoundaries
+// array on each SECTOR call, growing the zone ~20 ft per skater; without the
+// adapter's per-call copy this lone blocker would wrongly read as in play.
+const driftRaw = [
+	{ id: 1, x: 0, y: -5.41, team: 'A' },
+	{ id: 2, x: 1, y: -5.41, team: 'B' },
+	{ id: 3, x: 2, y: -5.41, team: 'A' },
+	{ id: 4, x: 3, y: -5.41, team: 'B' },
+	{ id: 5, x: 4, y: -5.41, team: 'A' },
+	{ id: 6, x: 0, y: 5.41, team: 'B' }
+];
+const driftDerived = analyzePack(getSkatersWDPInBounds(driftRaw));
+const distant = driftDerived.find((s) => s.id === 6)!;
+const packDerivedDrift = driftDerived.filter((s) => s.packSkater);
+check('the five top-straight blockers form the pack', packDerivedDrift.length === 5);
+check('pack members are in play', packDerivedDrift.every((s) => s.inPlay));
+check(
+	'distant bottom-straight blocker is NOT in play',
+	distant.inPlay === false,
+	`got inPlay=${distant.inPlay}`
+);
 
 console.log('\n=== trackMath px↔meter adapter (orientation + in-bounds) ===');
 const center = { x: 500, y: 400 };
