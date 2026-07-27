@@ -42,11 +42,11 @@
 	},
 	"type": "module",
 	"dependencies": {
+		"@open-roller-derby-tools/derby-track": "^1.2.1",
 		"fflate": "^0.8.3",
 		"fix-webm-duration": "^1.0.6",
 		"konva": "^10.3.0",
 		"mp4-muxer": "^5.2.2",
-		"roller-derby-track-utils": "^1.0.2",
 		"svelte-persisted-store": "^0.12.0"
 	}
 }

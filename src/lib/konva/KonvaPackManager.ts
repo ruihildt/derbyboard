@@ -36,7 +36,7 @@ export class KonvaPackManager {
 
 	/**
 	 * Recomputes pack membership, in-play status, rearmost/foremost and the
-	 * engagement-zone overlay using roller-derby-track-utils. Pack eligibility
+	 * engagement-zone overlay using @open-roller-derby-tools/derby-track. Pack eligibility
 	 * uses each blocker's own in-bounds flag so it matches the visual indicator.
 	 */
 	determinePack() {

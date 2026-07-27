@@ -1,5 +1,5 @@
 /**
- * Adapter between Derbyboard's Konva pixel space and roller-derby-track-utils'
+ * Adapter between Derbyboard's Konva pixel space and @open-roller-derby-tools/derby-track's
  * meter space. All package functions operate in meters, so this is the single
  * boundary where units and orientation are reconciled.
  *
@@ -22,16 +22,21 @@ import {
 	F_OUTER_TOP,
 	RADIUS_INNER,
 	RADIUS_OUTER,
-	getSkatersWDPPivotLineDistance,
-	getPack,
-	isSkaterInEngagementZone,
-	getSortedOutermostSkaters,
-	getSortedPackBoundaries,
-	getEngagementZoneIntersectionsRectangle,
-	computePartialTrackShape2D,
 	ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
 	PACK_MEASURING_METHODS
-} from 'roller-derby-track-utils';
+} from '@open-roller-derby-tools/derby-track/dist/constants.js';
+import {
+	isSkaterInEngagementZone,
+	getEngagementZoneIntersectionsRectangle
+} from '@open-roller-derby-tools/derby-track/dist/engagementZone.js';
+import {
+	getSkatersWDPPivotLineDistance,
+	getPack,
+	getSortedOutermostSkaters,
+	getSortedPackBoundaries
+} from '@open-roller-derby-tools/derby-track/dist/packFunctions.js';
+import { computePartialTrackShape2D } from '@open-roller-derby-tools/derby-track/dist/packDrawing2D.js';
+import type { Position } from '@open-roller-derby-tools/derby-track/dist/types.js';
 import { PLAYER_RADIUS, TRACK_SCALE } from '$lib/constants';
 
 export interface MeterPoint {
@@ -87,7 +92,7 @@ export function isInBounds(pos: MeterPoint, radiusM: number = PLAYER_RADIUS_M): 
 }
 
 // --------------------------------------------------------------------------- //
-// Pack detection (roller-derby-track-utils)
+// Pack detection (@open-roller-derby-tools/derby-track)
 // --------------------------------------------------------------------------- //
 
 export type PackMethod = (typeof PACK_MEASURING_METHODS)[keyof typeof PACK_MEASURING_METHODS];
@@ -115,55 +120,30 @@ export interface DerivedSkater extends MeterSkater {
  * check, so pack eligibility matches the visual indicator); this adds
  * pivotLineDist, inPlay and packSkater. The default SECTOR method matches the
  * previous hip-to-hip behaviour.
- *
- * This does NOT use the package's getSkatersWDPInPlayPackSkater: that function
- * builds packBoundaries once and passes the SAME array into isSkaterInEngagementZone
- * for every skater, and the SECTOR branch MUTATES it (boundaries[0] -= EZ,
- * boundaries[1] += EZ) — so the engagement zone grows ~20 ft per skater and
- * eventually marks everyone in play. Here we compute packBoundaries once and
- * pass a fresh copy per skater, so the zone stays correct.
  */
-// The package's .d.ts types isSkaterInEngagementZone as a single options object,
-// but the runtime is positional (skater, packBoundaries, method); use the real form.
-const isInEngagementZone = isSkaterInEngagementZone as unknown as (
-	skater: MeterSkater & { pivotLineDist: number },
-	packBoundaries: number[] | DerivedSkater[],
-	method: PackMethod
-) => boolean;
-
 export function analyzePack(
 	skaters: MeterSkater[],
 	method: PackMethod = PACK_MEASURING_METHODS.SECTOR
 ): DerivedSkater[] {
 	const withPivot = getSkatersWDPPivotLineDistance(skaters);
-	// The package's pack functions are typed for id:number / team:'A'|'B';
-	// Derbyboard uses strings (runtime-compatible), so cast at this boundary.
-	const pack = getPack(withPivot as unknown as Parameters<typeof getPack>[0], { method }) as
-		| DerivedSkater[]
-		| null;
+	const pack = getPack(withPivot, { method });
 
-	let boundaries: number[] | DerivedSkater[] | null = null;
-	if (pack) {
-		if (method === PACK_MEASURING_METHODS.SECTOR) {
-			const b = getSortedPackBoundaries(pack);
-			if (b) boundaries = b as number[];
-		} else {
-			const b = getSortedOutermostSkaters(pack);
-			if (b) boundaries = b as unknown as DerivedSkater[];
-		}
-	}
+	const boundaries: [number, number] | [Position, Position] | null = pack
+		? method === PACK_MEASURING_METHODS.SECTOR
+			? (getSortedPackBoundaries(pack) ?? null)
+			: ((getSortedOutermostSkaters(pack) || null) as [Position, Position] | null)
+		: null;
 
 	return withPivot.map((skater) => {
 		const packSkater = !!pack && skater.inBounds && pack.some((e) => e.id === skater.id);
 		let inPlay = false;
 		if (skater.isJammer) {
 			inPlay = skater.inBounds;
-		} else if (skater.inBounds && boundaries) {
-			// Fresh copy per call: the package's SECTOR branch mutates the array.
-			inPlay = isInEngagementZone(skater, [...boundaries] as number[] | DerivedSkater[], method);
+		} else if (boundaries && skater.inBounds) {
+			inPlay = isSkaterInEngagementZone(skater, boundaries, method);
 		}
 		return { ...skater, inPlay, packSkater };
-	}) as unknown as DerivedSkater[];
+	});
 }
 
 /** Returns the pack's two outermost skaters as [rearmost, foremost], or null. */
@@ -189,11 +169,11 @@ export function engagementZonePathData(
 		const boundaries = getSortedPackBoundaries(pack);
 		if (!boundaries) return null;
 		const [rear, fore] = boundaries;
-		return partialTrackShape2D({
+		return computePartialTrackShape2D({
 			p1: rear - ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
 			p2: fore + ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
 			method
-		});
+		}) as string;
 	}
 
 	// RECTANGLE: the engagement-zone boundary is the perpendicular rectangle
@@ -214,17 +194,9 @@ export function engagementZonePathData(
 	) {
 		return null;
 	}
-	return partialTrackShape2D({
+	return computePartialTrackShape2D({
 		p1: backIntersection,
 		p2: frontIntersection,
 		method: PACK_MEASURING_METHODS.RECTANGLE
-	});
+	}) as string;
 }
-
-// computePartialTrackShape2D is method-overloaded at runtime but its .d.ts types
-// p1/p2 as numbers; the RECTANGLE branch needs {inside, outside} corner objects.
-const partialTrackShape2D = computePartialTrackShape2D as unknown as (options: {
-	p1: number | { inside: unknown; outside: unknown };
-	p2: number | { inside: unknown; outside: unknown };
-	method: PackMethod;
-}) => string;

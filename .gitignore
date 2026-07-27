@@ -24,3 +24,4 @@ vite.config.ts.timestamp-*
 # Other projects
 /nurds
 /track-viz
+/derby-track

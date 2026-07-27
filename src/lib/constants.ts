@@ -5,7 +5,7 @@ import {
 	RADIUS_INNER,
 	F_OUTER_TOP,
 	ENGAGEMENT_ZONE_DISTANCE_TO_PACK
-} from 'roller-derby-track-utils';
+} from '@open-roller-derby-tools/derby-track/dist/constants.js';
 
 // Base scaling
 export const TRACK_SCALE = 35;
@@ -14,7 +14,7 @@ export const TEN_FEET_LINE_WIDTH = TRACK_SCALE / 20;
 export const PLAYER_RADIUS = TRACK_SCALE / 2.4;
 export const PLAYER_STROKE_WIDTH = TRACK_SCALE / 13;
 
-// Track dimensions sourced from roller-derby-track-utils (metres) so the package
+// Track dimensions sourced from @open-roller-derby-tools/derby-track (metres) so the package
 // is the single source of truth for the track geometry. All values are
 // metres * TRACK_SCALE (rendered pixels). The package's exact values (e.g. the
 // 0.305 m outer offset, 8.385/7.775 m slanted-outer ends) align the drawn track

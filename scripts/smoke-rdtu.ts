@@ -1,14 +1,9 @@
 /**
- * Step 0 smoke test for roller-derby-track-utils + local three/lodash shims.
+ * Step 0 smoke test for @open-roller-derby-tools/derby-track.
  *
  * Run: npx vite-node scripts/smoke-rdtu.ts
  *
- * vite-node resolves the `three` / `lodash` bare specifiers through the
- * vite.config.ts aliases, so this exercises the exact same shim path the app
- * uses. It validates that the shim's Vector2 methods and cloneDeep actually
- * compute correct values at runtime (the build only proves they bundle).
- *
- * Scope: confirm the package RUNS and produces sane numbers in its own
+ * Validates that the package RUNS and produces sane numbers in its own
  * (meter) coordinate space. The 180° orientation reconciliation between
  * Derbyboard's pixel layout and the package's convention is verified later,
  * in Step 2, once the px↔m adapter + Konva rendering exist.
@@ -20,14 +15,16 @@ import {
 	CIRCUMFERENCE_HALF_CIRCLE,
 	MEASUREMENT_LENGTH,
 	ENGAGEMENT_ZONE_DISTANCE_TO_PACK,
+	PACK_MEASURING_METHODS
+} from '@open-roller-derby-tools/derby-track/dist/constants.js';
+import {
 	getPivotLineDistance,
 	getSkatersWDPInBounds,
 	getSkatersWDPPivotLineDistance,
 	getSkatersWDPInPlayPackSkater,
-	getSortedPackBoundaries,
-	computePartialTrackShape2D,
-	PACK_MEASURING_METHODS
-} from 'roller-derby-track-utils';
+	getSortedPackBoundaries
+} from '@open-roller-derby-tools/derby-track/dist/packFunctions.js';
+import { computePartialTrackShape2D } from '@open-roller-derby-tools/derby-track/dist/packDrawing2D.js';
 import { analyzePack, engagementZonePathData, pxToMeter, isInBounds } from '$lib/trackMath';
 import {
 	CENTER_POINT_OFFSET,
@@ -46,7 +43,7 @@ const check = (label: string, cond: boolean, detail = '') => {
 	console.log(`  [${tag}] ${label}${detail ? ` — ${detail}` : ''}`);
 };
 
-console.log('\n=== constants (shim Vector2 instantiated at module load) ===');
+console.log('\n=== constants ===');
 console.log(`  C1 = (${C1.x}, ${C1.y})   C2 = (${C2.x}, ${C2.y})`);
 console.log(`  MEASUREMENT_RADIUS = ${MEASUREMENT_RADIUS}`);
 console.log(`  MEASUREMENT_LENGTH = ${MEASUREMENT_LENGTH.toFixed(3)} m`);
@@ -88,9 +85,19 @@ for (const s of enriched) {
 	);
 }
 const packSkaters = enriched.filter((s) => (s as { packSkater?: boolean }).packSkater);
-check('exactly the two blockers form the pack', packSkaters.length === 2, `got ${packSkaters.length}`);
-check('jammer excluded from pack', !packSkaters.some((s) => (s as { isJammer?: boolean }).isJammer));
-check('both pack skaters inBounds', packSkaters.every((s) => s.inBounds));
+check(
+	'exactly the two blockers form the pack',
+	packSkaters.length === 2,
+	`got ${packSkaters.length}`
+);
+check(
+	'jammer excluded from pack',
+	!packSkaters.some((s) => (s as { isJammer?: boolean }).isJammer)
+);
+check(
+	'both pack skaters inBounds',
+	packSkaters.every((s) => s.inBounds)
+);
 
 console.log('\n=== engagement zone shape (SVG path-data string) ===');
 const bounds = getSortedPackBoundaries(packSkaters);
@@ -102,7 +109,10 @@ const ezPath = computePartialTrackShape2D({
 });
 const preview = ezPath.length > 90 ? ezPath.slice(0, 90) + '…' : ezPath;
 console.log(`  EZ path data (${ezPath.length} chars): ${preview}`);
-check('EZ path is a move-started, closed SVG path', /^M[\d.-]/.test(ezPath) && ezPath.trimEnd().endsWith('Z'));
+check(
+	'EZ path is a move-started, closed SVG path',
+	/^M[\d.-]/.test(ezPath) && ezPath.trimEnd().endsWith('Z')
+);
 
 // engagementZonePathData wraps the pack-only shape but extends the boundaries by
 // the engagement-zone distance, so its path must be longer than the pack shape.
@@ -118,9 +128,8 @@ check(
 console.log('\n=== in-play drift regression (distant blocker must NOT be in play) ===');
 // A 5-skater mixed pack on the top straight, plus one lone blocker far away on
 // the bottom straight. The lone blocker is well outside the engagement zone.
-// The package's getSkatersWDPInPlayPackSkater mutates the shared packBoundaries
-// array on each SECTOR call, growing the zone ~20 ft per skater; without the
-// adapter's per-call copy this lone blocker would wrongly read as in play.
+// The fork's isSkaterInEngagementZone no longer mutates the shared boundaries
+// (uses lo/hi locals in the SECTOR branch), but this case is a regression guard.
 const driftRaw = [
 	{ id: 1, x: 0, y: -5.41, team: 'A' },
 	{ id: 2, x: 1, y: -5.41, team: 'B' },
@@ -133,7 +142,10 @@ const driftDerived = analyzePack(getSkatersWDPInBounds(driftRaw));
 const distant = driftDerived.find((s) => s.id === 6)!;
 const packDerivedDrift = driftDerived.filter((s) => s.packSkater);
 check('the five top-straight blockers form the pack', packDerivedDrift.length === 5);
-check('pack members are in play', packDerivedDrift.every((s) => s.inPlay));
+check(
+	'pack members are in play',
+	packDerivedDrift.every((s) => s.inPlay)
+);
 check(
 	'distant bottom-straight blocker is NOT in play',
 	distant.inPlay === false,
@@ -177,7 +189,11 @@ check(
 console.log('\n=== trackMath px↔meter adapter (orientation + in-bounds) ===');
 const center = { x: 500, y: 400 };
 const origin = pxToMeter({ x: 500, y: 400 }, center);
-check('viewport center maps to meter (0, 0)', origin.x === 0 && origin.y === 0, `got (${origin.x}, ${origin.y})`);
+check(
+	'viewport center maps to meter (0, 0)',
+	origin.x === 0 && origin.y === 0,
+	`got (${origin.x}, ${origin.y})`
+);
 
 // A point 5.33 m to the RIGHT of Derbyboard center is the RIGHT turn (C1) in
 // package space too -> meter x ~= +5.33. The track surface matches the package
@@ -210,13 +226,19 @@ check(
 );
 
 check('infield center (0, 0) is out of bounds', isInBounds({ x: 0, y: 0 }) === false);
-check('fully inside the top straight (0, -5.41) is in bounds', isInBounds({ x: 0, y: -5.41 }) === true);
+check(
+	'fully inside the top straight (0, -5.41) is in bounds',
+	isInBounds({ x: 0, y: -5.41 }) === true
+);
 check('past the outer boundary (0, -9) is out of bounds', isInBounds({ x: 0, y: -9 }) === false);
 check(
 	'hitbox touching/crossing the inner edge (0, -3.5) is out of bounds (strict)',
 	isInBounds({ x: 0, y: -3.5 }) === false
 );
-check('fully inside the infield (0, -3.0) is out of bounds', isInBounds({ x: 0, y: -3.0 }) === false);
+check(
+	'fully inside the infield (0, -3.0) is out of bounds',
+	isInBounds({ x: 0, y: -3.0 }) === false
+);
 
 console.log('\n=== track constants re-based on package (metres) ===');
 const m = (px: number) => px / TRACK_SCALE;
