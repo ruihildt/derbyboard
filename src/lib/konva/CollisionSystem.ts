@@ -37,12 +37,30 @@ export class CollisionSystem {
 		const dy = pos2.y - pos1.y;
 		const distance = Math.sqrt(dx * dx + dy * dy);
 
+		// If either node already carries a non-finite position, bail out:
+		// `NaN < minDistance` is false anyway, but being explicit keeps a
+		// poisoned node from re-entering the solver.
+		if (!Number.isFinite(distance)) return;
+
 		const minDistance = PLAYER_RADIUS * 2 + PLAYER_STROKE_WIDTH;
 
 		if (distance < minDistance) {
+			// Coincident (distance ≈ 0) nodes would give dirX/dirY = 0/0 = NaN,
+			// poisoning both nodes' positions. Fall back to a deterministic
+			// separation axis so the solver always emits finite coordinates.
+			// This is a degenerate recovery path — under normal play two players
+			// never occupy the exact same point — but solver finiteness must be
+			// invariant regardless of input.
+			let dirX: number;
+			let dirY: number;
+			if (distance < 1e-6) {
+				dirX = 0;
+				dirY = -1;
+			} else {
+				dirX = dx / distance;
+				dirY = dy / distance;
+			}
 			const force = (minDistance - distance) / 2;
-			const dirX = dx / distance;
-			const dirY = dy / distance;
 
 			group1.position({
 				x: pos1.x - dirX * force,

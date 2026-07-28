@@ -137,6 +137,23 @@ export function fromTrack(s: number, u: number): MeterPoint {
 	};
 }
 
+/**
+ * Meters -> (s, u). `u` is NOT clamped to [0,1]: out-of-bounds is a
+ * legitimate, representable state (u < 0 or u > 1) — callers that need a
+ * boolean use `isInBoundsTrack`; this function must not clamp for them,
+ * otherwise storing a pose silently teleports it back inside the boundary on
+ * the next render (see the drag-overlap regression this fixes).
+ *
+ * This is an exact inverse of `fromTrack` for outward excursions of any
+ * magnitude, and for inward excursions down to roughly u > -0.8 (about one
+ * lane-width past the inner line). Beyond that the offset construction folds
+ * on itself — a genuine geometric singularity of projecting normals off a
+ * closed curve, not a classification bug — and further inward the coarse
+ * per-segment classifier (based on x/y quadrant, not distance) may attribute
+ * the point to a different segment than the one it was generated from. This
+ * is far beyond any realistic drag; skaters are never intentionally placed
+ * deep in the infield.
+ */
 export function toTrack(p: MeterPoint): { s: number; u: number } {
 	let s: number;
 
@@ -169,7 +186,22 @@ export function toTrack(p: MeterPoint): { s: number; u: number } {
 	const signedOffset = dx * normal.x + dy * normal.y;
 	const u = (signedOffset - bounds.inner) / (bounds.outer - bounds.inner);
 
-	return { s, u: Math.max(0, Math.min(1, u)) };
+	return { s, u };
+}
+
+/**
+ * Whether a track-space pose is in bounds, accounting for a skater's drawn
+ * radius (in metres). Derived from `laneBounds` rather than baked into the
+ * (s,u) encoding, so out-of-bounds poses remain exactly representable and
+ * round-trippable. The radius is converted to a local u-margin because lane
+ * width (outer - inner) varies around the track.
+ */
+export function isInBoundsTrack(s: number, u: number, radiusM = 0): boolean {
+	if (radiusM === 0) return u >= 0 && u <= 1;
+	const bounds = laneBounds(s);
+	const width = bounds.outer - bounds.inner;
+	const marginU = radiusM / width;
+	return u >= marginU && u <= 1 - marginU;
 }
 
 export function tangentAt(s: number): MeterPoint {

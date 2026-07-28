@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { CloseOutline } from 'flowbite-svelte-icons';
 
 	import { KonvaGame } from '$lib/konva/KonvaGame';
+	import { boardDoc } from '$lib/doc/store';
 
 	import CaptureBar from '$lib/components/CaptureBar.svelte';
 	import BoardSettings from '$lib/components/BoardSettings.svelte';
@@ -61,6 +62,23 @@
 	let captureRatio = $derived(formatRatio($captureSettings.format));
 	let interactive = $derived(!isRecording && !replayFrame);
 
+	// Keyboard shortcuts for undo/redo
+	function handleKeydown(e: KeyboardEvent) {
+		// Don't trigger shortcuts during replay or recording
+		if (isReplaying || isRecording) return;
+
+		const isUndo = (e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey;
+		const isRedo = (e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey;
+
+		if (isUndo) {
+			e.preventDefault();
+			boardDoc.undo();
+		} else if (isRedo) {
+			e.preventDefault();
+			boardDoc.redo();
+		}
+	}
+
 	// Initialize the shared zone to the whole track the first time a non-full
 	// format is selected.
 	$effect(() => {
@@ -77,6 +95,14 @@
 			el.clientWidth || window.innerWidth,
 			el.clientHeight || window.innerHeight
 		);
+
+		// Add keyboard event listener
+		window.addEventListener('keydown', handleKeydown);
+	});
+
+	onDestroy(() => {
+		// Remove keyboard event listener
+		window.removeEventListener('keydown', handleKeydown);
 	});
 </script>
 

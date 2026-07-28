@@ -5,7 +5,6 @@ import {
 	analyzePack,
 	engagementZonePathData,
 	packEndpoints,
-	pxToMeter,
 	type DerivedSkater,
 	type MeterPoint,
 	type MeterSkater,
@@ -13,9 +12,12 @@ import {
 } from '$lib/trackMath';
 import { boardSettings } from '$lib/stores/boardSettings';
 import type { KonvaPlayerManager } from './KonvaPlayerManager';
+import { poseStore } from '$lib/doc/poses';
+import { fromTrack } from '$lib/track/trackFrame';
 
 export class KonvaPackManager {
 	private engagementZonePath: Konva.Path;
+	private scheduled = false;
 
 	constructor(
 		private playerManager: KonvaPlayerManager,
@@ -35,26 +37,50 @@ export class KonvaPackManager {
 	}
 
 	/**
+	 * Coalesces bursts of `determinePack` calls (dragmove can fire faster
+	 * than the display refresh rate, especially coalesced touch pointer
+	 * events) into at most one recompute per animation frame. Safe to call
+	 * as often as needed; redundant calls within the same frame are free.
+	 */
+	schedulePackUpdate(): void {
+		if (this.scheduled) return;
+		this.scheduled = true;
+		requestAnimationFrame(() => {
+			this.scheduled = false;
+			this.determinePack();
+		});
+	}
+
+	/**
 	 * Recomputes pack membership, in-play status, rearmost/foremost and the
-	 * engagement-zone overlay using @open-roller-derby-tools/derby-track. Pack eligibility
-	 * uses each blocker's own in-bounds flag so it matches the visual indicator.
+	 * engagement-zone overlay using @open-roller-derby-tools/derby-track. Pack
+	 * eligibility uses each blocker's own in-bounds flag so it matches the
+	 * visual indicator. Positions come from `poseStore.effective`, which
+	 * transparently resolves to the live (in-gesture) pose during a drag and
+	 * the committed pose otherwise — this is the one accessor every consumer
+	 * uses, so there is no separate "dragging" branch here.
 	 */
 	determinePack() {
 		const blockers = this.playerManager.getBlockers();
 
-		// Reset all pack-related state first.
-		blockers.forEach((p) => {
-			p.isInPack = false;
-			p.isRearmost = false;
-			p.isForemost = false;
-			p.updateEngagementZoneStatus(false);
-		});
+		// Reset pack-related FLAGS only — deliberately without writing the
+		// stroke. The stroke is written exactly once per blocker below, from
+		// the final computed status, so no intermediate colour can be painted.
+		blockers.forEach((p) => p.resetPackStatus());
 
-		const center = this.center();
 		const method = get(boardSettings).packMethod;
+
 		const skaters: MeterSkater[] = blockers.map((p) => {
-			const m = pxToMeter(p.getPosition(), center);
-			return { id: p.id, x: m.x, y: m.y, team: p.team, isJammer: false, inBounds: p.isInBounds };
+			const pose = poseStore.effective(p.id);
+			const meterPos = pose ? fromTrack(pose.S, pose.u) : { x: 0, y: 0 };
+			return {
+				id: p.id,
+				x: meterPos.x,
+				y: meterPos.y,
+				team: p.team,
+				isJammer: false,
+				inBounds: p.isInBounds
+			};
 		});
 
 		const derived = analyzePack(skaters, method);

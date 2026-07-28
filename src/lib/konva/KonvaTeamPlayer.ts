@@ -132,9 +132,33 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 	}
 
 	/**
+	 * Applies the stroke colour derived from ALL current status flags, in
+	 * priority order: out of bounds > in pack > in engagement zone > default.
+	 *
+	 * This is the single place the stroke is written. Every status update goes
+	 * through it so a partial update (e.g. recomputing only in-bounds during a
+	 * drag) can never transiently discard the pack/engagement-zone colour —
+	 * which previously showed up as a one-frame black flicker while dragging,
+	 * because in-bounds is refreshed per pointer event but the pack is
+	 * recomputed once per animation frame.
+	 */
+	private applyStatusStroke(): void {
+		if (!this.isInBounds) {
+			this.circle.stroke(colors.outOfBounds);
+		} else if (this.isInPack) {
+			this.circle.stroke(colors.inPack);
+		} else if (this.isInEngagementZone) {
+			this.circle.stroke(colors.inEngagementZone);
+		} else {
+			this.circle.stroke(colors.playerDefault);
+		}
+	}
+
+	/**
 	 * Updates the player's in-bounds status and visual appearance using the
 	 * package's analytic boundary test (skater modelled as a SKATER_RADIUS
 	 * circle), converting the Konva pixel position to package meters.
+	 * Preserves the current pack / engagement-zone colouring.
 	 */
 	public updateInBounds(): void {
 		const stage = this.group.getStage();
@@ -142,26 +166,23 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 
 		const center = { x: stage.width() / 2, y: stage.height() / 2 };
 		this.isInBounds = isInBounds(pxToMeter(this.getPosition(), center));
-		this.circle.stroke(this.isInBounds ? colors.inBounds : colors.outOfBounds);
+		this.applyStatusStroke();
 	}
 
 	/**
-	 * Updates the player's engagement zone status and visual appearance
+	 * Updates the player's engagement zone status and visual appearance.
 	 */
 	public updateEngagementZoneStatus(isInEngagementZone: boolean): void {
 		this.isInEngagementZone = isInEngagementZone;
+		this.applyStatusStroke();
+	}
 
-		if (this.isInBounds) {
-			if (this.isInPack) {
-				this.circle.stroke(colors.inPack);
-			} else if (isInEngagementZone) {
-				this.circle.stroke(colors.inEngagementZone);
-			} else {
-				this.circle.stroke(colors.playerDefault);
-			}
-		} else {
-			this.circle.stroke(colors.outOfBounds);
-		}
+	/** Clears pack / engagement-zone flags without writing the stroke. */
+	public resetPackStatus(): void {
+		this.isInPack = false;
+		this.isRearmost = false;
+		this.isForemost = false;
+		this.isInEngagementZone = false;
 	}
 
 	/**

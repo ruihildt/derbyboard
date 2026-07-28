@@ -11,7 +11,8 @@ import {
 	OUTER_VERTICAL_OFFSET_2,
 	VERTICAL_OFFSET_1,
 	VERTICAL_OFFSET_2,
-	ZOOM_INCREMENT
+	ZOOM_INCREMENT,
+	TRACK_SCALE
 } from '$lib/constants';
 
 import { KonvaTrackGeometry, type Point } from './KonvaTrackGeometry';
@@ -22,6 +23,12 @@ import { KonvaGestureHandler } from './KonvaGestureHandler';
 import { Watermark, type WatermarkSize } from './Watermark';
 import { fitSourceToViewport, type CaptureFit, type CaptureZone } from '$lib/utils/capture';
 import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
+import { boardDoc } from '$lib/doc/store';
+import { poseStore } from '$lib/doc/poses';
+import { migrateBoardState } from '$lib/doc/migrate';
+import { fromTrack } from '$lib/track/trackFrame';
+import type { TeamPlayerRole, TeamPlayerTeam } from './KonvaTeamPlayer';
+import type { SkatingOfficialRole } from './KonvaSkatingOfficial';
 
 const FRAME_DEFAULT_MARGIN = 0.1;
 
@@ -61,6 +68,9 @@ export class KonvaGame {
 		// Initialize basic properties first
 		this.width = width;
 		this.height = height;
+
+		// Initialize document store from persisted boardState (migration)
+		this.initializeDocumentStore();
 
 		// This shouldn't be needed, since it's the default
 		// But I feel a slight delay without it
@@ -117,10 +127,33 @@ export class KonvaGame {
 		// Register a single delegated handler for player interactions.
 		// Registered once here (not in the managers) so it survives rebuilds and
 		// always dispatches to the current playerManager/packManager instances.
-		this.playersLayer.on('dragmove dragend touchmove touchend', (e) => {
+		this.playersLayer.on('dragstart touchstart', (e) => {
+			this.playerManager.handleDragStart(e);
+		});
+
+		this.playersLayer.on('dragmove touchmove', (e) => {
 			this.playerManager.handleDragMove(e);
 			if (!this.replayMode) {
-				this.packManager.determinePack();
+				// rAF-coalesced: dragmove/touchmove can fire faster than one frame
+				// (coalesced pointer events on touch), but only the latest state
+				// before paint matters, so redundant calls within a frame collapse
+				// into one determinePack() + one batchDraw().
+				this.packManager.schedulePackUpdate();
+			}
+		});
+
+		// Handle dragend: commit the gesture to the document, then recompute
+		// the pack against the now-committed (and identical) positions.
+		this.playersLayer.on('dragend touchend', (e) => {
+			const target = e.target as Konva.Node;
+			if (target.hasName('playerGroup')) {
+				const player = target.getAttr('player');
+				if (player) {
+					this.playerManager.handleDragEnd(player);
+				}
+			}
+			if (!this.replayMode) {
+				this.packManager.schedulePackUpdate();
 			}
 		});
 
@@ -157,11 +190,24 @@ export class KonvaGame {
 		window.removeEventListener('resize', this.handleResize);
 		window.visualViewport?.removeEventListener('resize', this.onVisualViewportResize);
 		this.gestureHandler.destroy();
+		this.playerManager?.destroy();
 		this.trackSurfaceLayer.destroy();
 		this.trackLinesLayer.destroy();
 		this.engagementZoneLayer.destroy();
 		this.playersLayer.destroy();
 		this.stage.destroy();
+	}
+
+	private initializeDocumentStore() {
+		const currentDoc = get(boardDoc);
+		if (currentDoc.entities.length === 0) {
+			// Migrate from persisted boardState
+			const state = get(boardState);
+			if (state.teamPlayers.length > 0 || state.skatingOfficials.length > 0) {
+				const doc = migrateBoardState(state);
+				boardDoc.set(doc);
+			}
+		}
 	}
 
 	private initializePoints(): Record<string, Point> {
@@ -283,11 +329,10 @@ export class KonvaGame {
 	}
 
 	private rebuildTrackAndPlayers() {
-		// Clear all layers
+		// Clear track layers (no manager owns these; safe to wipe wholesale).
 		this.trackSurfaceLayer.destroyChildren();
 		this.trackLinesLayer.destroyChildren();
 		this.engagementZoneLayer.destroyChildren();
-		this.playersLayer.destroyChildren();
 
 		// Recreate track geometry with fresh points
 		this.trackGeometry = new KonvaTrackGeometry(this.initializePoints());
@@ -296,8 +341,13 @@ export class KonvaGame {
 		this.trackGeometry.addTrackSurfaceToLayer(this.trackSurfaceLayer);
 		this.trackGeometry.addTrackLinesToLayer(this.trackLinesLayer);
 
-		// Reinitialize player manager with fresh track
-		this.playerManager = new KonvaPlayerManager(this.playersLayer);
+		// Reuse the single long-lived player manager: clear the nodes it owns
+		// (NOT layer.destroyChildren(), which would orphan the wrappers it still
+		// tracks) and repopulate from the document. This keeps exactly one
+		// boardDoc subscription alive for the whole game, eliminating the
+		// duplicate-manager leak that double-rendered every player after a reset
+		// and then NaN-poisoned them via the collision solver.
+		this.playerManager.clear();
 
 		// Either load from state or default lineup based on current state
 		const state = get(boardState);
@@ -583,18 +633,18 @@ export class KonvaGame {
 	}
 
 	loadState() {
-		// Clear existing players and layers
-		this.playersLayer.destroyChildren();
+		// Clear existing players (via the manager, so its tracking arrays stay
+		// in sync — not layer.destroyChildren) and the engagement-zone overlay.
+		this.playerManager.clear();
 		this.engagementZoneLayer.destroyChildren();
 
 		// Load view settings
 		this.loadViewSettings();
 
-		// Create a new player manager and load players from state
-		this.playerManager = new KonvaPlayerManager(this.playersLayer);
+		// Load players from state using the existing manager (one subscription).
 		this.playerManager.initialLoad();
 
-		// Update pack manager with new player manager
+		// Update pack manager with the (reused) player manager
 		this.packManager = new KonvaPackManager(
 			this.playerManager,
 			this.playersLayer,
@@ -618,6 +668,10 @@ export class KonvaGame {
 	}
 
 	resetBoard() {
+		// Discard any uncommitted gesture so live poses keyed to ids that are
+		// about to be replaced can never commit onto the new document.
+		poseStore.abortGesture();
+
 		// Reset stage position and scale
 		this.stage.position({ x: 0, y: 0 });
 		this.stage.scale({ x: BASE_ZOOM, y: BASE_ZOOM });
@@ -693,37 +747,42 @@ export class KonvaGame {
 	}
 
 	/**
-	 * Captures the current board (player/official relative positions + view) as a
-	 * snapshot. The caller stamps `t`. Used by TimelineRecorder for capture.
+	 * Captures the current board (player/official relative positions + view) as
+	 * a snapshot. The caller stamps `t`. Used by TimelineRecorder for capture.
+	 *
+	 * Sources positions from `poseStore.effective`, the single accessor used
+	 * by every consumer (renderer, pack manager, this). During a drag it
+	 * transparently returns the live (in-gesture) pose — which the player
+	 * manager mirrors from the Konva node on every dragmove/collision — so a
+	 * recording captures the true position of every entity throughout the
+	 * whole gesture, not just the dragged one's final pose.
 	 */
 	getSnapshot(): Snapshot {
 		const centerX = this.width / 2;
 		const centerY = this.height / 2;
 
-		const teamPlayers = this.playerManager.getTeamPlayers().map((player) => {
-			const pos = player.getPosition();
-			return {
-				id: player.id,
-				relative: {
-					x: pos.x - centerX,
-					y: pos.y - centerY
-				},
-				role: player.role,
-				team: player.team
-			};
-		});
+		const teamPlayers: Snapshot['teamPlayers'] = [];
+		const skatingOfficials: Snapshot['skatingOfficials'] = [];
 
-		const skatingOfficials = this.playerManager.getSkatingOfficials().map((official) => {
-			const pos = official.getPosition();
-			return {
-				id: official.id,
-				relative: {
-					x: pos.x - centerX,
-					y: pos.y - centerY
-				},
-				role: official.role
-			};
-		});
+		for (const { entity, pose } of poseStore.effectiveAll()) {
+			const meterPos = fromTrack(pose.S, pose.u);
+			const relative = { x: meterPos.x * TRACK_SCALE, y: meterPos.y * TRACK_SCALE };
+
+			if (entity.kind === 'skater') {
+				teamPlayers.push({
+					id: entity.id,
+					relative,
+					role: entity.role as TeamPlayerRole,
+					team: entity.team as TeamPlayerTeam
+				});
+			} else {
+				skatingOfficials.push({
+					id: entity.id,
+					relative,
+					role: entity.role as SkatingOfficialRole
+				});
+			}
+		}
 
 		return {
 			teamPlayers,

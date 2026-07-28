@@ -8,6 +8,7 @@ import {
 	offsetToLane,
 	shortestDelta,
 	unwrap,
+	isInBoundsTrack,
 	LAP_LENGTH
 } from './trackFrame';
 import { isInBounds, type MeterPoint } from '$lib/trackMath';
@@ -69,6 +70,30 @@ describe('trackFrame', () => {
 
 				expect(p2.x).toBeCloseTo(p.x, 4);
 				expect(p2.y).toBeCloseTo(p.y, 4);
+			}
+		});
+
+		it('is lossless for out-of-bounds u (infield and apron), unlike a clamped encoding', () => {
+			// u is NOT clamped to [0,1] — a drop on the infield (u < 0) or past the
+			// apron (u > 1) must round-trip exactly, otherwise storing the pose
+			// silently teleports the entity back inside the boundary. Guaranteed
+			// domain: outward without limit, inward down to ~ -0.8 (see the
+			// geometric-limit note on toTrack); this range comfortably covers any
+			// realistic drag.
+			const sSamples = 60;
+			const outOfBoundsU = [-0.75, -0.5, -0.05, 1.05, 1.5, 3, 5];
+
+			for (let i = 0; i < sSamples; i++) {
+				const s = (i / sSamples) * LAP_LENGTH;
+				for (const u of outOfBoundsU) {
+					const meter = fromTrack(s, u);
+					const result = toTrack(meter);
+
+					expect(result.u).toBeCloseTo(u, 4);
+					const meter2 = fromTrack(result.s, result.u);
+					expect(meter2.x).toBeCloseTo(meter.x, 4);
+					expect(meter2.y).toBeCloseTo(meter.y, 4);
+				}
 			}
 		});
 	});
@@ -261,6 +286,28 @@ describe('trackFrame', () => {
 				const outer = fromTrack(s, 1.05);
 				expect(isInBounds(outer, skaterRadiusM)).toBe(false);
 			}
+		});
+	});
+
+	describe('isInBoundsTrack', () => {
+		it('agrees with meter-space isInBounds across the track', () => {
+			const skaterRadiusM = PLAYER_RADIUS / TRACK_SCALE;
+			const sSamples = 200;
+			const uCandidates = [-0.1, 0, 0.15, 0.3, 0.5, 0.7, 0.85, 1.0, 1.1];
+
+			for (let i = 0; i < sSamples; i++) {
+				const s = (i / sSamples) * LAP_LENGTH;
+				for (const u of uCandidates) {
+					const point = fromTrack(s, u);
+					expect(isInBoundsTrack(s, u, skaterRadiusM)).toBe(isInBounds(point, skaterRadiusM));
+				}
+			}
+		});
+
+		it('treats u outside [0,1] as out of bounds with zero radius', () => {
+			expect(isInBoundsTrack(10, -0.01)).toBe(false);
+			expect(isInBoundsTrack(10, 1.01)).toBe(false);
+			expect(isInBoundsTrack(10, 0.5)).toBe(true);
 		});
 	});
 

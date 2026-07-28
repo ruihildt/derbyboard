@@ -71,6 +71,29 @@ describe('Gate 0 — geometry round-trip', () => {
 		}
 	});
 
+	it('round-trips out-of-bounds poses losslessly (infield and apron)', () => {
+		// Gate 0 originally only sampled u in [0,1], which passed while u was
+		// silently clamped in toTrack. Out-of-bounds is a legitimate visible
+		// state (red stroke), so it must round-trip exactly too.
+		const sSamples = 100;
+		const outOfBoundsU = [-1, -0.2, -0.05, 1.05, 1.2, 2];
+		let worstError = 0;
+
+		for (let i = 0; i < sSamples; i++) {
+			const s = (i / sSamples) * LAP_LENGTH;
+			for (const u of outOfBoundsU) {
+				const meter1 = fromTrack(s, u);
+				const { s: s2, u: u2 } = toTrack(meter1);
+				const meter2 = fromTrack(s2, u2);
+				const error = Math.hypot(meter2.x - meter1.x, meter2.y - meter1.y);
+				worstError = Math.max(worstError, error);
+			}
+		}
+
+		console.log(`Gate 0 out-of-bounds round-trip: max error = ${worstError.toFixed(6)} m`);
+		expect(worstError).toBeLessThan(0.001);
+	});
+
 	it('boundary continuity: lane bounds change smoothly across segment joins', () => {
 		const joinSs = [0, Math.PI * 5.41, Math.PI * 5.41 + 2 * 5.33, 2 * Math.PI * 5.41 + 2 * 5.33];
 		const eps = 0.001;

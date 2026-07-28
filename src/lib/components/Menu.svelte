@@ -2,6 +2,7 @@
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { exportBoardToFile, loadBoardFromFile } from '$lib/utils/boardStateService';
 	import { isMobile } from '$lib/stores/viewport';
+	import { boardDoc } from '$lib/doc/store';
 
 	import { Dropdown, DropdownItem, Modal, Button } from 'flowbite-svelte';
 	import {
@@ -12,7 +13,9 @@
 		ArrowDownToBracketOutline,
 		ArchiveOutline,
 		NewspaperOutline,
-		CogOutline
+		CogOutline,
+		UndoOutline,
+		RedoOutline
 	} from 'flowbite-svelte-icons';
 
 	let {
@@ -77,6 +80,16 @@
 		dropdownOpen = false;
 		onOpenBoardSettings?.();
 	}
+
+	function handleUndo() {
+		boardDoc.undo();
+		dropdownOpen = false;
+	}
+
+	function handleRedo() {
+		boardDoc.redo();
+		dropdownOpen = false;
+	}
 </script>
 
 <Button
@@ -87,6 +100,14 @@
 </Button>
 
 <Dropdown bind:isOpen={dropdownOpen} class="w-48">
+	<DropdownItem class="flex items-center text-gray-700 hover:bg-primary-200" onclick={handleUndo}>
+		<UndoOutline class="mr-2 h-4 w-4" />
+		<span>Undo</span>
+	</DropdownItem>
+	<DropdownItem class="flex items-center text-gray-700 hover:bg-primary-200" onclick={handleRedo}>
+		<RedoOutline class="mr-2 h-4 w-4" />
+		<span>Redo</span>
+	</DropdownItem>
 	<DropdownItem class="flex items-center text-gray-700 hover:bg-primary-200" onclick={handleReset}>
 		<RefreshOutline class="mr-2 h-4 w-4" />
 		<span>Reset board</span>
