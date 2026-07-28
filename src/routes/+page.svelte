@@ -1,9 +1,17 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { CloseOutline } from 'flowbite-svelte-icons';
+	import { CloseOutline, PlusOutline } from 'flowbite-svelte-icons';
 
 	import { KonvaGame } from '$lib/konva/KonvaGame';
 	import { boardDoc } from '$lib/doc/store';
+	import {
+		createAuthoredClipFromBoard,
+		getActiveClip,
+		activeStepIndex,
+		navigateToStep,
+		loadStepOntoBoard,
+		syncAuthoringStateFromSession
+	} from '$lib/doc/clipOps';
 
 	import CaptureBar from '$lib/components/CaptureBar.svelte';
 	import BoardSettings from '$lib/components/BoardSettings.svelte';
@@ -15,9 +23,12 @@
 	import ZoneOverlay from '$lib/components/ZoneOverlay.svelte';
 	import WatermarkPreview from '$lib/components/WatermarkPreview.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
+	import AuthoringPanel from '$lib/components/AuthoringPanel.svelte';
+	import PresetMenu from '$lib/components/PresetMenu.svelte';
 	import { captureSettings } from '$lib/stores/captureSettings';
 	import { exportSettings } from '$lib/stores/exportSettings';
 	import { isMobile } from '$lib/stores/viewport';
+	import { authoringSession } from '$lib/stores/session';
 	import { formatRatio } from '$lib/utils/capture';
 	import type { TimelineFrame, TimelineProject } from '$lib/recording/timeline/types';
 
@@ -61,11 +72,15 @@
 	);
 	let captureRatio = $derived(formatRatio($captureSettings.format));
 	let interactive = $derived(!isRecording && !replayFrame);
+	let isAuthoring = $derived($authoringSession.activeClipId ? !!getActiveClip($boardDoc) : false);
 
-	// Keyboard shortcuts for undo/redo
+	// Keyboard shortcuts for undo/redo + authored step navigation.
 	function handleKeydown(e: KeyboardEvent) {
 		// Don't trigger shortcuts during replay or recording
 		if (isReplaying || isRecording) return;
+
+		const target = e.target as HTMLElement | null;
+		const typing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
 
 		const isUndo = (e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey;
 		const isRedo = (e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey;
@@ -76,6 +91,20 @@
 		} else if (isRedo) {
 			e.preventDefault();
 			boardDoc.redo();
+		} else if (isAuthoring && !typing && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+			e.preventDefault();
+			const delta = e.key === 'ArrowRight' ? 1 : -1;
+			const clip = getActiveClip($boardDoc);
+			if (!clip || !game) return;
+			const currentIdx = activeStepIndex($boardDoc);
+			const targetIdx = Math.max(0, Math.min(clip.steps.length - 1, currentIdx + delta));
+			if (targetIdx === currentIdx) return;
+			const targetStep = clip.steps[targetIdx];
+			if (!targetStep) return;
+			// Update session index first, then tween; on completion, load the
+			// target step onto the board so the document reflects the new state.
+			navigateToStep(targetIdx, false);
+			game.tweenToStep(targetStep.entities, 300, () => loadStepOntoBoard(targetIdx));
 		}
 	}
 
@@ -95,6 +124,9 @@
 			el.clientWidth || window.innerWidth,
 			el.clientHeight || window.innerHeight
 		);
+
+		// Restore an authored session (active clip + step) persisted across reload.
+		syncAuthoringStateFromSession();
 
 		// Add keyboard event listener
 		window.addEventListener('keydown', handleKeydown);
@@ -154,7 +186,22 @@
 
 {#if !isReplaying}
 	{#if !$isMobile}
-		<!-- Desktop: zoom bottom-left, undo/redo to the right of zoom. -->
+		<!-- Desktop: lineup + new drill top-left (right of Menu), zoom bottom-left, undo/redo to the right of zoom. -->
+		<div
+			class="fixed left-[max(4rem,env(safe-area-inset-left))] top-[max(1rem,env(safe-area-inset-top))] z-30 flex items-center gap-2"
+		>
+			<PresetMenu />
+			{#if !isAuthoring}
+				<button
+					type="button"
+					class="flex min-h-11 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-sm font-medium text-white shadow-lg shadow-black/5 hover:bg-primary-600"
+					onclick={() => createAuthoredClipFromBoard()}
+				>
+					<PlusOutline class="h-5 w-5" />
+					New drill
+				</button>
+			{/if}
+		</div>
 		<div
 			class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] z-30 flex items-center gap-2"
 		>
@@ -162,12 +209,27 @@
 			<UndoRedoControls />
 		</div>
 	{:else}
-		<!-- Mobile: undo/redo and zoom top-right (menu stays top-left). -->
+		<!-- Mobile: undo/redo, zoom, presets and new-drill top-right (menu stays top-left). -->
 		<div
-			class="fixed right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] z-30 flex items-center gap-2"
+			class="fixed right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] z-30 flex flex-col items-end gap-2"
 		>
-			<UndoRedoControls />
-			<ZoomControl {game} />
+			<div class="flex items-center gap-2">
+				<UndoRedoControls />
+				<ZoomControl {game} />
+			</div>
+			{#if !isAuthoring}
+				<div class="flex items-center gap-2">
+					<PresetMenu />
+					<button
+						type="button"
+						class="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-primary-500 px-2 text-xs font-medium text-white shadow-lg shadow-black/5 hover:bg-primary-600"
+						onclick={() => createAuthoredClipFromBoard()}
+						aria-label="New drill"
+					>
+						<PlusOutline class="h-5 w-5" />
+					</button>
+				</div>
+			{/if}
 		</div>
 	{/if}
 
@@ -183,7 +245,7 @@
 
 {#if !isReplaying}
 	<div
-		class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-1 px-2"
+		class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] z-30 flex flex-col items-center gap-1 px-2"
 	>
 		<RotateHint />
 		{#if notice}
@@ -230,3 +292,7 @@
 	onLoadError={(m) => (loadError = m)}
 	onNotice={(m) => (notice = m)}
 />
+
+{#if !isReplaying}
+	<AuthoringPanel {game} />
+{/if}

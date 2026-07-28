@@ -14,9 +14,10 @@ function poseOf(entity: Entity): Pose {
 /**
  * Single source of truth for "where is entity X right now", reconciling the
  * committed document (persisted, undoable) with an in-progress gesture's
- * uncommitted motion (a drag, including any collision-nudged neighbours).
+ * uncommitted motion (a drag, including any collision-nudged neighbours) and
+ * replay/export overrides (sample poses from a recording).
  *
- * Two tiers:
+ * Three tiers (in precedence order):
  *  - committed: `BoardDoc.entities` — immutable, patched via `boardDoc.applyEdit`,
  *    undoable. This is what persists and what `syncFromDocument` renders.
  *  - live: a plain mutable Map, touched at high frequency (every dragmove /
@@ -24,14 +25,34 @@ function poseOf(entity: Entity): Pose {
  *    store: a gesture can update several entities dozens of times a second,
  *    and routing that through `applyEdit`/`writable.set` would thrash undo
  *    history and reactivity for motion that is transient by definition.
+ *  - override: replay/export sample poses. Unlike live, overrides can contain
+ *    ids not in the document (foreign rosters from loaded recordings). Used
+ *    by `determinePack()` and `getSnapshot()` so replay visuals match what is
+ *    rendered.
  *
  * `effective()` / `effectiveAll()` are the ONLY accessors every consumer
  * (renderer, pack manager, recorder) should use — this removes the need for
  * any `isDragging` branch scattered across call sites: during a gesture they
- * transparently see the live pose; at rest they see the committed one.
+ * transparently see the live pose; during replay they see the override; at
+ * rest they see the committed one.
  */
 export class PoseStore {
 	private live = new Map<string, Pose>();
+	private overrides = new Map<string, Pose>();
+	/**
+	 * Optional override for how a committed gesture is written to the
+	 * document. When set (e.g. by the authoring layer while editing an
+	 * authored step), the gesture's poses are written through it INSTEAD of
+	 * the default `applyEdit`, so the active step can be synced to the new
+	 * poses within the SAME undo entry — one undo reverts the whole gesture
+	 * on the board and the step together. Null restores the default path.
+	 */
+	private commitHook: ((poses: Map<string, Pose>, label: string) => boolean) | null = null;
+
+	/** Installs/removes the commit override (see {@link commitHook}). */
+	setCommitHook(hook: ((poses: Map<string, Pose>, label: string) => boolean) | null): void {
+		this.commitHook = hook;
+	}
 
 	/** True while a gesture has uncommitted live poses. */
 	get isLive(): boolean {
@@ -43,10 +64,12 @@ export class PoseStore {
 		return [...this.live.keys()];
 	}
 
-	/** Effective pose for one entity: live override if present, else committed. */
+	/** Effective pose for one entity: live → override → committed. */
 	effective(id: string): Pose | undefined {
 		const l = this.live.get(id);
 		if (l) return l;
+		const o = this.overrides.get(id);
+		if (o) return o;
 		const entity = boardDoc.current.entities.find((e) => e.id === id);
 		return entity ? poseOf(entity) : undefined;
 	}
@@ -55,7 +78,7 @@ export class PoseStore {
 	effectiveAll(): Array<{ entity: Entity; pose: Pose }> {
 		return boardDoc.current.entities.map((entity) => ({
 			entity,
-			pose: this.live.get(entity.id) ?? poseOf(entity)
+			pose: this.live.get(entity.id) ?? this.overrides.get(entity.id) ?? poseOf(entity)
 		}));
 	}
 
@@ -83,9 +106,44 @@ export class PoseStore {
 		this.live.set(id, merged);
 	}
 
+	/**
+	 * Sets an override pose for one entity. Unlike setLive, this accepts ids
+	 * not in the document (foreign rosters from loaded recordings). Used by
+	 * replay/export to publish sample poses so determinePack sees them.
+	 */
+	setOverride(id: string, pose: Pose): void {
+		if (!Number.isFinite(pose.S) || !Number.isFinite(pose.u) || !Number.isFinite(pose.heading)) {
+			return;
+		}
+		this.overrides.set(id, pose);
+	}
+
+	/**
+	 * Bulk-sets override poses for multiple entities. Replaces any existing
+	 * overrides for those ids; other ids are unaffected.
+	 */
+	setOverrides(poses: Iterable<[string, Pose]>): void {
+		for (const [id, pose] of poses) {
+			this.setOverride(id, pose);
+		}
+	}
+
 	/** Discards all live overrides without writing them to the document. */
 	abortGesture(): void {
 		this.live.clear();
+	}
+
+	/**
+	 * Discards all override poses (replay/export). Called on replay exit and
+	 * board reset so the override tier doesn't leak into editing.
+	 */
+	clearOverrides(): void {
+		this.overrides.clear();
+	}
+
+	/** True while the override tier has poses (replay/export active). */
+	get hasOverrides(): boolean {
+		return this.overrides.size > 0;
 	}
 
 	/**
@@ -97,7 +155,14 @@ export class PoseStore {
 	commitGesture(label: string): boolean {
 		if (this.live.size === 0) return false;
 		const poses = this.live;
-		const changed = boardDoc.applyEdit((draft) => {
+		const changed =
+			this.commitHook !== null ? this.commitHook(poses, label) : this.defaultCommit(poses, label);
+		this.live.clear();
+		return changed;
+	}
+
+	private defaultCommit(poses: Map<string, Pose>, label: string): boolean {
+		return boardDoc.applyEdit((draft) => {
 			for (const [id, pose] of poses) {
 				// Defensive: skip any pose that slipped through as non-finite,
 				// so a numeric bug elsewhere can never corrupt the document.
@@ -116,8 +181,6 @@ export class PoseStore {
 				}
 			}
 		}, label);
-		this.live.clear();
-		return changed;
 	}
 }
 

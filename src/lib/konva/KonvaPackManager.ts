@@ -18,6 +18,13 @@ import { fromTrack } from '$lib/track/trackFrame';
 export class KonvaPackManager {
 	private engagementZonePath: Konva.Path;
 	private scheduled = false;
+	/**
+	 * Whether the engagement-zone overlay is drawn. Driven by the active
+	 * authored step's `showPackZone` (P3 task 10) so a coach can author
+	 * "show the pack here, hide it there". Pack MEMBERSHIP and in-play
+	 * colouring are always computed; this only gates the drawn region.
+	 */
+	private zoneVisible = true;
 
 	constructor(
 		private playerManager: KonvaPlayerManager,
@@ -49,6 +56,12 @@ export class KonvaPackManager {
 			this.scheduled = false;
 			this.determinePack();
 		});
+	}
+
+	/** Gates the drawn engagement-zone overlay (does not affect membership). */
+	setZoneVisible(visible: boolean): void {
+		this.zoneVisible = visible;
+		if (!visible) this.engagementZonePath.hide();
 	}
 
 	/**
@@ -119,6 +132,10 @@ export class KonvaPackManager {
 	}
 
 	private updateEngagementZone(packDerived: DerivedSkater[], method: PackMethod) {
+		if (!this.zoneVisible) {
+			this.engagementZonePath.hide();
+			return;
+		}
 		const pathData = engagementZonePathData(packDerived, method);
 		if (!pathData) {
 			this.engagementZonePath.hide();

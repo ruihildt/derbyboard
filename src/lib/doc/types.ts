@@ -29,6 +29,13 @@ export interface Step {
 	entities: EntityPose[];
 	holdMs?: number;
 	annotations?: [];
+	/**
+	 * Whether the pack / engagement-zone overlay is shown while this step is
+	 * active. Per-step so a coach can author "show the pack here, hide it
+	 * there". Undefined is treated as ON for backward compatibility with
+	 * steps authored before the field existed.
+	 */
+	showPackZone?: boolean;
 }
 
 export interface AuthoredClip {
@@ -98,7 +105,7 @@ export interface BoardDoc {
 	activeClipId: string | null;
 }
 
-export const CURRENT_VERSION = 1;
+export const CURRENT_VERSION = 2;
 
 export function createEmptyDoc(): BoardDoc {
 	return {

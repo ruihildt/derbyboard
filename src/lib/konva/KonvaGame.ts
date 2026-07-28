@@ -9,10 +9,12 @@ import {
 	MIN_ZOOM,
 	OUTER_VERTICAL_OFFSET_1,
 	OUTER_VERTICAL_OFFSET_2,
+	PLAYER_RADIUS,
 	VERTICAL_OFFSET_1,
 	VERTICAL_OFFSET_2,
 	ZOOM_INCREMENT,
-	TRACK_SCALE
+	TRACK_SCALE,
+	colors
 } from '$lib/constants';
 
 import { KonvaTrackGeometry, type Point } from './KonvaTrackGeometry';
@@ -26,11 +28,16 @@ import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
 import { boardDoc } from '$lib/doc/store';
 import { poseStore } from '$lib/doc/poses';
 import { migrateBoardState } from '$lib/doc/migrate';
-import { fromTrack } from '$lib/track/trackFrame';
+import { fromTrack, toTrack } from '$lib/track/trackFrame';
+import { tweenSteps, easeInOutCubic } from '$lib/track/tween';
+import type { EntityPose } from '$lib/doc/types';
 import type { TeamPlayerRole, TeamPlayerTeam } from './KonvaTeamPlayer';
 import type { SkatingOfficialRole } from './KonvaSkatingOfficial';
 
 const FRAME_DEFAULT_MARGIN = 0.1;
+
+/** Max tail points kept per entity for motion trails. */
+const TRAIL_MAX_POINTS = 24;
 
 export class KonvaGame {
 	private width: number;
@@ -41,6 +48,8 @@ export class KonvaGame {
 	private trackLinesLayer: Konva.Layer;
 	private playersLayer: Konva.Layer;
 	private engagementZoneLayer: Konva.Layer;
+	/** Fading team-coloured tails behind entities during authored playback. */
+	private trailLayer: Konva.Layer;
 
 	private trackGeometry: KonvaTrackGeometry;
 	private playerManager!: KonvaPlayerManager;
@@ -50,6 +59,31 @@ export class KonvaGame {
 
 	/** When true, replay drives the board: editing is locked and pack logic is not double-run. */
 	private replayMode = false;
+
+	/**
+	 * Authored-clip playback state. Trails, focus/dim and per-step pack-zone
+	 * visibility live here as runtime view state (not persisted in the doc).
+	 */
+	private authoredPlayback = false;
+	private trailsEnabled = false;
+	private trails = new Map<string, Konva.Line>();
+	private focusIds: string[] | null = null;
+	/**
+	 * Tap-to-select for focus/dim (P3 task 9). When a callback is set, tapping
+	 * an entity toggles it into the focus set (capped at 2). Cleared by the UI
+	 * when focus mode is exited.
+	 */
+	private focusTapEnabled = false;
+	private focusTapCallback: ((id: string) => void) | null = null;
+	/**
+	 * Pack/engagement-zone overlay visibility. Held on KonvaGame so it survives
+	 * KonvaPackManager re-creation (loadState, rebuildTrackAndPlayers). Forced
+	 * to true during replay/export so a hidden authored overlay can't blank a
+	 * replay's EZ.
+	 */
+	private zoneVisible = true;
+	/** Saved zoneVisible value before replay forced it to true. */
+	private savedZoneVisible = true;
 
 	/**
 	 * Canonical capture dimensions for the active replay (null when not
@@ -101,6 +135,7 @@ export class KonvaGame {
 		this.trackLinesLayer = new Konva.Layer();
 		this.engagementZoneLayer = new Konva.Layer();
 		this.playersLayer = new Konva.Layer();
+		this.trailLayer = new Konva.Layer();
 
 		// Add in correct order:
 		// 1. Track surface (bottom)
@@ -114,7 +149,10 @@ export class KonvaGame {
 		this.trackGeometry.addTrackLinesToLayer(this.trackLinesLayer);
 		this.stage.add(this.trackLinesLayer);
 
-		// 4. Players (top)
+		// 4. Motion trails (under players, over lines)
+		this.stage.add(this.trailLayer);
+
+		// 5. Players (top)
 		this.stage.add(this.playersLayer);
 
 		this.playerManager = new KonvaPlayerManager(this.playersLayer);
@@ -161,6 +199,17 @@ export class KonvaGame {
 			this.playerManager.handleCollision(e);
 		});
 
+		// Tap-to-select for focus/dim: only active when the UI has armed it.
+		this.playersLayer.on('click tap', (e) => {
+			if (!this.focusTapEnabled || !this.focusTapCallback) return;
+			const target = e.target as Konva.Node;
+			if (target.hasName('playerGroup') || target.getParent()?.hasName('playerGroup')) {
+				const player = (target.getAttr('player') ?? target.getParent()?.getAttr('player')) as
+					{ id?: string } | undefined;
+				if (player?.id) this.focusTapCallback(player.id);
+			}
+		});
+
 		this.playerManager.initialLoad();
 		this.packManager.determinePack();
 		this.playersLayer.batchDraw();
@@ -194,6 +243,7 @@ export class KonvaGame {
 		this.trackSurfaceLayer.destroy();
 		this.trackLinesLayer.destroy();
 		this.engagementZoneLayer.destroy();
+		this.trailLayer.destroy();
 		this.playersLayer.destroy();
 		this.stage.destroy();
 	}
@@ -333,6 +383,7 @@ export class KonvaGame {
 		this.trackSurfaceLayer.destroyChildren();
 		this.trackLinesLayer.destroyChildren();
 		this.engagementZoneLayer.destroyChildren();
+		this.clearTrails();
 
 		// Recreate track geometry with fresh points
 		this.trackGeometry = new KonvaTrackGeometry(this.initializePoints());
@@ -363,6 +414,7 @@ export class KonvaGame {
 			this.playersLayer,
 			this.engagementZoneLayer
 		);
+		this.applyZoneVisible();
 
 		// Recalculate pack
 		this.packManager.determinePack();
@@ -650,6 +702,7 @@ export class KonvaGame {
 			this.playersLayer,
 			this.engagementZoneLayer
 		);
+		this.applyZoneVisible();
 
 		// Recalculate pack and engagement zone
 		this.packManager.determinePack();
@@ -665,6 +718,15 @@ export class KonvaGame {
 	/** Recomputes pack/in-play/EZ (e.g. after a board-settings change). */
 	refreshPack() {
 		this.packManager.determinePack();
+	}
+
+	/**
+	 * Re-applies the current zoneVisible state to the pack manager. Called
+	 * after KonvaPackManager re-creation (loadState, rebuildTrackAndPlayers)
+	 * so the overlay setting survives manager replacement.
+	 */
+	private applyZoneVisible() {
+		this.packManager.setZoneVisible(this.zoneVisible);
 	}
 
 	resetBoard() {
@@ -731,6 +793,15 @@ export class KonvaGame {
 		this.stage.draggable(!enabled);
 		this.playerManager.setPlayersDraggable(!enabled);
 		if (enabled) {
+			// Belt-and-braces: tear down any authoring residue (focus/dim,
+			// trails, live-tier overrides) so replay starts from a clean slate
+			// regardless of component lifecycle order.
+			this.resetAuthoringView();
+			// Force the pack/EZ overlay visible during replay so a hidden
+			// authored overlay can't blank a replay's EZ.
+			this.savedZoneVisible = this.zoneVisible;
+			this.zoneVisible = true;
+			this.applyZoneVisible();
 			this.replaySource = source ?? null;
 			this.replayFit =
 				source !== undefined
@@ -741,6 +812,11 @@ export class KonvaGame {
 			this.replaySource = null;
 			this.replayFit = { scale: 1, offX: 0, offY: 0 };
 			this.lastSample = null;
+			// Restore the user's zoneVisible setting.
+			this.zoneVisible = this.savedZoneVisible;
+			this.applyZoneVisible();
+			// Clear replay overrides so they don't leak into editing.
+			poseStore.clearOverrides();
 			// Restore the user's board after replay.
 			this.loadState();
 		}
@@ -848,6 +924,24 @@ export class KonvaGame {
 			y: fit.offY + fit.scale * (sample.view.relativeY * sCy - z * dy)
 		});
 
+		// Publish sample poses as overrides so determinePack() sees exactly
+		// what is rendered, not the stale document state. Convert pixel
+		// positions to track space (S, u) for the override tier.
+		const overrides: Array<[string, { S: number; u: number; heading: number }]> = [];
+		for (const tp of sample.teamPlayers) {
+			if (!tp.id) continue;
+			const meterPos = { x: tp.relative.x / TRACK_SCALE, y: tp.relative.y / TRACK_SCALE };
+			const trackPos = toTrack(meterPos);
+			overrides.push([tp.id, { S: trackPos.s, u: trackPos.u, heading: 0 }]);
+		}
+		for (const so of sample.skatingOfficials) {
+			if (!so.id) continue;
+			const meterPos = { x: so.relative.x / TRACK_SCALE, y: so.relative.y / TRACK_SCALE };
+			const trackPos = toTrack(meterPos);
+			overrides.push([so.id, { S: trackPos.s, u: trackPos.u, heading: 0 }]);
+		}
+		poseStore.setOverrides(overrides);
+
 		this.packManager.determinePack();
 		this.trackSurfaceLayer.batchDraw();
 		this.trackLinesLayer.batchDraw();
@@ -884,6 +978,23 @@ export class KonvaGame {
 					y: sample.view.relativeY * centerY
 				});
 
+				// Publish sample poses as overrides so determinePack() sees exactly
+				// what is rendered, not the stale document state.
+				const overrides: Array<[string, { S: number; u: number; heading: number }]> = [];
+				for (const tp of sample.teamPlayers) {
+					if (!tp.id) continue;
+					const meterPos = { x: tp.relative.x / TRACK_SCALE, y: tp.relative.y / TRACK_SCALE };
+					const trackPos = toTrack(meterPos);
+					overrides.push([tp.id, { S: trackPos.s, u: trackPos.u, heading: 0 }]);
+				}
+				for (const so of sample.skatingOfficials) {
+					if (!so.id) continue;
+					const meterPos = { x: so.relative.x / TRACK_SCALE, y: so.relative.y / TRACK_SCALE };
+					const trackPos = toTrack(meterPos);
+					overrides.push([so.id, { S: trackPos.s, u: trackPos.u, heading: 0 }]);
+				}
+				poseStore.setOverrides(overrides);
+
 				this.packManager.determinePack();
 				this.trackSurfaceLayer.batchDraw();
 				this.trackLinesLayer.batchDraw();
@@ -900,15 +1011,204 @@ export class KonvaGame {
 	 * Renders a sample in pure source space (identity fit: scale=1, off=0) so the
 	 * export crop is capture-canonical regardless of the live window. Used by the
 	 * mp4/png exporter, which stages the board at source dims before cropping.
+	 * Forces the pack/EZ overlay visible during export so a hidden authored
+	 * overlay can't blank the exported EZ.
 	 */
 	applySnapshotCanonical(sample: TimelineSample, source: { w: number; h: number }): void {
 		const wasReplaying = this.replayMode;
+		const wasZoneVisible = this.zoneVisible;
 		this.replayMode = true;
+		this.zoneVisible = true;
+		this.applyZoneVisible();
 		try {
 			this.renderSampleTransform(sample, source, { scale: 1, offX: 0, offY: 0 });
 		} finally {
 			this.replayMode = wasReplaying;
+			this.zoneVisible = wasZoneVisible;
+			this.applyZoneVisible();
 		}
+	}
+
+	// ------------------------------------------------------------------------- //
+	// Authored-clip playback (P3)
+	// ------------------------------------------------------------------------- //
+	// Authored playback drives every entity's pose through the PoseStore LIVE
+	// tier each frame (the same tier a drag uses), then reprojects the nodes.
+	// This reuses the single `poseStore.effective` accessor that pack/in-bounds/
+	// snapshot already read, so tweened positions are consistent everywhere —
+	// no separate "playback" code path that can drift from editing.
+
+	/** Enters authored playback: locks entity dragging, resets trails. */
+	beginAuthoredPlayback(): void {
+		this.authoredPlayback = true;
+		this.playerManager.setPlayersDraggable(false);
+		this.clearTrails();
+	}
+
+	/** Exits authored playback: clears transient live poses, restores dragging. */
+	endAuthoredPlayback(): void {
+		this.authoredPlayback = false;
+		poseStore.abortGesture();
+		this.playerManager.setPlayersDraggable(true);
+		this.clearTrails();
+	}
+
+	isAuthoredPlayback(): boolean {
+		return this.authoredPlayback;
+	}
+
+	/**
+	 * Resets all authoring-view state (focus/dim, trails, live-tier, authored
+	 * playback flag) without restoring dragging. Called defensively on replay
+	 * entry and board reset so the invariant "no authoring residue survives
+	 * into replay or editing" does not depend on component lifecycle order.
+	 */
+	resetAuthoringView(): void {
+		this.authoredPlayback = false;
+		poseStore.abortGesture();
+		poseStore.clearOverrides();
+		this.clearTrails();
+		this.focusIds = null;
+		this.focusTapEnabled = false;
+		this.focusTapCallback = null;
+		this.playerManager.setFocus(null);
+	}
+
+	/**
+	 * Renders one frame of tweened entity poses during authored playback.
+	 * Writes the poses into the PoseStore live tier, reprojects nodes, recomputes
+	 * the pack/zone, and appends a motion-trail sample per entity.
+	 */
+	applyAuthoredPoses(poses: EntityPose[]): void {
+		for (const pose of poses) {
+			poseStore.setLive(pose.id, { S: pose.S, u: pose.u, heading: pose.heading });
+		}
+		this.playerManager.applyEffectivePoses();
+		this.packManager.determinePack();
+		if (this.trailsEnabled) this.pushTrails(poses);
+		this.engagementZoneLayer.batchDraw();
+		this.trailLayer.batchDraw();
+		this.playersLayer.batchDraw();
+	}
+
+	/**
+	 * Tweens from current board poses to target poses over the specified duration.
+	 * Uses requestAnimationFrame for smooth animation with easing.
+	 * Cancellable: a new tween cancels any in-flight tween. On completion,
+	 * clears the live tier and reconciles to the document so no uncommitted
+	 * poses survive to corrupt subsequent navigation or recordings.
+	 */
+	private tweenRafId: number | null = null;
+	tweenToStep(targetPoses: EntityPose[], durationMs: number = 300, onComplete?: () => void): void {
+		// Cancel any in-flight tween so only one runs at a time.
+		if (this.tweenRafId !== null) {
+			cancelAnimationFrame(this.tweenRafId);
+			this.tweenRafId = null;
+		}
+
+		const currentPoses: EntityPose[] = boardDoc.current.entities.map((e) => ({
+			id: e.id,
+			S: e.S,
+			u: e.u,
+			heading: e.heading
+		}));
+
+		const startTime = performance.now();
+
+		const animate = (now: number) => {
+			const elapsed = now - startTime;
+			const progress = Math.min(elapsed / durationMs, 1);
+			const easedProgress = easeInOutCubic(progress);
+
+			const interpolatedPoses = tweenSteps(currentPoses, targetPoses, easedProgress);
+			this.applyAuthoredPoses(interpolatedPoses);
+
+			if (progress < 1) {
+				this.tweenRafId = requestAnimationFrame(animate);
+			} else {
+				// Tween complete: clear live tier and reconcile to document.
+				this.tweenRafId = null;
+				poseStore.abortGesture();
+				this.playerManager.renderFromDocument();
+				onComplete?.();
+			}
+		};
+
+		this.tweenRafId = requestAnimationFrame(animate);
+	}
+
+	/** Enables/disables the fading motion-trail tail during playback. */
+	setTrailsEnabled(enabled: boolean): void {
+		this.trailsEnabled = enabled;
+		if (!enabled) this.clearTrails();
+	}
+
+	/** Focus/dim: dims every entity not in `ids`; null clears it. */
+	setFocus(ids: string[] | null): void {
+		this.focusIds = ids;
+		this.playerManager.setFocus(ids);
+	}
+
+	/** Sets the active step's pack/zone overlay visibility and recomputes. */
+	setPackZoneVisible(visible: boolean): void {
+		this.zoneVisible = visible;
+		this.packManager.setZoneVisible(visible);
+		this.packManager.determinePack();
+	}
+
+	/** Arms tap-to-select for focus/dim with the given toggle callback. */
+	setFocusTap(enabled: boolean, callback: ((id: string) => void) | null): void {
+		this.focusTapEnabled = enabled;
+		this.focusTapCallback = callback;
+		if (!enabled) this.setFocus(null);
+	}
+
+	private centerPx(): { x: number; y: number } {
+		return { x: this.width / 2, y: this.height / 2 };
+	}
+
+	private trailColorFor(id: string): string {
+		const entity = boardDoc.current.entities.find((e) => e.id === id);
+		if (entity?.team === 'A') return colors.teamAPrimary;
+		if (entity?.team === 'B') return colors.teamBPrimary;
+		return colors.officialSecondary;
+	}
+
+	/** Appends the current projected position of each entity to its trail. */
+	private pushTrails(poses: EntityPose[]): void {
+		const center = this.centerPx();
+		const zoom = this.stage.scaleX();
+		for (const pose of poses) {
+			const meter = fromTrack(pose.S, pose.u);
+			const x = center.x + meter.x * TRACK_SCALE;
+			const y = center.y + meter.y * TRACK_SCALE;
+			let line = this.trails.get(pose.id);
+			if (!line) {
+				line = new Konva.Line({
+					points: [x, y],
+					stroke: this.trailColorFor(pose.id),
+					strokeWidth: Math.max(1.5, (PLAYER_RADIUS * 0.35) / zoom),
+					opacity: 0.5,
+					lineCap: 'round',
+					lineJoin: 'round',
+					listening: false
+				});
+				this.trailLayer.add(line);
+				this.trails.set(pose.id, line);
+			}
+			const pts = line.points();
+			pts.push(x, y);
+			while (pts.length > TRAIL_MAX_POINTS * 2) pts.splice(0, 2);
+			line.points(pts);
+			line.strokeWidth(Math.max(1.5, (PLAYER_RADIUS * 0.35) / zoom));
+		}
+	}
+
+	/** Removes all trail polylines (e.g. on playback start/stop or board rebuild). */
+	private clearTrails(): void {
+		this.trails.clear();
+		this.trailLayer.destroyChildren();
+		this.trailLayer.batchDraw();
 	}
 
 	exportAsImage(pixelRatio = 2, watermark: WatermarkSize = 'medium'): string {

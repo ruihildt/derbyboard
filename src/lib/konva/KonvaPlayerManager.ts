@@ -296,6 +296,45 @@ export class KonvaPlayerManager {
 	}
 
 	/**
+	 * Repositions every node to its CURRENT effective pose (live override if
+	 * present, else committed) and refreshes in-bounds status. This is the
+	 * authored-playback render path: the player sets all entity poses into the
+	 * PoseStore live tier each frame, then calls this to move the nodes to
+	 * match — so pack/in-bounds/snapshot all read the tweened positions through
+	 * the single `poseStore.effective` accessor, exactly as they do mid-drag.
+	 * Roster is assumed stable (a clip is one lineup evolving); missing nodes
+	 * are skipped rather than created.
+	 */
+	applyEffectivePoses(): void {
+		for (const p of this.teamPlayers) {
+			const pose = poseStore.effective(p.id);
+			if (pose) p.setPosition(this.projectPose(pose));
+			p.updateInBounds();
+		}
+		for (const p of this.skatingOfficials) {
+			const pose = poseStore.effective(p.id);
+			if (pose) p.setPosition(this.projectPose(pose));
+		}
+		this.layer.batchDraw();
+	}
+
+	/**
+	 * Focus/dim (P3 task 9): dims every entity not in `focusIds` to make the
+	 * selected one or two stand out. Pass `null` to clear (all fully opaque).
+	 * Applied as group opacity so all role markings dim together.
+	 */
+	setFocus(focusIds: string[] | null): void {
+		const focus = focusIds && focusIds.length > 0 ? new Set(focusIds) : null;
+		for (const p of this.teamPlayers) {
+			p.getNode().opacity(focus ? (focus.has(p.id) ? 1 : 0.3) : 1);
+		}
+		for (const p of this.skatingOfficials) {
+			p.getNode().opacity(focus ? (focus.has(p.id) ? 1 : 0.3) : 1);
+		}
+		this.layer.batchDraw();
+	}
+
+	/**
 	 * Reconciles team players to match a set of positions, correlating by id:
 	 * remove players no longer present, add new ones, and update/replace the rest.
 	 */

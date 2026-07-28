@@ -2,6 +2,9 @@ import Konva from 'konva';
 import { type Point } from './KonvaTrackGeometry';
 import { PLAYER_RADIUS, PLAYER_STROKE_WIDTH } from '$lib/constants';
 
+/** Hit-area enlargement over the visible circle, for thumb-viable touches. */
+const HIT_SCALE = 1.6;
+
 interface PlayerGroupConfig {
 	x: number;
 	y: number;
@@ -55,6 +58,24 @@ export class KonvaPlayer {
 
 		this.baseCircle = new Konva.Circle(circleConfig);
 		this.group.add(this.baseCircle);
+
+		// Touch-viable grab area (P3 task 12): a larger, effectively-invisible
+		// circle whose only purpose is hit detection, so fingers reliably grab
+		// entities on a phone. It resolves to the same draggable group, and the
+		// near-zero alpha keeps it visually imperceptible while remaining
+		// hittable in Konva's hit graph (a fully transparent/null fill would
+		// NOT be hittable in the interior).
+		this.group.add(
+			new Konva.Circle({
+				x: 0,
+				y: 0,
+				radius: PLAYER_RADIUS * HIT_SCALE,
+				fill: 'rgba(0,0,0,0.005)',
+				listening: true,
+				name: 'hitArea',
+				perfectDrawEnabled: false
+			})
+		);
 
 		layer.add(this.group);
 		layer.batchDraw();

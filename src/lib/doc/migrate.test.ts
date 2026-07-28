@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { migrateBoardState, migrateTimelineProject } from './migrate';
+import { migrateBoardState, migrateTimelineProject, migrateBoardDoc } from './migrate';
+import { CURRENT_VERSION } from './types';
 import type { KonvaBoardState } from '$lib/stores/konvaBoardState';
 import type { TimelineProject } from '$lib/recording/timeline/types';
 import { TeamPlayerRole, TeamPlayerTeam } from '$lib/konva/KonvaTeamPlayer';
@@ -17,7 +18,7 @@ describe('migrate', () => {
 
 			const doc = migrateBoardState(state);
 
-			expect(doc.version).toBe(1);
+			expect(doc.version).toBe(2);
 			expect(doc.createdAt).toBe('2024-01-01T00:00:00.000Z');
 			expect(doc.entities).toHaveLength(0);
 			expect(doc.clips).toHaveLength(0);
@@ -277,6 +278,58 @@ describe('migrate', () => {
 
 			expect(clip.audio).toBeDefined();
 			expect(clip.audio!.mimeType).toBe('audio/webm');
+		});
+	});
+
+	describe('migrateBoardDoc', () => {
+		it('bumps a v1 document to the current version', () => {
+			const v1 = migrateBoardState({
+				version: 3,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				teamPlayers: [],
+				skatingOfficials: []
+			});
+			v1.version = 1; // pretend it was persisted before v2
+			const migrated = migrateBoardDoc(v1);
+			expect(migrated.version).toBe(CURRENT_VERSION);
+		});
+
+		it('is idempotent on an already-current document', () => {
+			const v1 = migrateBoardState({
+				version: 3,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				teamPlayers: [],
+				skatingOfficials: []
+			});
+			const once = migrateBoardDoc(v1);
+			const twice = migrateBoardDoc(once);
+			expect(twice).toEqual(once);
+		});
+
+		it('preserves authored clips and steps across the v1→v2 bump', () => {
+			const v1 = migrateBoardState({
+				version: 3,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				teamPlayers: [],
+				skatingOfficials: []
+			});
+			v1.version = 1;
+			v1.clips = [
+				{
+					kind: 'authored',
+					id: 'c1',
+					title: 'Drill',
+					steps: [{ id: 's1', entities: [{ id: 'e1', S: 1, u: 0.5, heading: 0 }] }]
+				}
+			];
+			const migrated = migrateBoardDoc(v1);
+			const clip = migrated.clips[0];
+			expect(clip).toBeDefined();
+			expect(clip.kind).toBe('authored');
+			if (clip.kind !== 'authored') return;
+			// showPackZone stays undefined (= ON) for pre-v2 steps.
+			expect(clip.steps[0].showPackZone).toBeUndefined();
+			expect(clip.steps[0].entities[0].S).toBe(1);
 		});
 	});
 });

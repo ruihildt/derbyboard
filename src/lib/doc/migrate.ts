@@ -1,4 +1,5 @@
 import type { BoardDoc, Entity, CapturedClip } from './types';
+import { CURRENT_VERSION } from './types';
 import type { KonvaBoardState } from '$lib/stores/konvaBoardState';
 import type { TimelineProject } from '$lib/recording/timeline/types';
 import { toTrack, fromTrack } from '$lib/track/trackFrame';
@@ -96,4 +97,35 @@ export function entityToPixelRelative(entity: Entity): { x: number; y: number } 
 		x: meterPos.x * TRACK_SCALE,
 		y: meterPos.y * TRACK_SCALE
 	};
+}
+
+/**
+ * Forward-migrate a loaded `BoardDoc` to the current schema version. Each
+ * step is additive and idempotent: it leaves already-current documents
+ * untouched and fills defaults for fields introduced by that version.
+ *
+ * Version history:
+ *  - v1 → v2: added optional `showPackZone` to `Step` (defaults to ON when
+ *    absent, so existing authored steps keep showing the overlay).
+ */
+export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
+	let next = doc;
+
+	if (next.version < 2) {
+		// Defensive copy so we never mutate the caller's object.
+		next = {
+			...next,
+			clips: next.clips.map((clip) =>
+				clip.kind === 'authored'
+					? { ...clip, steps: clip.steps.map((step) => ({ ...step })) }
+					: clip
+			)
+		};
+		// `showPackZone` is intentionally left undefined here: absent means ON,
+		// matching pre-v2 authored behaviour.
+		next.version = 2;
+	}
+
+	next.version = CURRENT_VERSION;
+	return next;
 }
