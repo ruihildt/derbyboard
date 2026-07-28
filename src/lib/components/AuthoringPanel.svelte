@@ -8,11 +8,10 @@
 		PlusOutline,
 		FileCopyOutline,
 		TrashBinOutline,
-		ArrowLeftOutline,
-		ArrowRightOutline,
+		BackwardStepOutline,
+		ForwardStepOutline,
 		RefreshOutline,
-		LayersOutline,
-		CameraPhotoOutline
+		StroopwafelOutline
 	} from 'flowbite-svelte-icons';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { boardDoc } from '$lib/doc/store';
@@ -29,7 +28,7 @@
 		exitAuthoring
 	} from '$lib/doc/clipOps';
 	import { AuthoredPlayer } from '$lib/recording/authored/AuthoredPlayer';
-	import { nearestStepAt } from '$lib/track/tween';
+	import { nearestStepAt, buildTimeline } from '$lib/track/tween';
 	import { isMobile } from '$lib/stores/viewport';
 	import { authoringSession } from '$lib/stores/session';
 
@@ -39,6 +38,15 @@
 	let steps = $derived(clip?.steps ?? []);
 	let activeIdx = $derived(activeStepIndex($boardDoc));
 
+	// Local counter for rapid next/prev clicks. `activeIdx` is reactive and
+	// may lag behind rapid successive clicks, so we track the last navigated
+	// index here to ensure each click advances one step.
+	// eslint-disable-next-line svelte/prefer-writable-derived
+	let lastNavIdx = $state(0);
+	$effect(() => {
+		lastNavIdx = activeIdx;
+	});
+
 	// Playback state.
 	let player = $state<AuthoredPlayer | null>(null);
 	let playing = $state(false);
@@ -46,18 +54,27 @@
 	let duration = $state(0);
 	let playbackStep = $state(0);
 	let loop = $state(false);
-	const SPEEDS = [0.25, 0.5, 1];
-	let speedIdx = $state(2); // default 1×
-	let showTrails = $state(false);
+	const SPEEDS = [0.25, 0.5, 0.75, 1];
+	let speedIdx = $state(0); // default 0.25×
 	let focusMode = $state(false);
 	let focusIds = $state<string[]>([]);
+
+	// Keep duration in sync with the clip timeline so the scrub bar is usable
+	// before playback starts.
+	$effect(() => {
+		if (steps.length >= 2) {
+			duration = buildTimeline(steps).totalMs;
+		} else {
+			duration = 0;
+		}
+	});
 
 	// Scrub bar.
 	let trackEl = $state<HTMLDivElement | undefined>();
 	let scrubbing = $state(false);
 	const pct = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);
 
-	const activeChipIdx = $derived(playing ? playbackStep : activeIdx);
+	const activeChipIdx = $derived(playing || scrubbing ? playbackStep : lastNavIdx);
 
 	// Keep the board's pack-zone overlay in sync with the active step (except
 	// during playback, which manages poses but still respects the last setting).
@@ -82,28 +99,44 @@
 
 	function prev() {
 		if (playing || player) stopPlayback(false);
-		const targetIdx = Math.max(0, activeIdx - 1);
+		const targetIdx = Math.max(0, lastNavIdx - 1);
+		lastNavIdx = targetIdx;
 		const targetStep = steps[targetIdx];
 		if (targetStep && game) {
 			const speed = SPEEDS[speedIdx];
 			const baseDuration = 300;
 			const duration = baseDuration / speed;
-			// Update session index first, then tween; on completion, load the
-			// target step onto the board so the document reflects the new state.
+			// Update timeline UI immediately so scrub bar and chips stay in sync.
+			const tl = buildTimeline(steps);
+			let targetTime = 0;
+			for (const seg of tl.segments) {
+				if (seg.fromStep >= targetIdx) break;
+				targetTime = seg.startMs + seg.durationMs;
+			}
+			currentTime = targetTime;
+			playbackStep = targetIdx;
 			navigateToStep(targetIdx, false);
 			game.tweenToStep(targetStep.entities, duration, () => loadStepOntoBoard(targetIdx));
 		}
 	}
 	function next() {
 		if (playing || player) stopPlayback(false);
-		const targetIdx = Math.min(steps.length - 1, activeIdx + 1);
+		const targetIdx = Math.min(steps.length - 1, lastNavIdx + 1);
+		lastNavIdx = targetIdx;
 		const targetStep = steps[targetIdx];
 		if (targetStep && game) {
 			const speed = SPEEDS[speedIdx];
 			const baseDuration = 300;
 			const duration = baseDuration / speed;
-			// Update session index first, then tween; on completion, load the
-			// target step onto the board so the document reflects the new state.
+			// Update timeline UI immediately so scrub bar and chips stay in sync.
+			const tl = buildTimeline(steps);
+			let targetTime = 0;
+			for (const seg of tl.segments) {
+				if (seg.fromStep >= targetIdx) break;
+				targetTime = seg.startMs + seg.durationMs;
+			}
+			currentTime = targetTime;
+			playbackStep = targetIdx;
 			navigateToStep(targetIdx, false);
 			game.tweenToStep(targetStep.entities, duration, () => loadStepOntoBoard(targetIdx));
 		}
@@ -168,7 +201,6 @@
 		player.setLoop(loop);
 		player.setSpeed(SPEEDS[speedIdx]);
 		game.beginAuthoredPlayback();
-		game.setTrailsEnabled(showTrails);
 		if (focusMode) game.setFocus(focusIds);
 		currentTime = 0;
 		player.play();
@@ -198,11 +230,6 @@
 		player?.setSpeed(SPEEDS[speedIdx]);
 	}
 
-	function toggleTrails() {
-		showTrails = !showTrails;
-		if (game) game.setTrailsEnabled(showTrails && !!player);
-	}
-
 	function toggleFocus() {
 		focusMode = !focusMode;
 		if (focusMode) {
@@ -220,16 +247,6 @@
 		}
 	}
 
-	/** Screenshot of the current step via the existing capture path (P3 task 11). */
-	function screenshot() {
-		if (playing || !game) return;
-		const dataUrl = game.exportAsImage(2, 'medium');
-		const link = document.createElement('a');
-		link.download = `derbyboard-step-${activeIdx + 1}-${new Date().toISOString().slice(0, 10)}.png`;
-		link.href = dataUrl;
-		link.click();
-	}
-
 	function exit() {
 		stopPlayback(false);
 		exitAuthoring();
@@ -237,16 +254,26 @@
 
 	// ---- Scrub --------------------------------------------------------------
 	function seekFromClientX(clientX: number) {
-		if (!player || !trackEl || duration <= 0) return;
+		if (!trackEl || duration <= 0) return;
 		const rect = trackEl.getBoundingClientRect();
 		const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
 		const t = frac * duration;
-		player.seek(t);
-		currentTime = t;
-		playbackStep = nearestStepAt(player.getTimeline(), t);
+		if (player) {
+			player.seek(t);
+			currentTime = t;
+			playbackStep = nearestStepAt(player.getTimeline(), t);
+		} else {
+			// Pre-playback: navigate to the nearest step in the clip timeline.
+			const tl = buildTimeline(steps);
+			const stepIdx = nearestStepAt(tl, t);
+			if (stepIdx >= 0 && stepIdx !== activeIdx) {
+				navigateToStep(stepIdx);
+			}
+			currentTime = t;
+			playbackStep = stepIdx;
+		}
 	}
 	function onScrubDown(e: PointerEvent) {
-		if (!player) return;
 		scrubbing = true;
 		trackEl?.setPointerCapture(e.pointerId);
 		seekFromClientX(e.clientX);
@@ -292,23 +319,6 @@
 			class="flex items-center gap-1 overflow-hidden rounded-lg bg-white px-2 py-1.5 shadow-lg shadow-black/10"
 		>
 			<ToolbarButton
-				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
-				onclick={exit}
-				aria-label="Exit drill"
-			>
-				<CloseOutline class="h-5 w-5" />
-			</ToolbarButton>
-
-			<ToolbarButton
-				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
-				onclick={prev}
-				disabled={activeIdx <= 0}
-				aria-label="Previous step"
-			>
-				<ArrowLeftOutline class="h-5 w-5" />
-			</ToolbarButton>
-
-			<ToolbarButton
 				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg bg-primary-100 text-primary-700 hover:bg-primary-200"
 				onclick={togglePlay}
 				disabled={steps.length < 2}
@@ -323,11 +333,20 @@
 
 			<ToolbarButton
 				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
+				onclick={prev}
+				disabled={activeIdx <= 0}
+				aria-label="Previous step"
+			>
+				<BackwardStepOutline class="h-5 w-5" />
+			</ToolbarButton>
+
+			<ToolbarButton
+				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
 				onclick={next}
 				disabled={activeIdx >= steps.length - 1}
 				aria-label="Next step"
 			>
-				<ArrowRightOutline class="h-5 w-5" />
+				<ForwardStepOutline class="h-5 w-5" />
 			</ToolbarButton>
 
 			{#if steps.length >= 2}
@@ -362,17 +381,6 @@
 			{/if}
 
 			<ToolbarButton
-				class="flex !my-0 min-h-9 items-center justify-center rounded-lg px-2 text-xs tabular-nums text-gray-700 hover:bg-primary-200 {loop
-					? 'bg-primary-100 text-primary-700'
-					: ''}"
-				onclick={toggleLoop}
-				aria-label="Loop"
-			>
-				<RefreshOutline class="h-4 w-4" />
-				<span class:hidden={$isMobile}>Loop</span>
-			</ToolbarButton>
-
-			<ToolbarButton
 				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-xs tabular-nums text-gray-700 hover:bg-primary-200"
 				onclick={cycleSpeed}
 				aria-label="Playback speed"
@@ -381,32 +389,31 @@
 			</ToolbarButton>
 
 			<ToolbarButton
-				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200 {showTrails
+				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200 {loop
 					? 'bg-primary-100 text-primary-700'
 					: ''}"
-				onclick={toggleTrails}
-				aria-label="Motion trails"
+				onclick={toggleLoop}
+				aria-label="Loop"
 			>
-				<LayersOutline class="h-4 w-4" />
+				<RefreshOutline class="h-4 w-4" />
 			</ToolbarButton>
 
 			<ToolbarButton
-				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg px-2 text-xs text-gray-700 hover:bg-primary-200 {focusMode
+				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200 {focusMode
 					? 'bg-primary-100 text-primary-700'
 					: ''}"
 				onclick={toggleFocus}
 				aria-label="Focus"
 			>
-				Focus{#if focusMode && focusIds.length}&nbsp;{focusIds.length}{/if}
+				<StroopwafelOutline class="h-4 w-4" />
 			</ToolbarButton>
 
 			<ToolbarButton
 				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
-				onclick={screenshot}
-				disabled={playing}
-				aria-label="Screenshot step"
+				onclick={exit}
+				aria-label="Exit drill"
 			>
-				<CameraPhotoOutline class="h-4 w-4" />
+				<CloseOutline class="h-5 w-5" />
 			</ToolbarButton>
 		</div>
 

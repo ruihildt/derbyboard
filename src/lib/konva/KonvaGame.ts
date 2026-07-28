@@ -1106,11 +1106,11 @@ export class KonvaGame {
 			this.tweenRafId = null;
 		}
 
-		const currentPoses: EntityPose[] = boardDoc.current.entities.map((e) => ({
-			id: e.id,
-			S: e.S,
-			u: e.u,
-			heading: e.heading
+		const currentPoses: EntityPose[] = poseStore.effectiveAll().map(({ entity, pose }) => ({
+			id: entity.id,
+			S: pose.S,
+			u: pose.u,
+			heading: pose.heading
 		}));
 
 		const startTime = performance.now();
