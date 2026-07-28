@@ -8,10 +8,10 @@
 	import CaptureBar from '$lib/components/CaptureBar.svelte';
 	import BoardSettings from '$lib/components/BoardSettings.svelte';
 	import Changelog from '$lib/components/Changelog.svelte';
-	import FullscreenToggle from '$lib/components/FullscreenToggle.svelte';
 	import Menu from '$lib/components/Menu.svelte';
 	import ReplayBar from '$lib/components/ReplayBar.svelte';
 	import RotateHint from '$lib/components/RotateHint.svelte';
+	import UndoRedoControls from '$lib/components/UndoRedoControls.svelte';
 	import ZoneOverlay from '$lib/components/ZoneOverlay.svelte';
 	import WatermarkPreview from '$lib/components/WatermarkPreview.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
@@ -150,34 +150,35 @@
 	</div>
 {/if}
 
-{#if !isReplaying}
-	<div
-		class="fixed right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] z-[60]"
-	>
-		<Changelog bind:this={changelog} />
-	</div>
-{/if}
-
 <BoardSettings bind:this={boardSettingsModal} {game} />
 
 {#if !isReplaying}
 	{#if !$isMobile}
-		<!-- Desktop: zoom bottom-left. -->
+		<!-- Desktop: zoom bottom-left, undo/redo to the right of zoom. -->
 		<div
 			class="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] z-30 flex items-center gap-2"
 		>
 			<ZoomControl {game} />
-			<FullscreenToggle />
+			<UndoRedoControls />
 		</div>
 	{:else}
-		<!-- Mobile: zoom grouped top-right. -->
+		<!-- Mobile: undo/redo and zoom top-right (menu stays top-left). -->
 		<div
 			class="fixed right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] z-30 flex items-center gap-2"
 		>
+			<UndoRedoControls />
 			<ZoomControl {game} />
-			<FullscreenToggle />
 		</div>
 	{/if}
+
+	<!-- Changelog badge: desktop top-right, mobile below top-right toolbar. -->
+	<div
+		class={$isMobile
+			? 'fixed right-[max(1rem,env(safe-area-inset-right))] top-[max(4rem,env(safe-area-inset-top))] z-30'
+			: 'fixed right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] z-[60]'}
+	>
+		<Changelog bind:this={changelog} />
+	</div>
 {/if}
 
 {#if !isReplaying}
