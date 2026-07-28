@@ -816,8 +816,8 @@ export class KonvaGame {
 
 				this.playerManager.reconcileTeamPlayers(sample.teamPlayers, centerX, centerY);
 				this.playerManager.reconcileSkatingOfficials(sample.skatingOfficials, centerX, centerY);
-			this.playerManager.setPlayersDraggable(false);
-			this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds());
+				this.playerManager.setPlayersDraggable(false);
+				this.playerManager.getTeamPlayers().forEach((p) => p.updateInBounds());
 
 				this.stage.scale({ x: sample.view.zoom, y: sample.view.zoom });
 				this.stage.position({

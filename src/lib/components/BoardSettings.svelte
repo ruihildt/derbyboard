@@ -38,13 +38,15 @@
 			{#each options as opt (opt.value)}
 				<button
 					type="button"
-					class="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors {$boardSettings.packMethod === opt.value
+					class="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors {$boardSettings.packMethod ===
+					opt.value
 						? 'border-primary-400 bg-primary-100'
 						: 'border-gray-200 bg-white hover:bg-primary-50'}"
 					onclick={() => choose(opt.value)}
 				>
 					<span
-						class="mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border-2 {$boardSettings.packMethod === opt.value
+						class="mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border-2 {$boardSettings.packMethod ===
+						opt.value
 							? 'border-primary-500'
 							: 'border-gray-300'}"
 					>
