@@ -35,6 +35,9 @@ export class KonvaSkatingOfficial extends KonvaPlayer {
 			stroke: colors.officialSecondary
 		});
 
+		// Facing marker mirrors the official ring colour.
+		this.setHeadingColor(colors.officialSecondary);
+
 		// Add referee stripes for visual distinction
 		this.setupStripes();
 

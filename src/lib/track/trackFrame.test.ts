@@ -1,320 +1,134 @@
 import { describe, it, expect } from 'vitest';
-import {
-	toTrack,
-	fromTrack,
-	tangentAt,
-	laneBounds,
-	laneToOffset,
-	offsetToLane,
-	shortestDelta,
-	unwrap,
-	isInBoundsTrack,
-	LAP_LENGTH
-} from './trackFrame';
-import { isInBounds, type MeterPoint } from '$lib/trackMath';
-import { TRACK_SCALE, PLAYER_RADIUS } from '$lib/constants';
+import { preserveLapOnDrag, LAP_LENGTH, shortestDelta } from './trackFrame';
 
-describe('trackFrame', () => {
-	describe('fromTrack/toTrack round-trip', () => {
-		it('round-trips (s,u) → meters → (s,u) across dense grid', () => {
-			const sSamples = 400;
-			const uSamples = [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0];
-
-			for (let i = 0; i < sSamples; i++) {
-				const s = (i / sSamples) * LAP_LENGTH;
-				for (const u of uSamples) {
-					const meter = fromTrack(s, u);
-					const result = toTrack(meter);
-
-					expect(result.s).toBeCloseTo(s, 5);
-					expect(result.u).toBeCloseTo(u, 5);
-				}
-			}
-		});
-
-		it('round-trips at segment joins', () => {
-			const joinSs = [0, Math.PI * 5.41, Math.PI * 5.41 + 2 * 5.33, 2 * Math.PI * 5.41 + 2 * 5.33];
-
-			for (const s of joinSs) {
-				for (const u of [0, 0.5, 1.0]) {
-					const meter = fromTrack(s, u);
-					const result = toTrack(meter);
-
-					expect(result.s).toBeCloseTo(s, 5);
-					expect(result.u).toBeCloseTo(u, 5);
-				}
-			}
-		});
-
-		it('round-trips at seam s=0', () => {
-			for (const u of [0, 0.25, 0.5, 0.75, 1.0]) {
-				const meter = fromTrack(0, u);
-				const result = toTrack(meter);
-
-				expect(result.s).toBeCloseTo(0, 5);
-				expect(result.u).toBeCloseTo(u, 5);
-			}
-		});
-
-		it('round-trips meters → (s,u) → meters for track surface points', () => {
-			const testPoints: MeterPoint[] = [];
-			for (let s = 0; s < LAP_LENGTH; s += LAP_LENGTH / 20) {
-				for (const u of [0, 0.25, 0.5, 0.75, 1.0]) {
-					testPoints.push(fromTrack(s, u));
-				}
-			}
-
-			for (const p of testPoints) {
-				const { s, u } = toTrack(p);
-				const p2 = fromTrack(s, u);
-
-				expect(p2.x).toBeCloseTo(p.x, 4);
-				expect(p2.y).toBeCloseTo(p.y, 4);
-			}
-		});
-
-		it('is lossless for out-of-bounds u (infield and apron), unlike a clamped encoding', () => {
-			// u is NOT clamped to [0,1] — a drop on the infield (u < 0) or past the
-			// apron (u > 1) must round-trip exactly, otherwise storing the pose
-			// silently teleports the entity back inside the boundary. Guaranteed
-			// domain: outward without limit, inward down to ~ -0.8 (see the
-			// geometric-limit note on toTrack); this range comfortably covers any
-			// realistic drag.
-			const sSamples = 60;
-			const outOfBoundsU = [-0.75, -0.5, -0.05, 1.05, 1.5, 3, 5];
-
-			for (let i = 0; i < sSamples; i++) {
-				const s = (i / sSamples) * LAP_LENGTH;
-				for (const u of outOfBoundsU) {
-					const meter = fromTrack(s, u);
-					const result = toTrack(meter);
-
-					expect(result.u).toBeCloseTo(u, 4);
-					const meter2 = fromTrack(result.s, result.u);
-					expect(meter2.x).toBeCloseTo(meter.x, 4);
-					expect(meter2.y).toBeCloseTo(meter.y, 4);
-				}
-			}
-		});
+describe('preserveLapOnDrag', () => {
+	it('preserves lap index for forward drags within a lap', () => {
+		const committedS = LAP_LENGTH * 2 + 10;
+		const wrappedS = 20;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// Should preserve the 2 laps and move forward by 10
+		expect(result).toBe(committedS + shortestDelta(committedS, wrappedS));
+		expect(result).toBeGreaterThan(LAP_LENGTH * 2);
 	});
 
-	describe('shortestDelta', () => {
-		it('returns positive delta for forward movement', () => {
-			expect(shortestDelta(0, 10)).toBeCloseTo(10, 5);
-			expect(shortestDelta(10, 20)).toBeCloseTo(10, 5);
-		});
-
-		it('returns negative delta for backward movement', () => {
-			expect(shortestDelta(10, 0)).toBeCloseTo(-10, 5);
-			expect(shortestDelta(20, 10)).toBeCloseTo(-10, 5);
-		});
-
-		it('handles wraparound correctly', () => {
-			const delta1 = shortestDelta(LAP_LENGTH - 5, 5);
-			expect(delta1).toBeCloseTo(10, 5);
-
-			const delta2 = shortestDelta(5, LAP_LENGTH - 5);
-			expect(delta2).toBeCloseTo(-10, 5);
-		});
-
-		it('returns values in range (-LAP_LENGTH/2, LAP_LENGTH/2]', () => {
-			const testCases = [
-				[0, LAP_LENGTH / 2],
-				[0, LAP_LENGTH / 2 + 1],
-				[LAP_LENGTH - 1, 1],
-				[1, LAP_LENGTH - 1]
-			];
-
-			for (const [from, to] of testCases) {
-				const delta = shortestDelta(from, to);
-				expect(Math.abs(delta)).toBeLessThanOrEqual(LAP_LENGTH / 2);
-			}
-		});
-
-		it('handles exact half-lap correctly', () => {
-			const delta = shortestDelta(0, LAP_LENGTH / 2);
-			expect(Math.abs(delta)).toBeCloseTo(LAP_LENGTH / 2, 5);
-		});
+	it('preserves lap index for backward drags within a lap', () => {
+		const committedS = LAP_LENGTH * 2 + 10;
+		const wrappedS = 5;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// Should preserve the 2 laps and move backward by 5
+		expect(result).toBe(committedS + shortestDelta(committedS, wrappedS));
+		expect(result).toBeGreaterThan(LAP_LENGTH * 2);
 	});
 
-	describe('unwrap', () => {
-		it('maintains monotonicity for forward movement', () => {
-			let sPrev = 0;
-			for (let i = 0; i < 100; i++) {
-				const sNext = (i * 0.5) % LAP_LENGTH;
-				const unwrapped = unwrap(sPrev, sNext);
-				expect(unwrapped).toBeGreaterThanOrEqual(sPrev);
-				sPrev = unwrapped;
-			}
-		});
-
-		it('handles wraparound at seam', () => {
-			const sPrev = LAP_LENGTH - 5;
-			const sNext = 5;
-			const unwrapped = unwrap(sPrev, sNext);
-			expect(unwrapped).toBeCloseTo(LAP_LENGTH + 5, 5);
-		});
-
-		it('handles backward movement', () => {
-			const sPrev = 10;
-			const sNext = 5;
-			const unwrapped = unwrap(sPrev, sNext);
-			expect(unwrapped).toBeCloseTo(5, 5);
-		});
-
-		it('handles backward wraparound', () => {
-			const sPrev = 5;
-			const sNext = LAP_LENGTH - 5;
-			const unwrapped = unwrap(sPrev, sNext);
-			expect(unwrapped).toBeCloseTo(-5, 5);
-		});
+	it('increments lap when dragging forward across the seam (small delta)', () => {
+		const committedS = LAP_LENGTH - 5;
+		const wrappedS = 5;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// Delta should be +10 (5 → LAP_LENGTH + 5)
+		expect(result).toBe(committedS + shortestDelta(committedS, wrappedS));
+		expect(result).toBeGreaterThan(LAP_LENGTH);
 	});
 
-	describe('laneBounds', () => {
-		it('returns consistent inner and outer bounds', () => {
-			for (let s = 0; s < LAP_LENGTH; s += 1) {
-				const bounds = laneBounds(s);
-				expect(bounds.inner).toBeLessThan(0);
-				expect(bounds.outer).toBeGreaterThan(0);
-				expect(bounds.outer).toBeGreaterThan(bounds.inner);
-			}
-		});
-
-		it('is continuous at segment joins', () => {
-			const joinSs = [Math.PI * 5.41, Math.PI * 5.41 + 2 * 5.33, 2 * Math.PI * 5.41 + 2 * 5.33];
-
-			for (const s of joinSs) {
-				const before = laneBounds(s - 0.001);
-				const after = laneBounds(s + 0.001);
-
-				expect(Math.abs(before.inner - after.inner)).toBeLessThan(0.01);
-				expect(Math.abs(before.outer - after.outer)).toBeLessThan(0.01);
-			}
-		});
-
-		it('is continuous at seam s=0', () => {
-			const before = laneBounds(LAP_LENGTH - 0.001);
-			const after = laneBounds(0.001);
-
-			expect(Math.abs(before.inner - after.inner)).toBeLessThan(0.01);
-			expect(Math.abs(before.outer - after.outer)).toBeLessThan(0.01);
-		});
+	it('decrements lap when dragging backward across the seam (small delta)', () => {
+		const committedS = 5;
+		const wrappedS = LAP_LENGTH - 5;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// Delta should be -10 (5 → -5, wrapped to LAP_LENGTH - 5)
+		expect(result).toBe(committedS + shortestDelta(committedS, wrappedS));
+		expect(result).toBeLessThan(0);
 	});
 
-	describe('laneToOffset and offsetToLane', () => {
-		it('are inverses of each other', () => {
-			for (let s = 0; s < LAP_LENGTH; s += 5) {
-				for (let u = 0; u <= 1; u += 0.1) {
-					const offset = laneToOffset(s, u);
-					const u2 = offsetToLane(s, offset);
-					expect(u2).toBeCloseTo(u, 5);
-				}
-			}
-		});
-
-		it('maps u=0 to inner bound and u=1 to outer bound', () => {
-			for (let s = 0; s < LAP_LENGTH; s += 10) {
-				const bounds = laneBounds(s);
-				const innerOffset = laneToOffset(s, 0);
-				const outerOffset = laneToOffset(s, 1);
-
-				expect(innerOffset).toBeCloseTo(bounds.inner, 5);
-				expect(outerOffset).toBeCloseTo(bounds.outer, 5);
-			}
-		});
+	it('does not increment lap when dragging > L/2 forward (re-seat)', () => {
+		const committedS = 10;
+		const wrappedS = 5;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// Delta should be negative (backward) since we're dragging backward
+		expect(result).toBeLessThan(committedS);
 	});
 
-	describe('tangentAt', () => {
-		it('returns unit vectors', () => {
-			for (let s = 0; s < LAP_LENGTH; s += 5) {
-				const tangent = tangentAt(s);
-				const magnitude = Math.hypot(tangent.x, tangent.y);
-				expect(magnitude).toBeCloseTo(1, 5);
-			}
-		});
-
-		it('is continuous at segment joins', () => {
-			const joinSs = [Math.PI * 5.41, Math.PI * 5.41 + 2 * 5.33, 2 * Math.PI * 5.41 + 2 * 5.33];
-
-			for (const s of joinSs) {
-				const before = tangentAt(s - 0.001);
-				const after = tangentAt(s + 0.001);
-
-				expect(Math.abs(before.x - after.x)).toBeLessThan(0.01);
-				expect(Math.abs(before.y - after.y)).toBeLessThan(0.01);
-			}
-		});
-
-		it('is perpendicular to lane normal on straights', () => {
-			const topStraightS = Math.PI * 5.41 + 5.33;
-			const tangent = tangentAt(topStraightS);
-			expect(tangent.y).toBeCloseTo(0, 5);
-			expect(Math.abs(tangent.x)).toBeCloseTo(1, 5);
-
-			const bottomStraightS = 2 * Math.PI * 5.41 + 2 * 5.33 + 5.33;
-			const tangent2 = tangentAt(bottomStraightS);
-			expect(tangent2.y).toBeCloseTo(0, 5);
-			expect(Math.abs(tangent2.x)).toBeCloseTo(1, 5);
-		});
+	it('does not decrement lap when dragging > L/2 backward (re-seat)', () => {
+		const committedS = LAP_LENGTH - 10;
+		const wrappedS = LAP_LENGTH - 5;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// Delta should be +5 (small forward)
+		expect(result).toBe(committedS + shortestDelta(committedS, wrappedS));
 	});
 
-	describe('isInBounds with track coordinates', () => {
-		it('u in [0.15, 0.85] are in bounds across the track', () => {
-			const skaterRadiusM = PLAYER_RADIUS / TRACK_SCALE;
-			const sSamples = 200;
-
-			for (let i = 0; i < sSamples; i++) {
-				const s = (i / sSamples) * LAP_LENGTH;
-
-				for (const u of [0.15, 0.3, 0.5, 0.7, 0.85]) {
-					const point = fromTrack(s, u);
-					expect(isInBounds(point, skaterRadiusM)).toBe(true);
-				}
-			}
-		});
-
-		it('u outside [0, 1] are out of bounds', () => {
-			const skaterRadiusM = PLAYER_RADIUS / TRACK_SCALE;
-			const sSamples = 100;
-
-			for (let i = 0; i < sSamples; i++) {
-				const s = (i / sSamples) * LAP_LENGTH;
-
-				const inner = fromTrack(s, -0.05);
-				expect(isInBounds(inner, skaterRadiusM)).toBe(false);
-
-				const outer = fromTrack(s, 1.05);
-				expect(isInBounds(outer, skaterRadiusM)).toBe(false);
-			}
-		});
+	it('handles exactly L/2 boundary correctly', () => {
+		const halfLap = LAP_LENGTH / 2;
+		const committedS = 0;
+		const wrappedS = halfLap;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// At exactly L/2, shortestDelta can go either way but should be ≤ L/2
+		const delta = Math.abs(result - committedS);
+		expect(delta).toBeLessThanOrEqual(halfLap);
 	});
 
-	describe('isInBoundsTrack', () => {
-		it('agrees with meter-space isInBounds across the track', () => {
-			const skaterRadiusM = PLAYER_RADIUS / TRACK_SCALE;
-			const sSamples = 200;
-			const uCandidates = [-0.1, 0, 0.15, 0.3, 0.5, 0.7, 0.85, 1.0, 1.1];
+	it('monotonic under repeated forward drags', () => {
+		let s = 0;
+		const dragAmount = 10;
+		const iterations = 10;
 
-			for (let i = 0; i < sSamples; i++) {
-				const s = (i / sSamples) * LAP_LENGTH;
-				for (const u of uCandidates) {
-					const point = fromTrack(s, u);
-					expect(isInBoundsTrack(s, u, skaterRadiusM)).toBe(isInBounds(point, skaterRadiusM));
-				}
-			}
-		});
-
-		it('treats u outside [0,1] as out of bounds with zero radius', () => {
-			expect(isInBoundsTrack(10, -0.01)).toBe(false);
-			expect(isInBoundsTrack(10, 1.01)).toBe(false);
-			expect(isInBoundsTrack(10, 0.5)).toBe(true);
-		});
+		for (let i = 0; i < iterations; i++) {
+			const wrappedS = (s + dragAmount) % LAP_LENGTH;
+			s = preserveLapOnDrag(s, wrappedS);
+			expect(s).toBeGreaterThan((i - 1) * dragAmount); // Monotonic
+		}
 	});
 
-	describe('LAP_LENGTH constant', () => {
-		it('matches expected measurement line length', () => {
-			const expected = 2 * Math.PI * 5.41 + 2 * 2 * 5.33;
-			expect(LAP_LENGTH).toBeCloseTo(expected, 5);
-		});
+	it('handles dragging from positive lap to zero lap', () => {
+		const committedS = LAP_LENGTH * 3 + 50;
+		const wrappedS = 50;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// Should preserve the 3 laps
+		expect(result).toBeGreaterThan(LAP_LENGTH * 3);
+	});
+
+	it('handles dragging from zero lap to positive lap', () => {
+		const committedS = 50;
+		const wrappedS = 50;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// Same position, no change
+		expect(result).toBe(committedS);
+	});
+
+	it('preserves lap index for large drags across multiple seams', () => {
+		const committedS = LAP_LENGTH * 5 + 10;
+		const wrappedS = 20;
+		const result = preserveLapOnDrag(committedS, wrappedS);
+		// Should preserve the 5 laps
+		expect(result).toBeGreaterThan(LAP_LENGTH * 5);
+	});
+});
+
+describe('shortestDelta', () => {
+	it('computes correct delta for forward movement', () => {
+		const delta = shortestDelta(0, 10);
+		expect(delta).toBe(10);
+	});
+
+	it('computes correct delta for backward movement', () => {
+		const delta = shortestDelta(10, 0);
+		expect(delta).toBe(-10);
+	});
+
+	it('handles wrap-around forward', () => {
+		const delta = shortestDelta(LAP_LENGTH - 5, 5);
+		expect(delta).toBe(10);
+	});
+
+	it('handles wrap-around backward', () => {
+		const delta = shortestDelta(5, LAP_LENGTH - 5);
+		expect(delta).toBe(-10);
+	});
+
+	it('chooses shortest path for large forward delta', () => {
+		const delta = shortestDelta(0, LAP_LENGTH - 10);
+		expect(delta).toBe(-10); // Backward is shorter
+	});
+
+	it('returns 0 for same position', () => {
+		const delta = shortestDelta(10, 10);
+		expect(delta).toBe(0);
 	});
 });

@@ -107,6 +107,14 @@ export function entityToPixelRelative(entity: Entity): { x: number; y: number } 
  * Version history:
  *  - v1 → v2: added optional `showPackZone` to `Step` (defaults to ON when
  *    absent, so existing authored steps keep showing the overlay).
+ *  - v2 → v3: added optional `manualHeading` to `Entity` and `EntityPose`.
+ *    Absent means auto (false), matching pre-v3 behaviour.
+ *  - v3 → v4: added optional `headingMode` / `headingDelta` / `lookAt` to
+ *    `Entity` and `EntityPose` for the two-mode direction control. Absent
+ *    means pure auto, matching pre-v4 behaviour.
+ *  - v4 → v5: the look-at mode was renamed `'locked'` → `'pinned'`, and a new
+ *    `'fixed'` (absolute-heading) mode was added. Existing `'locked'` values
+ *    are relabelled to `'pinned'` (behaviour unchanged).
  */
 export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 	let next = doc;
@@ -124,6 +132,81 @@ export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 		// `showPackZone` is intentionally left undefined here: absent means ON,
 		// matching pre-v2 authored behaviour.
 		next.version = 2;
+	}
+
+	if (next.version < 3) {
+		// Defensive copy for v3 migration.
+		next = {
+			...next,
+			entities: next.entities.map((e) => ({ ...e })),
+			clips: next.clips.map((clip) =>
+				clip.kind === 'authored'
+					? {
+							...clip,
+							steps: clip.steps.map((step) => ({
+								...step,
+								entities: step.entities.map((p) => ({ ...p }))
+							}))
+						}
+					: clip
+			)
+		};
+		// `manualHeading` is intentionally left undefined here: absent means auto,
+		// matching pre-v3 behaviour.
+		next.version = 3;
+	}
+
+	if (next.version < 4) {
+		// Defensive copy for v4 migration. The new fields stay undefined
+		// (absent = pure auto), so no data needs to be synthesised.
+		next = {
+			...next,
+			entities: next.entities.map((e) => ({ ...e })),
+			clips: next.clips.map((clip) =>
+				clip.kind === 'authored'
+					? {
+							...clip,
+							steps: clip.steps.map((step) => ({
+								...step,
+								entities: step.entities.map((p) => ({ ...p }))
+							}))
+						}
+					: clip
+			)
+		};
+		next.version = 4;
+	}
+
+	if (next.version < 5) {
+		// Relabel the look-at heading mode `'locked'` → `'pinned'` on entities
+		// and authored step poses. `'fixed'` (new) needs no synthesis.
+		const relabel = (p: { headingMode?: string }) => {
+			if (p.headingMode === 'locked') p.headingMode = 'pinned';
+		};
+		next = {
+			...next,
+			entities: next.entities.map((e) => {
+				const c = { ...e };
+				relabel(c);
+				return c;
+			}),
+			clips: next.clips.map((clip) =>
+				clip.kind === 'authored'
+					? {
+							...clip,
+							steps: clip.steps.map((step) => ({
+								...step,
+								entities: step.entities.map((p) => {
+									const c = { ...p };
+									relabel(c);
+									return c;
+								})
+							}))
+						}
+					: clip
+			)
+		};
+		next.version = 5;
 	}
 
 	next.version = CURRENT_VERSION;

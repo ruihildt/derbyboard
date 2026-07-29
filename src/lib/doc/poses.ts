@@ -1,5 +1,5 @@
 import { boardDoc } from './store';
-import type { Entity } from './types';
+import type { Entity, HeadingMode, WorldPoint } from './types';
 
 export interface Pose {
 	S: number;
@@ -7,8 +7,48 @@ export interface Pose {
 	heading: number;
 }
 
+export type CommitGestureOptions = {
+	setManualHeading?: boolean;
+	/** Direction-control mode to record on the touched entities. */
+	headingMode?: HeadingMode;
+	/** Relative offset (radians from tangent) for `'relative'` mode. */
+	headingDelta?: number;
+	/** Fixed world look-at point (metres) for `'locked'` mode. */
+	lookAt?: WorldPoint;
+	/** When true, clear any authored heading mode (back to pure auto). */
+	clearHeadingMode?: boolean;
+};
+
 function poseOf(entity: Entity): Pose {
 	return { S: entity.S, u: entity.u, heading: entity.heading };
+}
+
+/**
+ * Applies the heading-mode portion of {@link CommitGestureOptions} to an entity
+ * or step pose (both carry the same optional mode fields). Shared by the
+ * default and authoring commit paths so a rotation/lock gesture writes the mode
+ * identically to the board entity and the active step's pose.
+ */
+export function applyHeadingModeOpts(
+	target: { headingMode?: HeadingMode; headingDelta?: number; lookAt?: WorldPoint },
+	opts?: CommitGestureOptions
+): void {
+	if (!opts) return;
+	if (opts.clearHeadingMode) {
+		target.headingMode = undefined;
+		target.headingDelta = undefined;
+		target.lookAt = undefined;
+		return;
+	}
+	if (opts.headingMode) {
+		target.headingMode = opts.headingMode;
+	}
+	if (opts.headingDelta !== undefined) {
+		target.headingDelta = opts.headingDelta;
+	}
+	if (opts.lookAt) {
+		target.lookAt = { ...opts.lookAt };
+	}
 }
 
 /**
@@ -47,10 +87,14 @@ export class PoseStore {
 	 * poses within the SAME undo entry — one undo reverts the whole gesture
 	 * on the board and the step together. Null restores the default path.
 	 */
-	private commitHook: ((poses: Map<string, Pose>, label: string) => boolean) | null = null;
+	private commitHook:
+		((poses: Map<string, Pose>, label: string, opts?: CommitGestureOptions) => boolean) | null =
+		null;
 
 	/** Installs/removes the commit override (see {@link commitHook}). */
-	setCommitHook(hook: ((poses: Map<string, Pose>, label: string) => boolean) | null): void {
+	setCommitHook(
+		hook: ((poses: Map<string, Pose>, label: string, opts?: CommitGestureOptions) => boolean) | null
+	): void {
 		this.commitHook = hook;
 	}
 
@@ -152,16 +196,22 @@ export class PoseStore {
 	 * collision-nudged neighbours the user never directly touched — then
 	 * clears the live tier so subsequent reads fall through to committed.
 	 */
-	commitGesture(label: string): boolean {
+	commitGesture(label: string, opts?: CommitGestureOptions): boolean {
 		if (this.live.size === 0) return false;
 		const poses = this.live;
 		const changed =
-			this.commitHook !== null ? this.commitHook(poses, label) : this.defaultCommit(poses, label);
+			this.commitHook !== null
+				? this.commitHook(poses, label, opts)
+				: this.defaultCommit(poses, label, opts);
 		this.live.clear();
 		return changed;
 	}
 
-	private defaultCommit(poses: Map<string, Pose>, label: string): boolean {
+	private defaultCommit(
+		poses: Map<string, Pose>,
+		label: string,
+		opts?: CommitGestureOptions
+	): boolean {
 		return boardDoc.applyEdit((draft) => {
 			for (const [id, pose] of poses) {
 				// Defensive: skip any pose that slipped through as non-finite,
@@ -178,6 +228,10 @@ export class PoseStore {
 					entity.S = pose.S;
 					entity.u = pose.u;
 					entity.heading = pose.heading;
+					if (opts?.setManualHeading) {
+						entity.manualHeading = true;
+					}
+					applyHeadingModeOpts(entity, opts);
 				}
 			}
 		}, label);

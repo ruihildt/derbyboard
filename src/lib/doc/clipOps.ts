@@ -1,12 +1,22 @@
 import { get } from 'svelte/store';
 import { boardDoc } from './store';
-import { poseStore, type Pose } from './poses';
+import { poseStore, type Pose, type CommitGestureOptions, applyHeadingModeOpts } from './poses';
 import { authoringSession } from '$lib/stores/session';
 import type { AuthoredClip, BoardDoc, Entity, EntityPose, Step } from './types';
+import { LAP_LENGTH } from '$lib/track/trackFrame';
 
 /** Captures the live board's poses (id + S/u/heading) as a step payload. */
 export function snapshotPoses(entities: Entity[]): EntityPose[] {
-	return entities.map((e) => ({ id: e.id, S: e.S, u: e.u, heading: e.heading }));
+	return entities.map((e) => ({
+		id: e.id,
+		S: e.S,
+		u: e.u,
+		heading: e.heading,
+		manualHeading: e.manualHeading,
+		headingMode: e.headingMode,
+		headingDelta: e.headingDelta,
+		lookAt: e.lookAt
+	}));
 }
 
 function newId(): string {
@@ -176,7 +186,11 @@ export function setStepPackZone(stepId: string, show: boolean): void {
  * move and the step snapshot together. Registered as the PoseStore commit
  * hook while authoring is active.
  */
-function commitAuthoringGesture(poses: Map<string, Pose>, label: string): boolean {
+function commitAuthoringGesture(
+	poses: Map<string, Pose>,
+	label: string,
+	opts?: CommitGestureOptions
+): boolean {
 	return boardDoc.applyEdit((draft) => {
 		for (const [id, pose] of poses) {
 			if (!Number.isFinite(pose.S) || !Number.isFinite(pose.u) || !Number.isFinite(pose.heading)) {
@@ -187,6 +201,10 @@ function commitAuthoringGesture(poses: Map<string, Pose>, label: string): boolea
 				entity.S = pose.S;
 				entity.u = pose.u;
 				entity.heading = pose.heading;
+				if (opts?.setManualHeading) {
+					entity.manualHeading = true;
+				}
+				applyHeadingModeOpts(entity, opts);
 			}
 		}
 		// Mirror the resulting full board onto the active step (poses only).
@@ -194,6 +212,23 @@ function commitAuthoringGesture(poses: Map<string, Pose>, label: string): boolea
 		const idx = clampedStepIndex(c, get(authoringSession).activeStepIndex);
 		if (c && idx >= 0) {
 			c.steps[idx].entities = snapshotPoses(draft.entities);
+			// When setManualHeading is true, also set manualHeading on the step's entities.
+			if (opts?.setManualHeading) {
+				for (const [id] of poses) {
+					const stepEntity = c.steps[idx].entities.find((e) => e.id === id);
+					if (stepEntity) {
+						stepEntity.manualHeading = true;
+					}
+				}
+			}
+			// Apply the heading-mode opts to the touched step entities too, so a
+			// rotation/lock authored on the board persists into the step.
+			for (const [id] of poses) {
+				const stepEntity = c.steps[idx].entities.find((e) => e.id === id);
+				if (stepEntity) {
+					applyHeadingModeOpts(stepEntity, opts);
+				}
+			}
 		}
 	}, label);
 }
@@ -258,6 +293,34 @@ export function stepBy(delta: number): void {
 export function exitAuthoring(): void {
 	removeAuthoringCommitHook();
 	authoringSession.set({ activeClipId: null, activeStepIndex: -1 });
+}
+
+/**
+ * Nudges an entity by ±1 lap. Used for the rare case where a coach needs to
+ * re-seat an entity at a different lap boundary after a drag. One undo entry.
+ */
+export function nudgeLap(id: string, delta: number): void {
+	if (delta !== 1 && delta !== -1) return;
+
+	boardDoc.applyEdit(
+		(draft) => {
+			const entity = draft.entities.find((e) => e.id === id);
+			if (entity) {
+				entity.S += delta * LAP_LENGTH;
+			}
+
+			// Also update the active step if authoring.
+			const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
+			const idx = clampedStepIndex(c, get(authoringSession).activeStepIndex);
+			if (c && idx >= 0) {
+				const stepEntity = c.steps[idx].entities.find((e) => e.id === id);
+				if (stepEntity) {
+					stepEntity.S += delta * LAP_LENGTH;
+				}
+			}
+		},
+		delta > 0 ? '+1 lap' : '-1 lap'
+	);
 }
 
 /**

@@ -8,8 +8,14 @@ import type { PackMethod } from '$lib/trackMath';
  */
 export interface BoardSettings {
 	packMethod: PackMethod;
+	autoFace?: boolean;
+	entityHudVisible?: boolean;
+	directionMarkerVisible?: boolean;
 }
 
 export const boardSettings = persisted<BoardSettings>('derbyboard-board-settings', {
-	packMethod: 'sector'
+	packMethod: 'sector',
+	autoFace: true,
+	entityHudVisible: false,
+	directionMarkerVisible: true
 });

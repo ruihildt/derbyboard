@@ -18,7 +18,7 @@ describe('migrate', () => {
 
 			const doc = migrateBoardState(state);
 
-			expect(doc.version).toBe(2);
+			expect(doc.version).toBe(CURRENT_VERSION);
 			expect(doc.createdAt).toBe('2024-01-01T00:00:00.000Z');
 			expect(doc.entities).toHaveLength(0);
 			expect(doc.clips).toHaveLength(0);
@@ -330,6 +330,98 @@ describe('migrate', () => {
 			// showPackZone stays undefined (= ON) for pre-v2 steps.
 			expect(clip.steps[0].showPackZone).toBeUndefined();
 			expect(clip.steps[0].entities[0].S).toBe(1);
+		});
+
+		it('bumps a v2 document to v3, adding manualHeading field', () => {
+			const v2 = migrateBoardState({
+				version: 3,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				teamPlayers: [],
+				skatingOfficials: []
+			});
+			v2.version = 2;
+			const migrated = migrateBoardDoc(v2);
+			expect(migrated.version).toBe(CURRENT_VERSION);
+			// manualHeading should be undefined (auto) by default
+			for (const entity of migrated.entities) {
+				expect(entity.manualHeading).toBeUndefined();
+			}
+		});
+
+		it('is idempotent on a v3 document', () => {
+			const v2 = migrateBoardState({
+				version: 3,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				teamPlayers: [],
+				skatingOfficials: []
+			});
+			v2.version = 2;
+			const once = migrateBoardDoc(v2);
+			const twice = migrateBoardDoc(once);
+			expect(twice).toEqual(once);
+		});
+
+		it('preserves manualHeading across v3→v3 migration', () => {
+			const v2 = migrateBoardState({
+				version: 3,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				teamPlayers: [],
+				skatingOfficials: []
+			});
+			v2.version = 2;
+			if (v2.entities.length === 0) {
+				v2.entities.push({
+					id: 'test-entity',
+					kind: 'skater',
+					team: 'A',
+					role: 'jammer',
+					S: 0,
+					u: 0.5,
+					heading: 0
+				});
+			}
+			v2.entities[0].manualHeading = true;
+			const once = migrateBoardDoc(v2);
+			expect(once.entities[0].manualHeading).toBe(true);
+			const twice = migrateBoardDoc(once);
+			expect(twice.entities[0].manualHeading).toBe(true);
+		});
+
+		it('preserves manualHeading in step entities across v2→v3 migration', () => {
+			const v2 = migrateBoardState({
+				version: 3,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				teamPlayers: [],
+				skatingOfficials: []
+			});
+			v2.version = 2;
+			if (v2.entities.length === 0) {
+				v2.entities.push({
+					id: 'test-entity',
+					kind: 'skater',
+					team: 'A',
+					role: 'jammer',
+					S: 0,
+					u: 0.5,
+					heading: 0
+				});
+			}
+			v2.clips = [
+				{
+					kind: 'authored',
+					id: 'c1',
+					steps: [
+						{
+							id: 's1',
+							entities: [{ id: v2.entities[0].id, S: 1, u: 0.5, heading: 0, manualHeading: true }]
+						}
+					]
+				}
+			];
+			const migrated = migrateBoardDoc(v2);
+			const clip = migrated.clips[0];
+			if (clip.kind !== 'authored') return;
+			expect(clip.steps[0].entities[0].manualHeading).toBe(true);
 		});
 	});
 });

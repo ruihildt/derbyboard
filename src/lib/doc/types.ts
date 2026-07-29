@@ -6,6 +6,26 @@ export type TeamPlayerTeam = 'A' | 'B';
 export type SkatingOfficialRole =
 	'jamRefA' | 'jamRefB' | 'backPackRef' | 'frontPackRef' | 'outsidePackRef' | 'alternate';
 
+/**
+ * How a skater's facing (looking direction) is resolved when auto-face is on:
+ *  - `'relative'`: facing = track tangent at S + `headingDelta`. The authored
+ *    rotation is an offset from the skating direction, so a skater turned 180°
+ *    keeps facing 180° off as they move around the track. (Control icon: "A")
+ *  - `'pinned'`: facing always points toward the fixed world point `lookAt`,
+ *    regardless of where the skater is. The direction control is pinned to
+ *    that map point. (Control icon: pin)
+ *  - `'fixed'`: facing is an absolute world angle that never changes as the
+ *    skater moves — the direction is frozen on the canvas. (Control icon: lock)
+ * Absent means pure auto (facing = track tangent, delta 0).
+ */
+export type HeadingMode = 'relative' | 'pinned' | 'fixed';
+
+/** A world-space (track metres) point. Used for the locked look-at target. */
+export interface WorldPoint {
+	x: number;
+	y: number;
+}
+
 export interface Entity {
 	id: string;
 	kind: EntityKind;
@@ -14,6 +34,10 @@ export interface Entity {
 	S: number;
 	u: number;
 	heading: number;
+	manualHeading?: boolean;
+	headingMode?: HeadingMode;
+	headingDelta?: number;
+	lookAt?: WorldPoint;
 }
 
 export interface EntityPose {
@@ -21,6 +45,10 @@ export interface EntityPose {
 	S: number;
 	u: number;
 	heading: number;
+	manualHeading?: boolean;
+	headingMode?: HeadingMode;
+	headingDelta?: number;
+	lookAt?: WorldPoint;
 }
 
 export interface Step {
@@ -105,7 +133,7 @@ export interface BoardDoc {
 	activeClipId: string | null;
 }
 
-export const CURRENT_VERSION = 2;
+export const CURRENT_VERSION = 5;
 
 export function createEmptyDoc(): BoardDoc {
 	return {

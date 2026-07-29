@@ -11,7 +11,9 @@ import defaultLineup from '$lib/data/start-flat.json';
 import { boardDoc } from '$lib/doc/store';
 import type { Entity } from '$lib/doc/types';
 import { poseStore, type Pose } from '$lib/doc/poses';
-import { toTrack, fromTrack } from '$lib/track/trackFrame';
+import { toTrack, fromTrack, preserveLapOnDrag } from '$lib/track/trackFrame';
+import { resolveHeading } from '$lib/track/heading';
+import { boardSettings } from '$lib/stores/boardSettings';
 import { TRACK_SCALE } from '$lib/constants';
 import type { MeterPoint } from '$lib/trackMath';
 import { migrateBoardState } from '$lib/doc/migrate';
@@ -23,6 +25,10 @@ export class KonvaPlayerManager {
 	private teamPlayers: KonvaTeamPlayer[] = [];
 	private skatingOfficials: KonvaSkatingOfficial[] = [];
 	private docUnsubscribe: (() => void) | null = null;
+	/** Whether the facing marker (brace) is drawn. Driven by board settings. */
+	private headingVisible = true;
+	/** Currently selected entity id (drives the red selection halo). */
+	private selectedId: string | null = null;
 
 	constructor(layer: Konva.Layer) {
 		this.layer = layer;
@@ -68,6 +74,7 @@ export class KonvaPlayerManager {
 	 */
 	private reconcileToEntities(entities: Entity[]): void {
 		const entityIds = new Set(entities.map((e) => e.id));
+		const autoFace = get(boardSettings).autoFace ?? true;
 
 		this.teamPlayers = this.teamPlayers.filter((p) => {
 			if (!entityIds.has(p.id)) {
@@ -85,8 +92,23 @@ export class KonvaPlayerManager {
 		});
 
 		for (const entity of entities) {
-			const pose = poseStore.effective(entity.id) ?? entity;
+			const live = poseStore.effective(entity.id);
+			const pose = live ?? { S: entity.S, u: entity.u, heading: entity.heading };
 			const { x, y } = this.projectPose(pose);
+			// Resolve facing: manual override (or autoFace off) ⇒ stored heading;
+			// otherwise the track tangent at this position = the skater's looking
+			// direction. Independent of motion, so it never snaps mid-move.
+			const heading = resolveHeading(
+				{
+					id: entity.id,
+					...pose,
+					manualHeading: entity.manualHeading,
+					headingMode: entity.headingMode,
+					headingDelta: entity.headingDelta,
+					lookAt: entity.lookAt
+				},
+				autoFace
+			);
 
 			if (entity.kind === 'skater') {
 				const existing = this.findTeamPlayerById(entity.id);
@@ -94,7 +116,7 @@ export class KonvaPlayerManager {
 					if (existing.role !== entity.role || existing.team !== entity.team) {
 						const idx = this.teamPlayers.indexOf(existing);
 						existing.destroy();
-						this.teamPlayers[idx] = new KonvaTeamPlayer(
+						const created = new KonvaTeamPlayer(
 							x,
 							y,
 							this.layer,
@@ -102,17 +124,23 @@ export class KonvaPlayerManager {
 							entity.role as TeamPlayerRole,
 							entity.id
 						);
+						created.setHeading(heading);
+						created.setHeadingVisible(this.headingVisible);
+						this.teamPlayers[idx] = created;
 					} else {
 						existing.setPosition({ x, y });
+						existing.setHeading(heading);
 					}
 				} else {
-					this.addTeamPlayer(
+					const created = this.addTeamPlayer(
 						x,
 						y,
 						entity.team as TeamPlayerTeam,
 						entity.role as TeamPlayerRole,
 						entity.id
 					);
+					created.setHeading(heading);
+					created.setHeadingVisible(this.headingVisible);
 				}
 			} else {
 				const existing = this.findOfficialById(entity.id);
@@ -120,18 +148,29 @@ export class KonvaPlayerManager {
 					if (existing.role !== entity.role) {
 						const idx = this.skatingOfficials.indexOf(existing);
 						existing.destroy();
-						this.skatingOfficials[idx] = new KonvaSkatingOfficial(
+						const created = new KonvaSkatingOfficial(
 							x,
 							y,
 							this.layer,
 							entity.role as SkatingOfficialRole,
 							entity.id
 						);
+						created.setHeading(heading);
+						created.setHeadingVisible(this.headingVisible);
+						this.skatingOfficials[idx] = created;
 					} else {
 						existing.setPosition({ x, y });
+						existing.setHeading(heading);
 					}
 				} else {
-					this.addSkatingOfficial(x, y, entity.role as SkatingOfficialRole, entity.id);
+					const created = this.addSkatingOfficial(
+						x,
+						y,
+						entity.role as SkatingOfficialRole,
+						entity.id
+					);
+					created.setHeading(heading);
+					created.setHeadingVisible(this.headingVisible);
 				}
 			}
 		}
@@ -171,6 +210,9 @@ export class KonvaPlayerManager {
 	 * every entity actually moved during a gesture — the dragged node and any
 	 * collision-nudged neighbours — so `poseStore.effective*` stays a true
 	 * reflection of what is on screen without touching the document.
+	 *
+	 * Uses `preserveLapOnDrag` to prevent dragging across the seam from
+	 * resetting the lap index to 0 (latent bug fix).
 	 */
 	private captureLivePose(player: KonvaPlayer & { id: string }): void {
 		const center = this.center();
@@ -183,8 +225,16 @@ export class KonvaPlayerManager {
 			x: (pos.x - center.x) / TRACK_SCALE,
 			y: (pos.y - center.y) / TRACK_SCALE
 		};
-		const { s, u } = toTrack(meterPos);
-		if (!Number.isFinite(s) || !Number.isFinite(u)) return;
+		const { s: wrappedS, u } = toTrack(meterPos);
+		if (!Number.isFinite(wrappedS) || !Number.isFinite(u)) return;
+
+		// Preserve lap index across the seam. Use the effective S (live if
+		// mid-drag, else committed) as the reference so a continuous drag
+		// around the track accumulates laps frame-by-frame instead of
+		// comparing every position against the stale committed start point.
+		const prevS = poseStore.effective(player.id)?.S ?? 0;
+		const s = preserveLapOnDrag(prevS, wrappedS);
+
 		poseStore.setLive(player.id, { S: s, u });
 	}
 
@@ -223,6 +273,10 @@ export class KonvaPlayerManager {
 			const identifiable = this.asIdentifiable(player);
 			if (identifiable) {
 				this.captureLivePose(identifiable);
+				// Keep the facing marker aimed along the (new) track tangent while
+				// the skater is dragged, so it always points at the direction
+				// control which orbits along the heading.
+				this.refreshHeadingFor(identifiable.id);
 			}
 			if (player instanceof KonvaTeamPlayer) {
 				player.updateInBounds();
@@ -296,6 +350,87 @@ export class KonvaPlayerManager {
 	}
 
 	/**
+	 * Updates a single entity's chevron to face `rad` immediately. Used by the
+	 * rotation handle so the facing indicator tracks the drag in real time
+	 * (the document/reconcile path does not fire mid-gesture, so without this
+	 * the chevron would only jump on drag-end).
+	 */
+	setHeadingFor(id: string, rad: number): void {
+		const player = this.findTeamPlayerById(id) ?? this.findOfficialById(id);
+		if (player) {
+			player.setHeading(rad);
+			this.layer.batchDraw();
+		}
+	}
+
+	/**
+	 * Toggles the facing marker on every entity. Called when the board setting
+	 * flips so existing markers appear/disappear immediately.
+	 */
+	setAllHeadingVisible(visible: boolean): void {
+		this.headingVisible = visible;
+		for (const p of this.teamPlayers) p.setHeadingVisible(visible);
+		for (const p of this.skatingOfficials) p.setHeadingVisible(visible);
+		this.layer.batchDraw();
+	}
+
+	/**
+	 * Sets the single selected entity, showing a red halo on it and clearing the
+	 * halo on everyone else. `null` clears selection.
+	 */
+	setSelection(id: string | null): void {
+		this.selectedId = id;
+		for (const p of this.teamPlayers) p.setSelected(p.id === id);
+		for (const p of this.skatingOfficials) p.setSelected(p.id === id);
+		// Bring the selected entity above its peers so its dotted halo and
+		// facing marker read on top of overlapping players.
+		if (id) {
+			const sel = this.findTeamPlayerById(id) ?? this.findOfficialById(id);
+			sel?.getNode().moveToTop();
+		}
+		this.layer.batchDraw();
+	}
+
+	getSelectedId(): string | null {
+		return this.selectedId;
+	}
+
+	/**
+	 * Recomputes and applies the resolved heading for one entity from its
+	 * CURRENT effective pose. Used during a position drag so the facing marker
+	 * tracks the track tangent live (and thereby points at the direction
+	 * control, which orbits along the heading).
+	 */
+	refreshHeadingFor(id: string): void {
+		const heading = this.resolvedHeadingFor(id);
+		if (heading !== null) this.setHeadingFor(id, heading);
+	}
+
+	/**
+	 * Returns the resolved (displayed) heading for one entity from its CURRENT
+	 * effective pose, honouring the heading mode (auto / relative / locked).
+	 * Pure read — does not mutate nodes. Used by the direction control to
+	 * position the knob along the actual facing.
+	 */
+	resolvedHeadingFor(id: string): number | null {
+		const entity = boardDoc.current.entities.find((e) => e.id === id);
+		if (!entity) return null;
+		const pose = poseStore.effective(id) ?? { S: entity.S, u: entity.u, heading: entity.heading };
+		const autoFace = get(boardSettings).autoFace ?? true;
+		return resolveHeading(
+			{
+				id,
+				...pose,
+				manualHeading: entity.manualHeading,
+				headingMode: entity.headingMode,
+				headingDelta: entity.headingDelta,
+				lookAt: entity.lookAt
+			},
+			autoFace
+		);
+	}
+
+	/**
 	 * Repositions every node to its CURRENT effective pose (live override if
 	 * present, else committed) and refreshes in-bounds status. This is the
 	 * authored-playback render path: the player sets all entity poses into the
@@ -308,12 +443,18 @@ export class KonvaPlayerManager {
 	applyEffectivePoses(): void {
 		for (const p of this.teamPlayers) {
 			const pose = poseStore.effective(p.id);
-			if (pose) p.setPosition(this.projectPose(pose));
+			if (pose) {
+				p.setPosition(this.projectPose(pose));
+				p.setHeading(pose.heading);
+			}
 			p.updateInBounds();
 		}
 		for (const p of this.skatingOfficials) {
 			const pose = poseStore.effective(p.id);
-			if (pose) p.setPosition(this.projectPose(pose));
+			if (pose) {
+				p.setPosition(this.projectPose(pose));
+				p.setHeading(pose.heading);
+			}
 		}
 		this.layer.batchDraw();
 	}

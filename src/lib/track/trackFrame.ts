@@ -247,3 +247,36 @@ export function unwrap(sPrev: number, sNext: number): number {
 	const delta = shortestDelta(sPrev, sNext);
 	return sPrev + delta;
 }
+
+/**
+ * Preserves the lap index when dragging across the seam.
+ * Returns `committedS + shortestDelta(committedS, wrappedS)` where `wrappedS`
+ * is the wrapped S from `toTrack`. The delta is bounded to |ΔS| ≤ L/2:
+ * a drag > L/2 is treated as a re-seat, not a silent lap increment.
+ *
+ * Policy: when dragging, we want to preserve the lap index unless the user
+ * intentionally drags more than half a lap — at which point we assume they
+ * mean to re-seat the entity at a new lap boundary.
+ */
+export function preserveLapOnDrag(committedS: number, wrappedS: number): number {
+	const delta = shortestDelta(committedS, wrappedS);
+	return committedS + delta;
+}
+
+/**
+ * Computes the number of completed laps from S0 to S.
+ * S0 is typically the entity's S in step 0 of the active clip, or its
+ * committed S at selection time on the free board.
+ */
+export function lapsCompleted(S: number, S0: number): number {
+	return Math.floor(S / LAP_LENGTH) - Math.floor(S0 / LAP_LENGTH);
+}
+
+/**
+ * Computes the distance traveled from S0 to S in metres.
+ * S0 is typically the entity's S in step 0 of the active clip, or its
+ * committed S at selection time on the free board.
+ */
+export function distanceMeters(S: number, S0: number): number {
+	return S - S0;
+}

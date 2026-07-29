@@ -25,6 +25,7 @@
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
 	import AuthoringPanel from '$lib/components/AuthoringPanel.svelte';
 	import PresetMenu from '$lib/components/PresetMenu.svelte';
+	import Hud from '$lib/components/Hud.svelte';
 	import { captureSettings } from '$lib/stores/captureSettings';
 	import { exportSettings } from '$lib/stores/exportSettings';
 	import { isMobile } from '$lib/stores/viewport';
@@ -295,4 +296,5 @@
 
 {#if !isReplaying}
 	<AuthoringPanel {game} />
+	<Hud {game} />
 {/if}

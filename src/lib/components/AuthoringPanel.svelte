@@ -247,6 +247,7 @@
 		}
 	}
 
+	// ---- Direction / facing view toggles -----------------------------------
 	function exit() {
 		stopPlayback(false);
 		exitAuthoring();

@@ -140,18 +140,22 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 	 * drag) can never transiently discard the pack/engagement-zone colour —
 	 * which previously showed up as a one-frame black flicker while dragging,
 	 * because in-bounds is refreshed per pointer event but the pack is
-	 * recomputed once per animation frame.
+	 * recomputed once per animation frame. The facing marker mirrors the same
+	 * colour so it reads as part of the player's status ring.
 	 */
 	private applyStatusStroke(): void {
+		let stroke: string;
 		if (!this.isInBounds) {
-			this.circle.stroke(colors.outOfBounds);
+			stroke = colors.outOfBounds;
 		} else if (this.isInPack) {
-			this.circle.stroke(colors.inPack);
+			stroke = colors.inPack;
 		} else if (this.isInEngagementZone) {
-			this.circle.stroke(colors.inEngagementZone);
+			stroke = colors.inEngagementZone;
 		} else {
-			this.circle.stroke(colors.playerDefault);
+			stroke = colors.playerDefault;
 		}
+		this.circle.stroke(stroke);
+		this.setHeadingColor(stroke);
 	}
 
 	/**

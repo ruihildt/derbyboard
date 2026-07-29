@@ -2,6 +2,8 @@ import { get } from 'svelte/store';
 import Konva from 'konva';
 
 import { boardState } from '$lib/stores/konvaBoardState';
+import { selectedEntityId, directionControlActive } from '$lib/stores/selection';
+import { boardSettings } from '$lib/stores/boardSettings';
 import {
 	BASE_ZOOM,
 	CENTER_POINT_OFFSET,
@@ -28,9 +30,10 @@ import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
 import { boardDoc } from '$lib/doc/store';
 import { poseStore } from '$lib/doc/poses';
 import { migrateBoardState } from '$lib/doc/migrate';
-import { fromTrack, toTrack } from '$lib/track/trackFrame';
+import { fromTrack, toTrack, tangentAt } from '$lib/track/trackFrame';
+import { motionHeading } from '$lib/track/heading';
 import { tweenSteps, easeInOutCubic } from '$lib/track/tween';
-import type { EntityPose } from '$lib/doc/types';
+import type { Entity, EntityPose, HeadingMode } from '$lib/doc/types';
 import type { TeamPlayerRole, TeamPlayerTeam } from './KonvaTeamPlayer';
 import type { SkatingOfficialRole } from './KonvaSkatingOfficial';
 
@@ -38,6 +41,13 @@ const FRAME_DEFAULT_MARGIN = 0.1;
 
 /** Max tail points kept per entity for motion trails. */
 const TRAIL_MAX_POINTS = 24;
+
+/** Normalises an angle to (-π, π]. */
+function normalizeAngle(a: number): number {
+	let x = ((a + Math.PI) % (2 * Math.PI)) - Math.PI;
+	if (x <= -Math.PI) x += 2 * Math.PI;
+	return x;
+}
 
 export class KonvaGame {
 	private width: number;
@@ -50,6 +60,9 @@ export class KonvaGame {
 	private engagementZoneLayer: Konva.Layer;
 	/** Fading team-coloured tails behind entities during authored playback. */
 	private trailLayer: Konva.Layer;
+	/** Top-most layer for the direction control (knob + guide line) so it sits
+	 * above players and every other layer while visible. */
+	private controlLayer: Konva.Layer;
 
 	private trackGeometry: KonvaTrackGeometry;
 	private playerManager!: KonvaPlayerManager;
@@ -84,6 +97,35 @@ export class KonvaGame {
 	private zoneVisible = true;
 	/** Saved zoneVisible value before replay forced it to true. */
 	private savedZoneVisible = true;
+
+	/**
+	 * Rotation handle for manual heading (P4 task 7). Shown only for the
+	 * selected entity and hidden during playback/replay.
+	 */
+	private rotationHandle: Konva.Group | null = null;
+	/** Reactive bridge from the selection store to the rotation handle render. */
+	private selectionUnsubscribe: (() => void) | null = null;
+	private directionControlUnsubscribe: (() => void) | null = null;
+	/** Thin dashed guide line between the facing marker and the direction knob. */
+	private directionLine: Konva.Line | null = null;
+	/** Mode icons rendered on the knob (auto/relative vs locked). */
+	private knobAutoMark: Konva.Text | null = null;
+	private knobPinMark: Konva.Group | null = null;
+	private knobLockMark: Konva.Group | null = null;
+
+	/**
+	 * Cached last sample heading map for captured-clip motion-derived heading (P4.5).
+	 */
+	private capturedPrevS: Map<string, number> = new Map();
+	private capturedLastHeading: Map<string, number> = new Map();
+
+	/**
+	 * Resets the captured-clip heading state (called on replay start/seek-large-jump).
+	 */
+	private resetCapturedHeadingState(): void {
+		this.capturedPrevS.clear();
+		this.capturedLastHeading.clear();
+	}
 
 	/**
 	 * Canonical capture dimensions for the active replay (null when not
@@ -136,6 +178,7 @@ export class KonvaGame {
 		this.engagementZoneLayer = new Konva.Layer();
 		this.playersLayer = new Konva.Layer();
 		this.trailLayer = new Konva.Layer();
+		this.controlLayer = new Konva.Layer();
 
 		// Add in correct order:
 		// 1. Track surface (bottom)
@@ -149,11 +192,17 @@ export class KonvaGame {
 		this.trackGeometry.addTrackLinesToLayer(this.trackLinesLayer);
 		this.stage.add(this.trackLinesLayer);
 
-		// 4. Motion trails (under players, over lines)
+		// 4. Trails
 		this.stage.add(this.trailLayer);
 
 		// 5. Players (top)
 		this.stage.add(this.playersLayer);
+
+		// 6. Direction control (knob + guide line) — above everything.
+		this.stage.add(this.controlLayer);
+
+		// Build rotation handle (initially hidden).
+		this.buildRotationHandle();
 
 		this.playerManager = new KonvaPlayerManager(this.playersLayer);
 		this.packManager = new KonvaPackManager(
@@ -161,6 +210,24 @@ export class KonvaGame {
 			this.playersLayer,
 			this.engagementZoneLayer
 		);
+
+		// Reactively show/hide/move the rotation handle when selection changes.
+		// Without this, tapping an entity set the store but never rendered the
+		// handle (the manual direction control was effectively invisible).
+		this.selectionUnsubscribe = selectedEntityId.subscribe((id) => {
+			this.playerManager.setSelection(id);
+			this.updateRotationHandle();
+		});
+
+		// The knob + dashed line appear/disappear when direction-control mode
+		// toggles (double-click to enter, single-click/canvas to exit).
+		this.directionControlUnsubscribe = directionControlActive.subscribe(() => {
+			this.updateRotationHandle();
+		});
+
+		// Apply the persisted direction-marker visibility on first paint.
+		const markerVisible = get(boardSettings).directionMarkerVisible ?? true;
+		this.playerManager.setAllHeadingVisible(markerVisible);
 
 		// Register a single delegated handler for player interactions.
 		// Registered once here (not in the managers) so it survives rebuilds and
@@ -177,6 +244,15 @@ export class KonvaGame {
 				// before paint matters, so redundant calls within a frame collapse
 				// into one determinePack() + one batchDraw().
 				this.packManager.schedulePackUpdate();
+				// Keep the direction control (knob) orbiting the dragged skater so
+				// the facing marker stays pointed at it during a position move.
+				const target = e.target as Konva.Node;
+				if (target.hasName('playerGroup')) {
+					const player = target.getAttr('player') as { id?: string } | undefined;
+					if (player?.id && player.id === get(selectedEntityId)) {
+						this.updateRotationHandle();
+					}
+				}
 			}
 		});
 
@@ -199,14 +275,58 @@ export class KonvaGame {
 			this.playerManager.handleCollision(e);
 		});
 
-		// Tap-to-select for focus/dim: only active when the UI has armed it.
-		this.playersLayer.on('click tap', (e) => {
-			if (!this.focusTapEnabled || !this.focusTapCallback) return;
+		// Tap-to-select for focus/dim (P3 task 9): only active when the UI has armed it.
+		// Tap-to-select for single-select (P4 task 6): always-on in edit/author mode,
+		// disabled during replay.
+		// Selection / direction-control interaction model:
+		//  - single click on a skater → select it (dotted halo), direction control OFF
+		//  - double click on a skater → select it AND activate the direction control
+		//    (knob + dashed guide line)
+		//  - click another skater → select that one, direction control OFF
+		//  - click empty canvas → deselect, direction control OFF
+		// Single click resolves immediately (no delay): a double-click simply
+		// upgrades the just-selected skater to direction-control mode.
+		const playerIdFromEvent = (e: Konva.KonvaEventObject<unknown>): string | null => {
 			const target = e.target as Konva.Node;
 			if (target.hasName('playerGroup') || target.getParent()?.hasName('playerGroup')) {
 				const player = (target.getAttr('player') ?? target.getParent()?.getAttr('player')) as
 					{ id?: string } | undefined;
-				if (player?.id) this.focusTapCallback(player.id);
+				return player?.id ?? null;
+			}
+			return null;
+		};
+
+		this.stage.on('click tap', (e) => {
+			if (this.replayMode) return;
+
+			const id = playerIdFromEvent(e);
+			if (id) {
+				if (this.focusTapEnabled && this.focusTapCallback) {
+					// Focus/dim mode (P3): use callback.
+					this.focusTapCallback(id);
+					return;
+				}
+				// Single-select: select the entity, direction control inactive.
+				selectedEntityId.set(id);
+				directionControlActive.set(false);
+			} else {
+				// Any non-skater click (empty canvas, track lines, …) deselects
+				// entirely and exits direction mode.
+				selectedEntityId.set(null);
+				directionControlActive.set(false);
+			}
+		});
+
+		this.stage.on('dblclick dbltap', (e) => {
+			if (this.replayMode) return;
+			if (this.focusTapEnabled) return; // don't interfere with focus mode
+			const id = playerIdFromEvent(e);
+			if (id) {
+				selectedEntityId.set(id);
+				directionControlActive.set(true);
+			} else {
+				selectedEntityId.set(null);
+				directionControlActive.set(false);
 			}
 		});
 
@@ -239,12 +359,17 @@ export class KonvaGame {
 		window.removeEventListener('resize', this.handleResize);
 		window.visualViewport?.removeEventListener('resize', this.onVisualViewportResize);
 		this.gestureHandler.destroy();
+		this.selectionUnsubscribe?.();
+		this.directionControlUnsubscribe?.();
 		this.playerManager?.destroy();
+		this.rotationHandle?.destroy();
+		this.directionLine?.destroy();
 		this.trackSurfaceLayer.destroy();
 		this.trackLinesLayer.destroy();
 		this.engagementZoneLayer.destroy();
 		this.trailLayer.destroy();
 		this.playersLayer.destroy();
+		this.controlLayer.destroy();
 		this.stage.destroy();
 	}
 
@@ -808,6 +933,7 @@ export class KonvaGame {
 					? fitSourceToViewport(source, { w: this.width, h: this.height })
 					: { scale: 1, offX: 0, offY: 0 };
 			this.lastSample = null;
+			this.resetCapturedHeadingState();
 		} else {
 			this.replaySource = null;
 			this.replayFit = { scale: 1, offX: 0, offY: 0 };
@@ -927,18 +1053,31 @@ export class KonvaGame {
 		// Publish sample poses as overrides so determinePack() sees exactly
 		// what is rendered, not the stale document state. Convert pixel
 		// positions to track space (S, u) for the override tier.
+		// Use motionHeading (P4.5) for captured clips so skaters face their motion.
 		const overrides: Array<[string, { S: number; u: number; heading: number }]> = [];
 		for (const tp of sample.teamPlayers) {
 			if (!tp.id) continue;
 			const meterPos = { x: tp.relative.x / TRACK_SCALE, y: tp.relative.y / TRACK_SCALE };
 			const trackPos = toTrack(meterPos);
-			overrides.push([tp.id, { S: trackPos.s, u: trackPos.u, heading: 0 }]);
+			const prevS = this.capturedPrevS.get(tp.id) ?? trackPos.s;
+			const fallback = this.capturedLastHeading.get(tp.id) ?? 0;
+			const u = trackPos.u;
+			const heading = motionHeading(prevS, trackPos.s, fallback, u);
+			this.capturedPrevS.set(tp.id, trackPos.s);
+			this.capturedLastHeading.set(tp.id, heading);
+			overrides.push([tp.id, { S: trackPos.s, u: trackPos.u, heading }]);
 		}
 		for (const so of sample.skatingOfficials) {
 			if (!so.id) continue;
 			const meterPos = { x: so.relative.x / TRACK_SCALE, y: so.relative.y / TRACK_SCALE };
 			const trackPos = toTrack(meterPos);
-			overrides.push([so.id, { S: trackPos.s, u: trackPos.u, heading: 0 }]);
+			const prevS = this.capturedPrevS.get(so.id) ?? trackPos.s;
+			const fallback = this.capturedLastHeading.get(so.id) ?? 0;
+			const u = trackPos.u;
+			const heading = motionHeading(prevS, trackPos.s, fallback, u);
+			this.capturedPrevS.set(so.id, trackPos.s);
+			this.capturedLastHeading.set(so.id, heading);
+			overrides.push([so.id, { S: trackPos.s, u: trackPos.u, heading }]);
 		}
 		poseStore.setOverrides(overrides);
 
@@ -980,18 +1119,31 @@ export class KonvaGame {
 
 				// Publish sample poses as overrides so determinePack() sees exactly
 				// what is rendered, not the stale document state.
+				// Use motionHeading (P4.5) for captured clips so skaters face their motion.
 				const overrides: Array<[string, { S: number; u: number; heading: number }]> = [];
 				for (const tp of sample.teamPlayers) {
 					if (!tp.id) continue;
 					const meterPos = { x: tp.relative.x / TRACK_SCALE, y: tp.relative.y / TRACK_SCALE };
 					const trackPos = toTrack(meterPos);
-					overrides.push([tp.id, { S: trackPos.s, u: trackPos.u, heading: 0 }]);
+					const prevS = this.capturedPrevS.get(tp.id) ?? trackPos.s;
+					const fallback = this.capturedLastHeading.get(tp.id) ?? 0;
+					const u = trackPos.u;
+					const heading = motionHeading(prevS, trackPos.s, fallback, u);
+					this.capturedPrevS.set(tp.id, trackPos.s);
+					this.capturedLastHeading.set(tp.id, heading);
+					overrides.push([tp.id, { S: trackPos.s, u: trackPos.u, heading }]);
 				}
 				for (const so of sample.skatingOfficials) {
 					if (!so.id) continue;
 					const meterPos = { x: so.relative.x / TRACK_SCALE, y: so.relative.y / TRACK_SCALE };
 					const trackPos = toTrack(meterPos);
-					overrides.push([so.id, { S: trackPos.s, u: trackPos.u, heading: 0 }]);
+					const prevS = this.capturedPrevS.get(so.id) ?? trackPos.s;
+					const fallback = this.capturedLastHeading.get(so.id) ?? 0;
+					const u = trackPos.u;
+					const heading = motionHeading(prevS, trackPos.s, fallback, u);
+					this.capturedPrevS.set(so.id, trackPos.s);
+					this.capturedLastHeading.set(so.id, heading);
+					overrides.push([so.id, { S: trackPos.s, u: trackPos.u, heading }]);
 				}
 				poseStore.setOverrides(overrides);
 
@@ -1051,6 +1203,7 @@ export class KonvaGame {
 		poseStore.abortGesture();
 		this.playerManager.setPlayersDraggable(true);
 		this.clearTrails();
+		this.updateRotationHandle();
 	}
 
 	isAuthoredPlayback(): boolean {
@@ -1072,6 +1225,9 @@ export class KonvaGame {
 		this.focusTapEnabled = false;
 		this.focusTapCallback = null;
 		this.playerManager.setFocus(null);
+		selectedEntityId.set(null);
+		directionControlActive.set(false);
+		this.updateRotationHandle();
 	}
 
 	/**
@@ -1086,6 +1242,7 @@ export class KonvaGame {
 		this.playerManager.applyEffectivePoses();
 		this.packManager.determinePack();
 		if (this.trailsEnabled) this.pushTrails(poses);
+		this.updateRotationHandle();
 		this.engagementZoneLayer.batchDraw();
 		this.trailLayer.batchDraw();
 		this.playersLayer.batchDraw();
@@ -1244,4 +1401,387 @@ export class KonvaGame {
 	getWatermark(): Watermark {
 		return this.watermark;
 	}
+
+	/**
+	 * Builds the rotation handle for manual heading (P4 task 7).
+	 * A standalone draggable knob positioned at `center + R·(cos h, sin h)`
+	 * over the selected entity. Not a child of the playerGroup so rotation
+	 * never moves the entity.
+	 */
+	private buildRotationHandle(): void {
+		const handleRadius = 12;
+		const handleStroke = 3;
+
+		// Thin dashed guide line between the facing marker (on the skater rim)
+		// and the knob. Drawn under the knob; always shown alongside the control.
+		this.directionLine = new Konva.Line({
+			points: [0, 0, 0, 0],
+			stroke: colors.outOfBounds,
+			strokeWidth: 1,
+			dash: [4, 3],
+			lineCap: 'round',
+			visible: false,
+			listening: false,
+			perfectDrawEnabled: false
+		});
+		this.controlLayer.add(this.directionLine);
+
+		this.rotationHandle = new Konva.Group({
+			visible: false,
+			draggable: true,
+			listening: true,
+			name: 'rotationHandle'
+		});
+		this.rotationHandle.add(
+			new Konva.Circle({
+				radius: handleRadius,
+				stroke: colors.outOfBounds,
+				strokeWidth: handleStroke,
+				fill: 'white',
+				listening: true,
+				perfectDrawEnabled: false
+			})
+		);
+
+		// Mode icons centred on the knob, one per direction-control mode:
+		//  - "A"      → automatic / relative (offset from the track tangent)
+		//  - pin      → pinned (face a fixed map point)
+		//  - padlock  → fixed (absolute heading frozen on the canvas)
+		const knobAutoMark = new Konva.Text({
+			text: 'A',
+			fontSize: 12,
+			fontStyle: 'bold',
+			fill: colors.outOfBounds,
+			x: -4,
+			y: -7,
+			listening: false,
+			perfectDrawEnabled: false
+		});
+		const knobPinMark = new Konva.Group({ visible: false, listening: false });
+		knobPinMark.add(
+			new Konva.Path({
+				// Teardrop body pointing down.
+				data: 'M 0 -4.5 C 3 -4.5 3 0.5 0 4 C -3 0.5 -3 -4.5 0 -4.5 Z',
+				fill: colors.outOfBounds,
+				listening: false,
+				perfectDrawEnabled: false
+			})
+		);
+		knobPinMark.add(
+			new Konva.Circle({
+				x: 0,
+				y: -2,
+				radius: 1.2,
+				fill: 'white',
+				listening: false,
+				perfectDrawEnabled: false
+			})
+		);
+		const knobLockMark = new Konva.Group({ visible: false, listening: false });
+		knobLockMark.add(
+			new Konva.Arc({
+				x: 0,
+				y: -2,
+				innerRadius: 2,
+				outerRadius: 3.4,
+				angle: 180,
+				rotation: 180,
+				fill: colors.outOfBounds,
+				perfectDrawEnabled: false
+			})
+		);
+		knobLockMark.add(
+			new Konva.Rect({
+				x: -3.5,
+				y: -1,
+				width: 7,
+				height: 6,
+				fill: colors.outOfBounds,
+				cornerRadius: 1,
+				perfectDrawEnabled: false
+			})
+		);
+		this.rotationHandle.add(knobAutoMark);
+		this.rotationHandle.add(knobPinMark);
+		this.rotationHandle.add(knobLockMark);
+		this.knobAutoMark = knobAutoMark;
+		this.knobPinMark = knobPinMark;
+		this.knobLockMark = knobLockMark;
+
+		// A bare click/tap on the knob must NOT bubble to the stage (which would
+		// read it as an empty-canvas click and deselect).
+		this.rotationHandle.on('click tap', (e) => {
+			e.cancelBubble = true;
+		});
+
+		// Double-click the control cycles through the three modes
+		// (relative → pinned → fixed → relative). See cycleDirectionMode.
+		this.rotationHandle.on('dblclick dbltap', (e) => {
+			e.cancelBubble = true;
+			this.cycleDirectionMode();
+		});
+
+		// Drag handler: the knob follows the pointer freely and the skater's
+		// facing points from the skater toward the knob. Dragging does NOT change
+		// the mode (locked stays locked — it relocates the look-at point;
+		// automatic stays automatic — it sets a relative delta). The mode icon
+		// therefore stays as-is. Status is toggled only by double-click.
+		this.rotationHandle.on('dragmove', () => {
+			const selectedId = get(selectedEntityId);
+			if (!selectedId || !this.rotationHandle) return;
+
+			const pose = poseStore.effective(selectedId);
+			if (!pose) return;
+
+			const center = this.getStageCenter();
+			const meterPos = fromTrack(pose.S, pose.u);
+			const cx = center.x + meterPos.x * TRACK_SCALE;
+			const cy = center.y + meterPos.y * TRACK_SCALE;
+
+			// Use the knob's own (freely dragged) position rather than the raw
+			// pointer, so the heading reflects where the knob actually is.
+			const kx = this.rotationHandle.x();
+			const ky = this.rotationHandle.y();
+			const dx = kx - cx;
+			const dy = ky - cy;
+			const heading = Math.atan2(dy, dx); // y-down screen, clockwise-positive
+
+			poseStore.setLive(selectedId, { heading });
+			// Point the chevron at the knob immediately (reconcile doesn't fire
+			// mid-gesture).
+			this.playerManager.setHeadingFor(selectedId, heading);
+			// Keep the guide line anchored to the rim point facing the knob.
+			this.updateDirectionLine(cx, cy, heading, kx, ky);
+		});
+
+		// Drag-end: commit the new facing WITHOUT changing the mode (status is
+		// toggled only by double-clicking the control). In locked mode the drag
+		// relocates the look-at point; otherwise it sets a relative delta.
+		this.rotationHandle.on('dragend', () => {
+			const selectedId = get(selectedEntityId);
+			if (!selectedId || !this.rotationHandle) return;
+			const entity = boardDoc.current.entities.find((e) => e.id === selectedId);
+			const pose = poseStore.effective(selectedId);
+			if (!pose) return;
+			const center = this.getStageCenter();
+			const kx = this.rotationHandle.x();
+			const ky = this.rotationHandle.y();
+			const angle = Math.atan2(
+				ky - (center.y + fromTrack(pose.S, pose.u).y * TRACK_SCALE),
+				kx - (center.x + fromTrack(pose.S, pose.u).x * TRACK_SCALE)
+			);
+			const mode = entity?.headingMode;
+			if (mode === 'pinned') {
+				// Dragging in pinned mode relocates the look-at map point.
+				const lookAt = { x: (kx - center.x) / TRACK_SCALE, y: (ky - center.y) / TRACK_SCALE };
+				poseStore.commitGesture('Move look-at', { headingMode: 'pinned', lookAt });
+			} else if (mode === 'fixed') {
+				// Dragging in fixed mode rotates the frozen absolute heading
+				// (already written to the live tier as `heading`).
+				poseStore.commitGesture('Rotate', { headingMode: 'fixed' });
+			} else {
+				// Automatic/relative: store the rotation as an offset from tangent.
+				const t = tangentAt(pose.S);
+				const delta = normalizeAngle(angle - Math.atan2(t.y, t.x));
+				poseStore.commitGesture('Rotate', { headingMode: 'relative', headingDelta: delta });
+			}
+			this.updateRotationHandle();
+		});
+
+		this.controlLayer.add(this.rotationHandle);
+	}
+
+	/**
+	 * Cycles the selected entity's direction-control mode on each double-click:
+	 * relative (auto) → pinned (face a map point) → fixed (frozen absolute
+	 * heading) → relative. Each transition preserves the current facing where
+	 * possible so the chevron does not jump.
+	 */
+	private cycleDirectionMode(): void {
+		const selectedId = get(selectedEntityId);
+		if (!selectedId || !this.rotationHandle) return;
+		const entity = boardDoc.current.entities.find((e) => e.id === selectedId);
+		const pose = poseStore.effective(selectedId);
+		if (!entity || !pose || !this.rotationHandle) return;
+
+		const center = this.getStageCenter();
+		const heading = this.playerManager.resolvedHeadingFor(selectedId) ?? pose.heading;
+		// Seed the live tier so commitGesture has something to write.
+		poseStore.setLive(selectedId, { heading });
+
+		const current: HeadingMode = entity.headingMode ?? 'relative';
+		const next: HeadingMode =
+			current === 'relative' ? 'pinned' : current === 'pinned' ? 'fixed' : 'relative';
+
+		if (next === 'pinned') {
+			// Pin: capture the knob's current world position as the look-at point.
+			const kx = this.rotationHandle.x();
+			const ky = this.rotationHandle.y();
+			const lookAt = { x: (kx - center.x) / TRACK_SCALE, y: (ky - center.y) / TRACK_SCALE };
+			poseStore.commitGesture('Pin direction', { headingMode: 'pinned', lookAt });
+		} else if (next === 'fixed') {
+			// Fixed: freeze the current facing as an absolute world angle.
+			poseStore.commitGesture('Lock direction', { headingMode: 'fixed' });
+		} else {
+			// Relative: keep the current facing as an offset from the tangent.
+			const t = tangentAt(pose.S);
+			const delta = normalizeAngle(heading - Math.atan2(t.y, t.x));
+			poseStore.commitGesture('Auto direction', { headingMode: 'relative', headingDelta: delta });
+		}
+		this.updateRotationHandle();
+	}
+
+	/** Shows the icon on the knob matching the active mode. */
+	private setKnobMode(mode: HeadingMode): void {
+		this.knobAutoMark?.visible(mode === 'relative');
+		this.knobPinMark?.visible(mode === 'pinned');
+		this.knobLockMark?.visible(mode === 'fixed');
+	}
+
+	/**
+	 * Repositions (and shows) the dashed guide line from the skater's facing
+	 * rim point toward the knob position. `heading` is the angle from the
+	 * skater to the knob.
+	 */
+	private updateDirectionLine(
+		cx: number,
+		cy: number,
+		heading: number,
+		knobX: number,
+		knobY: number
+	): void {
+		if (!this.directionLine) return;
+		const rimX = cx + PLAYER_RADIUS * Math.cos(heading);
+		const rimY = cy + PLAYER_RADIUS * Math.sin(heading);
+		this.directionLine.points([rimX, rimY, knobX, knobY]);
+		this.directionLine.visible(true);
+	}
+
+	/**
+	 * Updates the rotation handle position to follow the selected entity. The
+	 * knob and dashed guide line are shown only while the direction control is
+	 * active (double-click). Called on selection/activation changes and
+	 * playback ticks.
+	 */
+	updateRotationHandle(): void {
+		const selectedId = get(selectedEntityId);
+		const active = get(directionControlActive);
+		if (!selectedId || this.replayMode || !active) {
+			this.rotationHandle?.visible(false);
+			this.directionLine?.visible(false);
+			return;
+		}
+
+		const entity = boardDoc.current.entities.find((e) => e.id === selectedId);
+		const pose = poseStore.effective(selectedId);
+		if (!entity || !pose) {
+			this.rotationHandle?.visible(false);
+			this.directionLine?.visible(false);
+			return;
+		}
+
+		const center = this.getStageCenter();
+		const meterPos = fromTrack(pose.S, pose.u);
+		const cx = center.x + meterPos.x * TRACK_SCALE;
+		const cy = center.y + meterPos.y * TRACK_SCALE;
+
+		const mode: HeadingMode = entity.headingMode ?? 'relative';
+		const pinned = mode === 'pinned' && !!entity.lookAt;
+		let hx: number;
+		let hy: number;
+		let heading: number;
+		if (pinned) {
+			// Knob sits on the fixed look-at map point; skater faces toward it.
+			hx = center.x + entity.lookAt!.x * TRACK_SCALE;
+			hy = center.y + entity.lookAt!.y * TRACK_SCALE;
+			heading = Math.atan2(entity.lookAt!.y - meterPos.y, entity.lookAt!.x - meterPos.x);
+		} else {
+			// Relative/fixed/auto: knob orbits the skater along the resolved
+			// facing (tangent+delta, or the frozen absolute angle).
+			heading = this.playerManager.resolvedHeadingFor(selectedId) ?? pose.heading;
+			const handleOffset = PLAYER_RADIUS * 4;
+			hx = cx + handleOffset * Math.cos(heading);
+			hy = cy + handleOffset * Math.sin(heading);
+		}
+
+		this.rotationHandle?.position({ x: hx, y: hy });
+		this.rotationHandle?.visible(true);
+		this.setKnobMode(mode);
+		this.updateDirectionLine(cx, cy, heading, hx, hy);
+		this.controlLayer.batchDraw();
+	}
+
+	/**
+	 * Re-applies every entity's resolved heading. Used when the auto-face
+	 * setting flips so existing chevrons immediately switch to/from the track
+	 * tangent without waiting for a document change.
+	 */
+	refreshHeadings(): void {
+		this.playerManager.renderFromDocument();
+		this.updateRotationHandle();
+	}
+
+	/**
+	 * Toggles the facing marker (brace) visibility on every entity.
+	 */
+	setDirectionMarkerVisible(visible: boolean): void {
+		boardSettings.update((s) => ({ ...s, directionMarkerVisible: visible }));
+		this.playerManager.setAllHeadingVisible(visible);
+	}
+
+	/**
+	 * Gets the stage center point (offset by track centering).
+	 */
+	private getStageCenter(): { x: number; y: number } {
+		return { x: this.width / 2, y: this.height / 2 };
+	}
+
+	/**
+	 * Returns HUD data (screen position + label) for the currently selected
+	 * entity, or null when nothing is selected. The screen position accounts
+	 * for the current stage pan/zoom so a DOM overlay can track the entity.
+	 * Called every frame by the HUD overlay component via rAF.
+	 */
+	getEntityHudData(): {
+		screenX: number;
+		screenY: number;
+		label: string;
+	} | null {
+		const selectedId = get(selectedEntityId);
+		if (!selectedId) return null;
+		const entity = boardDoc.current.entities.find((e) => e.id === selectedId);
+		const pose = poseStore.effective(selectedId);
+		if (!entity || !pose) return null;
+
+		const center = this.getStageCenter();
+		const meterPos = fromTrack(pose.S, pose.u);
+		const scale = this.stage.scaleX();
+		const localX = center.x + meterPos.x * TRACK_SCALE;
+		const localY = center.y + meterPos.y * TRACK_SCALE;
+
+		return {
+			screenX: this.stage.x() + localX * scale,
+			screenY: this.stage.y() + localY * scale,
+			label: hudLabel(entity)
+		};
+	}
+}
+
+const ROLE_LABELS: Record<string, string> = {
+	jammer: 'Jammer',
+	blocker: 'Blocker',
+	pivot: 'Pivot',
+	jamRefA: 'Jam Ref A',
+	jamRefB: 'Jam Ref B',
+	backPackRef: 'Back Pack Ref',
+	frontPackRef: 'Front Pack Ref',
+	outsidePackRef: 'Outside Pack Ref',
+	alternate: 'Alternate'
+};
+
+function hudLabel(entity: Entity): string {
+	if (entity.kind === 'skater' && entity.team) {
+		return `${entity.team} ${ROLE_LABELS[entity.role] ?? entity.role}`;
+	}
+	return ROLE_LABELS[entity.role] ?? entity.role;
 }
