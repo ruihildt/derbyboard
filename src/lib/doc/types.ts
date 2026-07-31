@@ -7,8 +7,20 @@ export type SkatingOfficialRole =
 	'jamRefA' | 'jamRefB' | 'backPackRef' | 'frontPackRef' | 'outsidePackRef' | 'alternate';
 
 /**
+ * A point in the planar world plane, in metres. This is the **canonical** stored
+ * coordinate system: entities, poses, paths and annotation geometry all live here.
+ * Track space `(S, u)` is a derived view computed on demand by the track layer
+ * (`$lib/track/trackLayer`) — only track-dependent features (auto-face, in-bounds,
+ * lap counting) ask the layer to convert.
+ */
+export interface PlanarPoint {
+	x: number;
+	y: number;
+}
+
+/**
  * How a skater's facing (looking direction) is resolved when auto-face is on:
- *  - `'relative'`: facing = track tangent at S + `headingDelta`. The authored
+ *  - `'relative'`: facing = track tangent + `headingDelta`. The authored
  *    rotation is an offset from the skating direction, so a skater turned 180°
  *    keeps facing 180° off as they move around the track. (Control icon: "A")
  *  - `'pinned'`: facing always points toward the fixed world point `lookAt`,
@@ -20,17 +32,8 @@ export type SkatingOfficialRole =
  */
 export type HeadingMode = 'relative' | 'pinned' | 'fixed';
 
-/** A world-space (track metres) point. Used for the locked look-at target. */
-export interface WorldPoint {
-	x: number;
-	y: number;
-}
-
-/** A point in canonical track space. `S` is wrapped to [0, LAP_LENGTH). */
-export interface TrackPoint {
-	S: number;
-	u: number;
-}
+/** A world-space (track metres) point. Used for the pinned look-at target. */
+export type WorldPoint = PlanarPoint;
 
 /** Minimal flat style token. `color` is a CSS string; `width` in world metres (render-scaled). */
 export interface AnnotationStyle {
@@ -39,24 +42,24 @@ export interface AnnotationStyle {
 }
 
 /**
- * Flat annotation union. Every kind carries `id`, a `style`, and its geometry entirely in
- * track space (S,u). No nesting, no grouping (parent-plan task 6). Captured clips do not
- * carry annotations — only authored-clip steps do.
+ * Flat annotation union. Every kind carries `id`, a `style`, and its geometry
+ * entirely in planar world metres. No nesting, no grouping. Captured clips do
+ * not carry annotations — only authored-clip steps do.
  */
 export type Annotation =
-	| { id: string; kind: 'pen'; points: TrackPoint[]; style: AnnotationStyle }
-	| { id: string; kind: 'arrow'; from: TrackPoint; to: TrackPoint; style: AnnotationStyle }
-	| { id: string; kind: 'zone'; points: TrackPoint[]; style: AnnotationStyle }
-	| { id: string; kind: 'label'; at: TrackPoint; text: string; style: AnnotationStyle }
-	| { id: string; kind: 'gap'; from: TrackPoint; to: TrackPoint; style: AnnotationStyle };
+	| { id: string; kind: 'pen'; points: PlanarPoint[]; style: AnnotationStyle }
+	| { id: string; kind: 'arrow'; from: PlanarPoint; to: PlanarPoint; style: AnnotationStyle }
+	| { id: string; kind: 'zone'; points: PlanarPoint[]; style: AnnotationStyle }
+	| { id: string; kind: 'label'; at: PlanarPoint; text: string; style: AnnotationStyle }
+	| { id: string; kind: 'gap'; from: PlanarPoint; to: PlanarPoint; style: AnnotationStyle };
 
 export interface Entity {
 	id: string;
 	kind: EntityKind;
 	team?: TeamPlayerTeam;
 	role: TeamPlayerRole | SkatingOfficialRole;
-	S: number;
-	u: number;
+	x: number;
+	y: number;
 	heading: number;
 	manualHeading?: boolean;
 	headingMode?: HeadingMode;
@@ -66,8 +69,8 @@ export interface Entity {
 
 export interface EntityPose {
 	id: string;
-	S: number;
-	u: number;
+	x: number;
+	y: number;
 	heading: number;
 	manualHeading?: boolean;
 	headingMode?: HeadingMode;
@@ -79,8 +82,8 @@ export interface EntityPose {
 export interface EntityPath {
 	id: string;
 	entityId: string;
-	/** Ordered points (wrapped S). First ≈ entity's pose on this step; last ≈ next step's pose. */
-	points: TrackPoint[];
+	/** Ordered planar points. First ≈ entity's pose on this step; last ≈ next step's pose. */
+	points: PlanarPoint[];
 }
 
 export interface Step {
@@ -172,7 +175,7 @@ export interface BoardDoc {
 	activeClipId: string | null;
 }
 
-export const CURRENT_VERSION = 6;
+export const CURRENT_VERSION = 7;
 
 export function createEmptyDoc(): BoardDoc {
 	return {

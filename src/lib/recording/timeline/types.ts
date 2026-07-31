@@ -1,6 +1,6 @@
 import type { CaptureZone } from '$lib/utils/capture';
 import type { TeamPlayerPosition, SkatingOfficialPosition } from '$lib/stores/konvaBoardState';
-import type { TrackPoint } from '$lib/doc/types';
+import type { PlanarPoint } from '$lib/doc/types';
 
 /** Board view (zoom + pan), stored relative to the stage center. */
 export interface TimelineView {
@@ -13,7 +13,7 @@ export interface TimelineView {
 export interface PathEntry {
 	id: string;
 	entityId: string;
-	points: TrackPoint[];
+	points: PlanarPoint[];
 }
 
 /**

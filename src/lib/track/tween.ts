@@ -1,5 +1,4 @@
 import type { EntityPose, Step } from '$lib/doc/types';
-import { unwrap, shortestDelta, LAP_LENGTH } from '$lib/track/trackFrame';
 import { buildArcLength, sampleAtArcLength, pathTangentAt, type ArcLengthPath } from './pathMath';
 
 /** Smooth ease-in/out so tweens read as acceleration/deceleration, not linear drift. */
@@ -57,13 +56,13 @@ export function resolveStepPaths(
 		// Replace first point with the FROM-step pose so the path starts
 		// exactly where the skater is on step i.
 		if (startPose && points.length > 0) {
-			points[0] = { S: startPose.S, u: startPose.u };
+			points[0] = { x: startPose.x, y: startPose.y };
 		}
 
 		// Replace last point with the TO-step pose so the path ends exactly
 		// where the skater arrives on step i+1.
 		if (endPose && points.length >= 2) {
-			points[points.length - 1] = { S: endPose.S, u: endPose.u };
+			points[points.length - 1] = { x: endPose.x, y: endPose.y };
 		}
 
 		const arcPath = buildArcLength(points);
@@ -76,12 +75,10 @@ export function resolveStepPaths(
 }
 
 /**
- * Track-aware interpolation between two entity poses.
- *
- * `S` is interpolated through the covering space using `unwrap` (nearest
- * equivalent), so an entity travelling from the end of a lap to the start
- * follows the track *forward across the seam* instead of cutting the infield
- * on a straight Cartesian lerp. `u` (lane) and `heading` interpolate directly.
+ * Planar interpolation between two entity poses. `(x, y)` lerp directly — two
+ * nearby planar points lerp along the short arc naturally, so there is no seam
+ * handling needed (the track wraps only in `(S, u)`, which is derived).
+ * `heading` interpolates along the shortest rotational direction.
  */
 export function tweenPose(
 	a: EntityPose,
@@ -90,19 +87,18 @@ export function tweenPose(
 	opts?: TweenOptions
 ): EntityPose {
 	const eased = opts?.ease ? opts.ease(f) : f;
-	const sTarget = unwrap(a.S, b.S);
 	return {
 		id: a.id,
-		S: lerp(a.S, sTarget, eased),
-		u: lerp(a.u, b.u, eased),
+		x: lerp(a.x, b.x, eased),
+		y: lerp(a.y, b.y, eased),
 		heading: lerpAngle(a.heading, b.heading, eased)
 	};
 }
 
 /**
- * Track-aware interpolation between two entity poses. If `path` is provided, samples the entity's
+ * Interpolation between two entity poses. If `path` is provided, samples the entity's
  * position along the arc-length-parametrised path at fraction `f` (uniform speed) instead of a
- * direct (S,u) lerp. Endpoints are CLAMPED to the exact `a`/`b` poses (locked decision). Heading:
+ * direct (x,y) lerp. Endpoints are CLAMPED to the exact `a`/`b` poses (locked decision). Heading:
  * if `path` is provided and `pathHeading` is true, derive from the path tangent; otherwise lerp
  * via lerpAngle as before.
  */
@@ -135,8 +131,8 @@ export function tweenPoseAlong(
 
 	return {
 		id: a.id,
-		S: sp.S,
-		u: sp.u,
+		x: sp.x,
+		y: sp.y,
 		heading
 	};
 }
@@ -179,10 +175,8 @@ export function tweenSteps(
 }
 
 /**
- * The greatest arc-length (metres) any single entity travels between two
- * steps along the shortest path. Lane changes contribute their metre
- * equivalent via a representative lane width so a wide lateral move isn't
- * treated as instant. Used to derive tween duration.
+ * The greatest distance (metres) any single entity travels between two steps,
+ * measured directly in the planar plane. Used to derive tween duration.
  */
 export function transitionDistanceMeters(from: EntityPose[], to: EntityPose[]): number {
 	const byIdTo = new Map<string, EntityPose>();
@@ -192,9 +186,7 @@ export function transitionDistanceMeters(from: EntityPose[], to: EntityPose[]): 
 	for (const a of from) {
 		const b = byIdTo.get(a.id);
 		if (!b) continue;
-		const arc = Math.abs(shortestDelta(a.S, b.S));
-		const lane = Math.abs(b.u - a.u) * 4.0; // ~4 m typical lane width
-		const d = Math.hypot(arc, lane);
+		const d = Math.hypot(b.x - a.x, b.y - a.y);
 		if (d > max) max = d;
 	}
 	return max;
@@ -255,8 +247,6 @@ export function buildTimeline(
 	return { segments, totalMs: stepCount * STEP_DURATION_MS, stepCount };
 }
 
-export { LAP_LENGTH };
-
 /**
  * Samples the authored-clip timeline at wall-clock time `t` (ms) and returns
  * the interpolated `EntityPose[]` for that instant. Pure (no rendering).
@@ -303,7 +293,7 @@ export function sampleAuthoredAt(
 			const ap = pathMap?.get(p.id);
 			if (ap && ap.points.length > 0) {
 				const end = ap.points[ap.points.length - 1];
-				return { ...p, S: end.S, u: end.u };
+				return { ...p, x: end.x, y: end.y };
 			}
 			return p; // no path → stays put
 		});

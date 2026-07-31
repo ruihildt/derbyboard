@@ -2,8 +2,8 @@ import { boardDoc } from './store';
 import type { Entity, HeadingMode, WorldPoint } from './types';
 
 export interface Pose {
-	S: number;
-	u: number;
+	x: number;
+	y: number;
 	heading: number;
 }
 
@@ -20,7 +20,7 @@ export type CommitGestureOptions = {
 };
 
 function poseOf(entity: Entity): Pose {
-	return { S: entity.S, u: entity.u, heading: entity.heading };
+	return { x: entity.x, y: entity.y, heading: entity.heading };
 }
 
 /**
@@ -130,7 +130,7 @@ export class PoseStore {
 	 * In-place update of one entity's live (uncommitted) pose. No document
 	 * write, no history entry, no Svelte reactivity — safe to call every frame.
 	 * Merges onto the current effective pose so a partial update (e.g. just
-	 * S/u from a position drag) preserves fields it doesn't touch (heading).
+	 * x/y from a position drag) preserves fields it doesn't touch (heading).
 	 */
 	setLive(id: string, pose: Partial<Pose>): void {
 		const current = this.effective(id);
@@ -141,8 +141,8 @@ export class PoseStore {
 		// bricking the board on reload (JSON.stringify turns NaN into null,
 		// which reload then stacks at the origin).
 		if (
-			!Number.isFinite(merged.S) ||
-			!Number.isFinite(merged.u) ||
+			!Number.isFinite(merged.x) ||
+			!Number.isFinite(merged.y) ||
 			!Number.isFinite(merged.heading)
 		) {
 			return;
@@ -156,7 +156,7 @@ export class PoseStore {
 	 * replay/export to publish sample poses so determinePack sees them.
 	 */
 	setOverride(id: string, pose: Pose): void {
-		if (!Number.isFinite(pose.S) || !Number.isFinite(pose.u) || !Number.isFinite(pose.heading)) {
+		if (!Number.isFinite(pose.x) || !Number.isFinite(pose.y) || !Number.isFinite(pose.heading)) {
 			return;
 		}
 		this.overrides.set(id, pose);
@@ -217,16 +217,16 @@ export class PoseStore {
 				// Defensive: skip any pose that slipped through as non-finite,
 				// so a numeric bug elsewhere can never corrupt the document.
 				if (
-					!Number.isFinite(pose.S) ||
-					!Number.isFinite(pose.u) ||
+					!Number.isFinite(pose.x) ||
+					!Number.isFinite(pose.y) ||
 					!Number.isFinite(pose.heading)
 				) {
 					continue;
 				}
 				const entity = draft.entities.find((e) => e.id === id);
 				if (entity) {
-					entity.S = pose.S;
-					entity.u = pose.u;
+					entity.x = pose.x;
+					entity.y = pose.y;
 					entity.heading = pose.heading;
 					if (opts?.setManualHeading) {
 						entity.manualHeading = true;

@@ -1,9 +1,9 @@
 import type { Entity, SkatingOfficialRole, TeamPlayerRole, TeamPlayerTeam } from '$lib/doc/types';
-import { LAP_LENGTH } from '$lib/track/trackFrame';
+import { fromTrack, LAP_LENGTH } from '$lib/track/trackFrame';
 
 /**
- * Lineup presets, authored directly in track space `(S, u)` — the canonical
- * coordinate frame (standing rule: track space is canonical, pixels derived).
+ * Lineup presets, authored in track space `(S, u)` and converted to planar
+ * world metres `(x, y)` at build time — the canonical stored coordinate frame.
  * Coaches nudge from here via duplicate-and-nudge, so preset precision is
  * secondary to coverage of the common starting contexts.
  *
@@ -31,6 +31,11 @@ function wrap(s: number): number {
 	return ((s % LAP_LENGTH) + LAP_LENGTH) % LAP_LENGTH;
 }
 
+/** Track-space `(S, u)` → planar metres `(x, y)`. */
+function planar(S: number, u: number): { x: number; y: number } {
+	return fromTrack(wrap(S), u);
+}
+
 /**
  * Builds the preset's entity roster with deterministic ids so loading the same
  * preset twice reconciles nodes in place (no orphaned duplicates), mirroring
@@ -39,23 +44,25 @@ function wrap(s: number): number {
 export function presetEntities(preset: Preset): Entity[] {
 	const entities: Entity[] = [];
 	preset.skaters.forEach((s, i) => {
+		const p = planar(s.S, s.u);
 		entities.push({
 			id: `preset-${preset.id}-skater-${s.team}-${s.role}-${i}`,
 			kind: 'skater',
 			team: s.team,
 			role: s.role,
-			S: wrap(s.S),
-			u: s.u,
+			x: p.x,
+			y: p.y,
 			heading: 0
 		});
 	});
 	preset.officials.forEach((o, i) => {
+		const p = planar(o.S, o.u);
 		entities.push({
 			id: `preset-${preset.id}-official-${o.role}-${i}`,
 			kind: 'official',
 			role: o.role,
-			S: wrap(o.S),
-			u: o.u,
+			x: p.x,
+			y: p.y,
 			heading: 0
 		});
 	});

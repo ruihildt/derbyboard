@@ -186,7 +186,7 @@ export class AuthoredPlayer {
 		return this.clip.steps.map((s, i) => resolveStepPaths(s, this.clip.steps[i + 1]));
 	}
 
-	private stepPoseArrays(): Array<{ id: string; S: number; u: number; heading: number }[]> {
+	private stepPoseArrays(): Array<{ id: string; x: number; y: number; heading: number }[]> {
 		const autoFace = get(boardSettings).autoFace ?? true;
 		// Pre-resolve headings based on autoFace setting.
 		const resolvedSteps = resolveHeadings(

@@ -1,17 +1,16 @@
-import type { TrackPoint } from '$lib/doc/types';
-import { unwrap, fromTrack, toTrack, LAP_LENGTH } from '$lib/track/trackFrame';
-import type { MeterPoint } from '$lib/trackMath';
+import type { PlanarPoint } from '$lib/doc/types';
 
 /**
- * Ramer–Douglas–Peucker simplification in metre space. Projects each TrackPoint to metres,
- * simplifies, returns the surviving TrackPoints. `epsilon` is in metres (default 0.15 m ≈ 6 in).
- * Also reused by P7 captured-clip decimation — keep it generic over the metre projection here.
+ * Ramer–Douglas–Peucker simplification in planar metre space. Operates directly
+ * on the canonical planar points. `epsilon` is in metres (default 0.15 m ≈ 6 in).
+ * Also reused by captured-clip decimation — keep it generic over planar points.
  *
- * If `maxPoints` is given and the epsilon result exceeds it, the result is further reduced to
- * exactly `maxPoints` by repeatedly removing the least-significant interior point (see
- * `reduceToN`), always preserving both endpoints. Used to cap authored movement paths.
+ * If `maxPoints` is given and the epsilon result exceeds it, the result is further
+ * reduced to exactly `maxPoints` by repeatedly removing the least-significant
+ * interior point (see `reduceToN`), always preserving both endpoints. Used to cap
+ * authored movement paths.
  */
-export function simplify(points: TrackPoint[], epsilon = 0.15, maxPoints?: number): TrackPoint[] {
+export function simplify(points: PlanarPoint[], epsilon = 0.15, maxPoints?: number): PlanarPoint[] {
 	const result = rdpByEpsilon(points, epsilon);
 	if (maxPoints !== undefined && result.length > maxPoints) {
 		return reduceToN(result, Math.max(2, maxPoints));
@@ -19,17 +18,16 @@ export function simplify(points: TrackPoint[], epsilon = 0.15, maxPoints?: numbe
 	return result;
 }
 
-function rdpByEpsilon(points: TrackPoint[], epsilon: number): TrackPoint[] {
+function rdpByEpsilon(points: PlanarPoint[], epsilon: number): PlanarPoint[] {
 	if (points.length <= 2) return points.map((p) => ({ ...p }));
 
-	const metrePoints = points.map((p) => fromTrack(p.S, p.u));
-	const start = metrePoints[0];
-	const end = metrePoints[metrePoints.length - 1];
+	const start = points[0];
+	const end = points[points.length - 1];
 
 	let maxDist = 0;
 	let maxIdx = 0;
-	for (let i = 1; i < metrePoints.length - 1; i++) {
-		const dist = perpendicularDistance(metrePoints[i], start, end);
+	for (let i = 1; i < points.length - 1; i++) {
+		const dist = perpendicularDistance(points[i], start, end);
 		if (dist > maxDist) {
 			maxDist = dist;
 			maxIdx = i;
@@ -51,10 +49,9 @@ function rdpByEpsilon(points: TrackPoint[], epsilon: number): TrackPoint[] {
  * its nearest kept neighbours). Both endpoints are always preserved, so the most geometrically
  * significant control points survive — preserving the path's character under the point cap.
  */
-function reduceToN(points: TrackPoint[], n: number): TrackPoint[] {
+function reduceToN(points: PlanarPoint[], n: number): PlanarPoint[] {
 	if (points.length <= n || n < 2) return points.map((p) => ({ ...p }));
 
-	const metre = points.map((p) => fromTrack(p.S, p.u));
 	const keep = new Array(points.length).fill(true);
 
 	let kept = points.length;
@@ -67,7 +64,7 @@ function reduceToN(points: TrackPoint[], n: number): TrackPoint[] {
 			if (i < points.length - 1) {
 				let nextKept = i + 1;
 				while (nextKept < points.length - 1 && !keep[nextKept]) nextKept++;
-				const dev = perpendicularDistance(metre[i], metre[prevKept], metre[nextKept]);
+				const dev = perpendicularDistance(points[i], points[prevKept], points[nextKept]);
 				if (dev < worstDev) {
 					worstDev = dev;
 					worstIdx = i;
@@ -80,7 +77,7 @@ function reduceToN(points: TrackPoint[], n: number): TrackPoint[] {
 		kept--;
 	}
 
-	const out: TrackPoint[] = [];
+	const out: PlanarPoint[] = [];
 	for (let i = 0; i < points.length; i++) if (keep[i]) out.push({ ...points[i] });
 	return out;
 }
@@ -99,12 +96,12 @@ function reduceToN(points: TrackPoint[], n: number): TrackPoint[] {
  *   the focus midpoint / `a`, the position that minimises the incident length.
  */
 export function clampNodeToBudget(
-	a: MeterPoint,
-	b: MeterPoint | null,
-	p: MeterPoint,
+	a: PlanarPoint,
+	b: PlanarPoint | null,
+	p: PlanarPoint,
 	budget: number
-): MeterPoint {
-	const incident = (q: MeterPoint): number => {
+): PlanarPoint {
+	const incident = (q: PlanarPoint): number => {
 		const dA = Math.hypot(q.x - a.x, q.y - a.y);
 		const dB = b ? Math.hypot(q.x - b.x, q.y - b.y) : 0;
 		return dA + dB;
@@ -112,14 +109,14 @@ export function clampNodeToBudget(
 
 	if (incident(p) <= budget) return { x: p.x, y: p.y };
 
-	const anchor: MeterPoint = b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: a.x, y: a.y };
+	const anchor: PlanarPoint = b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: a.x, y: a.y };
 
 	// Binary search the boundary incident == budget along the segment p→anchor.
 	let lo = 0;
 	let hi = 1;
 	for (let i = 0; i < 30; i++) {
 		const mid = (lo + hi) / 2;
-		const q: MeterPoint = {
+		const q: PlanarPoint = {
 			x: p.x + (anchor.x - p.x) * mid,
 			y: p.y + (anchor.y - p.y) * mid
 		};
@@ -129,7 +126,11 @@ export function clampNodeToBudget(
 	return { x: p.x + (anchor.x - p.x) * hi, y: p.y + (anchor.y - p.y) * hi };
 }
 
-function perpendicularDistance(pt: MeterPoint, lineStart: MeterPoint, lineEnd: MeterPoint): number {
+function perpendicularDistance(
+	pt: PlanarPoint,
+	lineStart: PlanarPoint,
+	lineEnd: PlanarPoint
+): number {
 	const dx = lineEnd.x - lineStart.x;
 	const dy = lineEnd.y - lineStart.y;
 	const mag = Math.sqrt(dx * dx + dy * dy);
@@ -142,43 +143,39 @@ function perpendicularDistance(pt: MeterPoint, lineStart: MeterPoint, lineEnd: M
 }
 
 /**
- * Catmull-Rom spline through the given TrackPoints, producing `samplesPerSegment` equally-spaced
+ * Catmull-Rom spline through the given planar points, producing `samplesPerSegment` equally-spaced
  * (in parameter, NOT arc length) interpolated points per input segment. Endpoints are preserved
- * (first/last input points are the first/last output points). Tension 0.5 (centripetal optional;
- * keep uniform Catmull-Rom for simplicity unless tests fail).
- * Returns a NEW array of TrackPoints (wrapped S preserved per point).
+ * (first/last input points are the first/last output points). Tension 0.5 (uniform Catmull-Rom).
+ * Returns a NEW array of planar points.
  */
-export function catmullRom(points: TrackPoint[], samplesPerSegment = 8): TrackPoint[] {
+export function catmullRom(points: PlanarPoint[], samplesPerSegment = 8): PlanarPoint[] {
 	if (points.length < 2) return points.map((p) => ({ ...p }));
 
-	const metrePoints = points.map((p) => fromTrack(p.S, p.u));
-	const result: TrackPoint[] = [];
+	const result: PlanarPoint[] = [];
 
-	for (let i = 0; i < metrePoints.length - 1; i++) {
-		const p0 = metrePoints[Math.max(0, i - 1)];
-		const p1 = metrePoints[i];
-		const p2 = metrePoints[Math.min(metrePoints.length - 1, i + 1)];
-		const p3 = metrePoints[Math.min(metrePoints.length - 1, i + 2)];
+	for (let i = 0; i < points.length - 1; i++) {
+		const p0 = points[Math.max(0, i - 1)];
+		const p1 = points[i];
+		const p2 = points[Math.min(points.length - 1, i + 1)];
+		const p3 = points[Math.min(points.length - 1, i + 2)];
 
 		for (let j = 0; j < samplesPerSegment; j++) {
 			const t = j / samplesPerSegment;
-			const interpolated = catmullRomInterpolate(p0, p1, p2, p3, t);
-			const trackPos = toTrack(interpolated);
-			result.push({ S: trackPos.s, u: trackPos.u });
+			result.push(catmullRomInterpolate(p0, p1, p2, p3, t));
 		}
 	}
 
-	result.push(points[points.length - 1]);
+	result.push({ ...points[points.length - 1] });
 	return result;
 }
 
 function catmullRomInterpolate(
-	p0: MeterPoint,
-	p1: MeterPoint,
-	p2: MeterPoint,
-	p3: MeterPoint,
+	p0: PlanarPoint,
+	p1: PlanarPoint,
+	p2: PlanarPoint,
+	p3: PlanarPoint,
 	t: number
-): MeterPoint {
+): PlanarPoint {
 	const t2 = t * t;
 	const t3 = t2 * t;
 
@@ -200,26 +197,25 @@ function catmullRomInterpolate(
 }
 
 /**
- * Builds a cumulative arc-length table over the (already smoothed) points, measured in metres via
- * fromTrack. Returns an object with the points and a parallel cumulative-distance array starting at 0.
+ * Builds a cumulative arc-length table over the (already smoothed) planar points.
+ * Returns an object with the points and a parallel cumulative-distance array starting at 0.
  */
 export interface ArcLengthPath {
-	points: TrackPoint[];
+	points: PlanarPoint[];
 	cum: number[];
 	total: number;
 }
 
-export function buildArcLength(points: TrackPoint[]): ArcLengthPath {
+export function buildArcLength(points: PlanarPoint[]): ArcLengthPath {
 	if (points.length === 0) {
 		return { points: [], cum: [], total: 0 };
 	}
 
 	const cum = [0];
-	const metrePoints = points.map((p) => fromTrack(p.S, p.u));
 
-	for (let i = 1; i < metrePoints.length; i++) {
-		const dx = metrePoints[i].x - metrePoints[i - 1].x;
-		const dy = metrePoints[i].y - metrePoints[i - 1].y;
+	for (let i = 1; i < points.length; i++) {
+		const dx = points[i].x - points[i - 1].x;
+		const dy = points[i].y - points[i - 1].y;
 		const dist = Math.sqrt(dx * dx + dy * dy);
 		cum.push(cum[cum.length - 1] + dist);
 	}
@@ -229,17 +225,17 @@ export function buildArcLength(points: TrackPoint[]): ArcLengthPath {
 
 /**
  * Samples the arc-length-parametrised path at distance `d` metres (0 ≤ d ≤ total). Linear
- * interpolation of S and u between the two bracketing points; S interpolated via unwrap across the
- * seam so a path crossing s=0 stays continuous. Returns { S, u } in track space (wrapped).
+ * interpolation of `x` and `y` between the two bracketing points. A planar polyline has no
+ * seam, so there is no wrap handling. Returns a planar point.
  */
-export function sampleAtArcLength(path: ArcLengthPath, d: number): TrackPoint {
-	if (path.points.length === 0) return { S: 0, u: 0.5 };
-	if (path.points.length === 1) return path.points[0];
+export function sampleAtArcLength(path: ArcLengthPath, d: number): PlanarPoint {
+	if (path.points.length === 0) return { x: 0, y: 0 };
+	if (path.points.length === 1) return { ...path.points[0] };
 
 	const clampedD = Math.max(0, Math.min(d, path.total));
 
-	if (clampedD === 0) return path.points[0];
-	if (clampedD === path.total) return path.points[path.points.length - 1];
+	if (clampedD === 0) return { ...path.points[0] };
+	if (clampedD === path.total) return { ...path.points[path.points.length - 1] };
 
 	let idx = 0;
 	for (let i = 0; i < path.cum.length - 1; i++) {
@@ -250,25 +246,24 @@ export function sampleAtArcLength(path: ArcLengthPath, d: number): TrackPoint {
 	}
 
 	const segmentDist = path.cum[idx + 1] - path.cum[idx];
-	if (segmentDist === 0) return path.points[idx];
+	if (segmentDist === 0) return { ...path.points[idx] };
 
 	const localT = (clampedD - path.cum[idx]) / segmentDist;
 	const p0 = path.points[idx];
 	const p1 = path.points[idx + 1];
 
-	const unwrappedS = unwrap(p0.S, p1.S);
-	const S = (((p0.S + localT * (unwrappedS - p0.S)) % LAP_LENGTH) + LAP_LENGTH) % LAP_LENGTH;
-	const u = p0.u + localT * (p1.u - p0.u);
-
-	return { S, u };
+	return {
+		x: p0.x + localT * (p1.x - p0.x),
+		y: p0.y + localT * (p1.y - p0.y)
+	};
 }
 
 /**
- * Unit tangent of the path at normalised fraction `f` (0 ≤ f ≤ 1), as a metre-space direction
- * {x,y}. Computed from a small central difference of sampleAtArcLength around f. Used for
- * heading-derivation during path playback when autoFace is on.
+ * Unit tangent of the path at normalised fraction `f` (0 ≤ f ≤ 1), as a planar
+ * direction {x,y}. Computed from a small central difference of sampleAtArcLength
+ * around f. Used for heading-derivation during path playback when autoFace is on.
  */
-export function pathTangentAt(path: ArcLengthPath, f: number): MeterPoint {
+export function pathTangentAt(path: ArcLengthPath, f: number): PlanarPoint {
 	if (path.points.length < 2 || path.total === 0) {
 		return { x: 1, y: 0 };
 	}
@@ -283,11 +278,8 @@ export function pathTangentAt(path: ArcLengthPath, f: number): MeterPoint {
 	const p0 = sampleAtArcLength(path, d0);
 	const p1 = sampleAtArcLength(path, d1);
 
-	const m0 = fromTrack(p0.S, p0.u);
-	const m1 = fromTrack(p1.S, p1.u);
-
-	const dx = m1.x - m0.x;
-	const dy = m1.y - m0.y;
+	const dx = p1.x - p0.x;
+	const dy = p1.y - p0.y;
 	const mag = Math.sqrt(dx * dx + dy * dy);
 
 	if (mag === 0) {

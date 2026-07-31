@@ -8,18 +8,17 @@ import type {
 	Entity,
 	EntityPose,
 	Step,
-	TrackPoint,
+	PlanarPoint,
 	Annotation
 } from './types';
 import { MAX_STEPS_PER_CLIP } from './types';
-import { LAP_LENGTH } from '$lib/track/trackFrame';
 
-/** Captures the live board's poses (id + S/u/heading) as a step payload. */
+/** Captures the live board's poses (id + x/y/heading) as a step payload. */
 export function snapshotPoses(entities: Entity[]): EntityPose[] {
 	return entities.map((e) => ({
 		id: e.id,
-		S: e.S,
-		u: e.u,
+		x: e.x,
+		y: e.y,
 		heading: e.heading,
 		manualHeading: e.manualHeading,
 		headingMode: e.headingMode,
@@ -38,7 +37,7 @@ function arrivalPosesFromStep(step: Step): EntityPose[] {
 		const path = step.paths?.find((p) => p.entityId === e.id);
 		if (path && path.points.length > 0) {
 			const last = path.points[path.points.length - 1];
-			return { ...e, S: last.S, u: last.u };
+			return { ...e, x: last.x, y: last.y };
 		}
 		return { ...e };
 	});
@@ -229,7 +228,7 @@ export function setStepPackZone(stepId: string, show: boolean): void {
  * Without this, endpoint injection at resolve time would snap the visual end
  * to whatever pose step i+1 happens to have, ignoring the drawn destination.
  */
-export function setEntityPath(stepId: string, entityId: string, points: TrackPoint[]): void {
+export function setEntityPath(stepId: string, entityId: string, points: PlanarPoint[]): void {
 	boardDoc.applyEdit((draft) => {
 		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
 		if (!c) return;
@@ -238,7 +237,7 @@ export function setEntityPath(stepId: string, entityId: string, points: TrackPoi
 		const step = c.steps[stepIdx];
 
 		if (!step.paths) step.paths = [];
-		const finitePoints = points.filter((p) => Number.isFinite(p.S) && Number.isFinite(p.u));
+		const finitePoints = points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
 
 		const existingIdx = step.paths.findIndex((p) => p.entityId === entityId);
 		if (existingIdx >= 0) {
@@ -262,8 +261,8 @@ export function setEntityPath(stepId: string, entityId: string, points: TrackPoi
 			const nextStep = c.steps[stepIdx + 1];
 			const nextEntity = nextStep.entities.find((e) => e.id === entityId);
 			if (nextEntity) {
-				nextEntity.S = endPoint.S;
-				nextEntity.u = endPoint.u;
+				nextEntity.x = endPoint.x;
+				nextEntity.y = endPoint.y;
 			}
 		}
 	}, 'Draw path');
@@ -309,7 +308,7 @@ export function addAnnotation(
 
 		if ('points' in filtered && Array.isArray(filtered.points)) {
 			(filtered as Extract<Annotation, { kind: 'pen' | 'zone' }>).points = filtered.points.filter(
-				(p) => Number.isFinite(p.S) && Number.isFinite(p.u)
+				(p) => Number.isFinite(p.x) && Number.isFinite(p.y)
 			);
 		}
 
@@ -332,7 +331,7 @@ export function updateAnnotation(stepId: string, annId: string, ann: Annotation)
 
 			if ('points' in filtered && Array.isArray(filtered.points)) {
 				(filtered as Extract<Annotation, { kind: 'pen' | 'zone' }>).points = filtered.points.filter(
-					(p) => Number.isFinite(p.S) && Number.isFinite(p.u)
+					(p) => Number.isFinite(p.x) && Number.isFinite(p.y)
 				);
 			}
 
@@ -376,13 +375,13 @@ function commitAuthoringGesture(
 ): boolean {
 	return boardDoc.applyEdit((draft) => {
 		for (const [id, pose] of poses) {
-			if (!Number.isFinite(pose.S) || !Number.isFinite(pose.u) || !Number.isFinite(pose.heading)) {
+			if (!Number.isFinite(pose.x) || !Number.isFinite(pose.y) || !Number.isFinite(pose.heading)) {
 				continue;
 			}
 			const entity = draft.entities.find((e) => e.id === id);
 			if (entity) {
-				entity.S = pose.S;
-				entity.u = pose.u;
+				entity.x = pose.x;
+				entity.y = pose.y;
 				entity.heading = pose.heading;
 				if (opts?.setManualHeading) {
 					entity.manualHeading = true;
@@ -424,12 +423,12 @@ function commitAuthoringGesture(
 				const prevStep = c.steps[idx - 1];
 				if (prevStep.paths) {
 					for (const [id, pose] of poses) {
-						if (!Number.isFinite(pose.S) || !Number.isFinite(pose.u)) continue;
+						if (!Number.isFinite(pose.x) || !Number.isFinite(pose.y)) continue;
 						const path = prevStep.paths.find((p) => p.entityId === id);
 						if (path && path.points.length >= 2) {
 							const last = path.points[path.points.length - 1];
-							last.S = pose.S;
-							last.u = pose.u;
+							last.x = pose.x;
+							last.y = pose.y;
 						}
 					}
 				}
@@ -459,7 +458,7 @@ function applyStepPosesToBoard(doc: BoardDoc, step: Step | undefined): BoardDoc 
 	const byId = new Map(step.entities.map((p) => [p.id, p]));
 	const entities = doc.entities.map((e) => {
 		const p = byId.get(e.id);
-		return p ? { ...e, S: p.S, u: p.u, heading: p.heading } : e;
+		return p ? { ...e, x: p.x, y: p.y, heading: p.heading } : e;
 	});
 	return { ...doc, entities };
 }
@@ -486,7 +485,7 @@ export function loadStepArrivalOntoBoard(index: number): void {
 	const byId = new Map(arrival.map((p) => [p.id, p]));
 	const entities = doc.entities.map((e) => {
 		const p = byId.get(e.id);
-		return p ? { ...e, S: p.S, u: p.u, heading: p.heading } : e;
+		return p ? { ...e, x: p.x, y: p.y, heading: p.heading } : e;
 	});
 	boardDoc.setView({ ...doc, entities });
 }
@@ -520,31 +519,14 @@ export function exitAuthoring(): void {
 }
 
 /**
- * Nudges an entity by ±1 lap. Used for the rare case where a coach needs to
- * re-seat an entity at a different lap boundary after a drag. One undo entry.
+ * Nudges an entity by ±1 lap. Under the planar-coordinate model the lap index
+ * is not stored (a full lap maps to the same world point), so this is a no-op
+ * for the board/step pose. It is retained for the future lap-readout UI, which
+ * will carry an explicit lap counter; until then nothing user-facing calls it.
  */
-export function nudgeLap(id: string, delta: number): void {
+export function nudgeLap(_id: string, delta: number): void {
 	if (delta !== 1 && delta !== -1) return;
-
-	boardDoc.applyEdit(
-		(draft) => {
-			const entity = draft.entities.find((e) => e.id === id);
-			if (entity) {
-				entity.S += delta * LAP_LENGTH;
-			}
-
-			// Also update the active step if authoring.
-			const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
-			const idx = clampedStepIndex(c, get(authoringSession).activeStepIndex);
-			if (c && idx >= 0) {
-				const stepEntity = c.steps[idx].entities.find((e) => e.id === id);
-				if (stepEntity) {
-					stepEntity.S += delta * LAP_LENGTH;
-				}
-			}
-		},
-		delta > 0 ? '+1 lap' : '-1 lap'
-	);
+	// No-op in the planar model (see docstring).
 }
 
 /**

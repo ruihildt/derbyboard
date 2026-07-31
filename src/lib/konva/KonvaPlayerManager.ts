@@ -11,11 +11,9 @@ import defaultLineup from '$lib/data/start-flat.json';
 import { boardDoc } from '$lib/doc/store';
 import type { Entity } from '$lib/doc/types';
 import { poseStore, type Pose } from '$lib/doc/poses';
-import { toTrack, fromTrack, preserveLapOnDrag } from '$lib/track/trackFrame';
 import { resolveHeading } from '$lib/track/heading';
 import { boardSettings } from '$lib/stores/boardSettings';
 import { TRACK_SCALE } from '$lib/constants';
-import type { MeterPoint } from '$lib/trackMath';
 import { migrateBoardState } from '$lib/doc/migrate';
 
 export class KonvaPlayerManager {
@@ -58,11 +56,10 @@ export class KonvaPlayerManager {
 		return { x: stage.width() / 2, y: stage.height() / 2 };
 	}
 
-	/** Projects a track-space pose to absolute stage pixels. */
+	/** Projects a planar pose to absolute stage pixels. */
 	private projectPose(pose: Pose): { x: number; y: number } {
 		const center = this.center();
-		const meterPos = fromTrack(pose.S, pose.u);
-		return { x: center.x + meterPos.x * TRACK_SCALE, y: center.y + meterPos.y * TRACK_SCALE };
+		return { x: center.x + pose.x * TRACK_SCALE, y: center.y + pose.y * TRACK_SCALE };
 	}
 
 	/**
@@ -93,7 +90,7 @@ export class KonvaPlayerManager {
 
 		for (const entity of entities) {
 			const live = poseStore.effective(entity.id);
-			const pose = live ?? { S: entity.S, u: entity.u, heading: entity.heading };
+			const pose = live ?? { x: entity.x, y: entity.y, heading: entity.heading };
 			const { x, y } = this.projectPose(pose);
 			// Resolve facing: manual override (or autoFace off) ⇒ stored heading;
 			// otherwise the track tangent at this position = the skater's looking
@@ -206,13 +203,14 @@ export class KonvaPlayerManager {
 
 	/**
 	 * Mirrors one Konva node's current pixel position into the pose store's
-	 * live tier (track-space), preserving its existing heading. Called for
-	 * every entity actually moved during a gesture — the dragged node and any
-	 * collision-nudged neighbours — so `poseStore.effective*` stays a true
+	 * live tier (planar world metres), preserving its existing heading. Called
+	 * for every entity actually moved during a gesture — the dragged node and
+	 * any collision-nudged neighbours — so `poseStore.effective*` stays a true
 	 * reflection of what is on screen without touching the document.
 	 *
-	 * Uses `preserveLapOnDrag` to prevent dragging across the seam from
-	 * resetting the lap index to 0 (latent bug fix).
+	 * The canonical coordinate system is planar, so this is a direct pixel →
+	 * metre conversion. Lap accounting is a track-layer concern (the lap index
+	 * is no longer embedded in a stored `S`); nothing here preserves it.
 	 */
 	private captureLivePose(player: KonvaPlayer & { id: string }): void {
 		const center = this.center();
@@ -221,21 +219,11 @@ export class KonvaPlayerManager {
 		// poison the pose store (and, on commit, the document) with NaN,
 		// which survives into persisted state and bricks the board on reload.
 		if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
-		const meterPos: MeterPoint = {
-			x: (pos.x - center.x) / TRACK_SCALE,
-			y: (pos.y - center.y) / TRACK_SCALE
-		};
-		const { s: wrappedS, u } = toTrack(meterPos);
-		if (!Number.isFinite(wrappedS) || !Number.isFinite(u)) return;
+		const x = (pos.x - center.x) / TRACK_SCALE;
+		const y = (pos.y - center.y) / TRACK_SCALE;
+		if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
-		// Preserve lap index across the seam. Use the effective S (live if
-		// mid-drag, else committed) as the reference so a continuous drag
-		// around the track accumulates laps frame-by-frame instead of
-		// comparing every position against the stale committed start point.
-		const prevS = poseStore.effective(player.id)?.S ?? 0;
-		const s = preserveLapOnDrag(prevS, wrappedS);
-
-		poseStore.setLive(player.id, { S: s, u });
+		poseStore.setLive(player.id, { x, y });
 	}
 
 	private asIdentifiable(player: KonvaPlayer): (KonvaPlayer & { id: string }) | null {
@@ -415,7 +403,7 @@ export class KonvaPlayerManager {
 	resolvedHeadingFor(id: string): number | null {
 		const entity = boardDoc.current.entities.find((e) => e.id === id);
 		if (!entity) return null;
-		const pose = poseStore.effective(id) ?? { S: entity.S, u: entity.u, heading: entity.heading };
+		const pose = poseStore.effective(id) ?? { x: entity.x, y: entity.y, heading: entity.heading };
 		const autoFace = get(boardSettings).autoFace ?? true;
 		return resolveHeading(
 			{

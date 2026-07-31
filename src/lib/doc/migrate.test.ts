@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { migrateBoardState, migrateTimelineProject, migrateBoardDoc } from './migrate';
 import { CURRENT_VERSION } from './types';
+import type { BoardDoc } from './types';
 import type { KonvaBoardState } from '$lib/stores/konvaBoardState';
 import type { TimelineProject } from '$lib/recording/timeline/types';
 import { TeamPlayerRole, TeamPlayerTeam } from '$lib/konva/KonvaTeamPlayer';
 import { SkatingOfficialRole } from '$lib/konva/KonvaSkatingOfficial';
+import { fromTrack, LAP_LENGTH } from '$lib/track/trackFrame';
+import { TRACK_SCALE } from '$lib/constants';
 
 describe('migrate', () => {
 	describe('migrateBoardState', () => {
@@ -55,8 +58,10 @@ describe('migrate', () => {
 			expect(entity1!.kind).toBe('skater');
 			expect(entity1!.team).toBe('A');
 			expect(entity1!.role).toBe('jammer');
-			expect(entity1!.S).toBeTypeOf('number');
-			expect(entity1!.u).toBeTypeOf('number');
+			expect(entity1!.x).toBeTypeOf('number');
+			expect(entity1!.y).toBeTypeOf('number');
+			expect(entity1!.x).toBeCloseTo(100 / TRACK_SCALE, 6);
+			expect(entity1!.y).toBeCloseTo(200 / TRACK_SCALE, 6);
 			expect(entity1!.heading).toBe(0);
 
 			const entity2 = doc.entities.find((e) => e.id === 'player2');
@@ -88,8 +93,8 @@ describe('migrate', () => {
 			expect(entity).toBeDefined();
 			expect(entity!.kind).toBe('official');
 			expect(entity!.role).toBe('jamRefA');
-			expect(entity!.S).toBeTypeOf('number');
-			expect(entity!.u).toBeTypeOf('number');
+			expect(entity!.x).toBeTypeOf('number');
+			expect(entity!.y).toBeTypeOf('number');
 			expect(entity!.heading).toBe(0);
 		});
 
@@ -127,7 +132,7 @@ describe('migrate', () => {
 			expect(doc.createdAt).toBe('2024-01-01T00:00:00.000Z');
 		});
 
-		it('should convert pixel coordinates to track coordinates correctly', () => {
+		it('should convert pixel coordinates to planar metres correctly', () => {
 			// Test with a known position
 			const state: KonvaBoardState = {
 				version: 3,
@@ -146,11 +151,9 @@ describe('migrate', () => {
 			const doc = migrateBoardState(state);
 			const entity = doc.entities[0];
 
-			// The track center is deep infield (u is unclamped, so this is
-			// legitimately negative — well inside the inner boundary at u=0).
-			expect(entity.S).toBeGreaterThanOrEqual(0);
-			expect(entity.S).toBeLessThan(100); // Should be within one lap
-			expect(entity.u).toBeLessThan(0);
+			// Center maps to the planar origin (0, 0) metres.
+			expect(entity.x).toBeCloseTo(0, 6);
+			expect(entity.y).toBeCloseTo(0, 6);
 		});
 
 		// Regression: a previously-corrupted save (NaN persisted as null by
@@ -182,8 +185,8 @@ describe('migrate', () => {
 			const doc = migrateBoardState(state);
 
 			for (const e of doc.entities) {
-				expect(Number.isFinite(e.S)).toBe(true);
-				expect(Number.isFinite(e.u)).toBe(true);
+				expect(Number.isFinite(e.x)).toBe(true);
+				expect(Number.isFinite(e.y)).toBe(true);
 			}
 		});
 	});
@@ -321,7 +324,7 @@ describe('migrate', () => {
 					title: 'Drill',
 					steps: [{ id: 's1', entities: [{ id: 'e1', S: 1, u: 0.5, heading: 0 }] }]
 				}
-			];
+			] as unknown as BoardDoc['clips'];
 			const migrated = migrateBoardDoc(v1);
 			const clip = migrated.clips[0];
 			expect(clip).toBeDefined();
@@ -329,7 +332,10 @@ describe('migrate', () => {
 			if (clip.kind !== 'authored') return;
 			// showPackZone stays undefined (= ON) for pre-v2 steps.
 			expect(clip.steps[0].showPackZone).toBeUndefined();
-			expect(clip.steps[0].entities[0].S).toBe(1);
+			// The track-space entity (S=1, u=0.5) is converted to planar metres.
+			expect(clip.steps[0].entities[0].id).toBe('e1');
+			expect(Number.isFinite(clip.steps[0].entities[0].x)).toBe(true);
+			expect(Number.isFinite(clip.steps[0].entities[0].y)).toBe(true);
 		});
 
 		it('bumps a v2 document to v3, adding manualHeading field', () => {
@@ -378,7 +384,7 @@ describe('migrate', () => {
 					S: 0,
 					u: 0.5,
 					heading: 0
-				});
+				} as unknown as (typeof v2.entities)[number]);
 			}
 			v2.entities[0].manualHeading = true;
 			const once = migrateBoardDoc(v2);
@@ -404,7 +410,7 @@ describe('migrate', () => {
 					S: 0,
 					u: 0.5,
 					heading: 0
-				});
+				} as unknown as (typeof v2.entities)[number]);
 			}
 			v2.clips = [
 				{
@@ -417,7 +423,7 @@ describe('migrate', () => {
 						}
 					]
 				}
-			];
+			] as unknown as BoardDoc['clips'];
 			const migrated = migrateBoardDoc(v2);
 			const clip = migrated.clips[0];
 			if (clip.kind !== 'authored') return;
@@ -433,7 +439,7 @@ describe('migrate', () => {
 			});
 			v5.version = 5;
 			const migrated = migrateBoardDoc(v5);
-			expect(migrated.version).toBe(6);
+			expect(migrated.version).toBe(CURRENT_VERSION);
 			const clip = migrated.clips[0];
 			if (!clip || clip.kind !== 'authored') return;
 			// annotations and paths should be undefined (absent = none)
@@ -451,8 +457,200 @@ describe('migrate', () => {
 			v5.version = 5;
 			const once = migrateBoardDoc(v5);
 			const twice = migrateBoardDoc(once);
-			expect(twice.version).toBe(6);
+			expect(twice.version).toBe(CURRENT_VERSION);
 			expect(twice).toEqual(once);
+		});
+	});
+
+	describe('migrateBoardDoc — v6 → v7 (track space → planar)', () => {
+		/** Builds a v6 doc (track-space S/u) with realistic in-bounds poses. */
+		function v6Doc(): BoardDoc {
+			const inBoundsSamples: Array<{ id: string; S: number; u: number }> = [
+				{ id: 'e1', S: 0, u: 0.5 },
+				{ id: 'e2', S: 5, u: 0.3 },
+				{ id: 'e3', S: LAP_LENGTH - 5, u: 0.7 },
+				{ id: 'e4', S: 25, u: 0.4 }
+			];
+			const entities = inBoundsSamples.map((s) => ({
+				id: s.id,
+				kind: 'skater' as const,
+				team: 'A' as const,
+				role: 'blocker' as const,
+				S: s.S,
+				u: s.u,
+				heading: 0
+			}));
+			return {
+				version: 6,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				meta: {},
+				entities,
+				clips: [
+					{
+						kind: 'authored',
+						id: 'c1',
+						steps: [
+							{
+								id: 's0',
+								entities: entities.map((e) => ({
+									id: e.id,
+									S: e.S,
+									u: e.u,
+									heading: e.heading
+								})),
+								paths: [
+									{
+										id: 'p1',
+										entityId: 'e1',
+										points: [
+											{ S: 0, u: 0.5 },
+											{ S: 2, u: 0.5 },
+											{ S: 4, u: 0.5 }
+										]
+									}
+								],
+								annotations: [
+									{
+										id: 'a1',
+										kind: 'pen',
+										points: [
+											{ S: 1, u: 0.5 },
+											{ S: 3, u: 0.5 }
+										],
+										style: { color: '#ff0000' }
+									},
+									{
+										id: 'a2',
+										kind: 'arrow',
+										from: { S: 1, u: 0.3 },
+										to: { S: 3, u: 0.7 },
+										style: { color: '#00ff00' }
+									},
+									{
+										id: 'a3',
+										kind: 'label',
+										at: { S: 6, u: 0.5 },
+										text: 'hi',
+										style: { color: '#0000ff' }
+									}
+								]
+							}
+						]
+					}
+				],
+				activeClipId: 'c1'
+			} as unknown as BoardDoc;
+		}
+
+		it('converts board-entity poses to planar metres via fromTrack', () => {
+			const migrated = migrateBoardDoc(v6Doc());
+			expect(migrated.version).toBe(CURRENT_VERSION);
+			for (const e of migrated.entities) {
+				expect((e as { S?: number }).S).toBeUndefined();
+				expect((e as { u?: number }).u).toBeUndefined();
+				expect(Number.isFinite(e.x)).toBe(true);
+				expect(Number.isFinite(e.y)).toBe(true);
+			}
+		});
+
+		it('maps in-bounds poses to fromTrack(S,u) within tolerance', () => {
+			const v6 = v6Doc();
+			const migrated = migrateBoardDoc(v6);
+			const raw = v6.entities as unknown as Array<{ id: string; S: number; u: number }>;
+			const byId = new Map(raw.map((e) => [e.id, e] as const));
+			for (const e of migrated.entities) {
+				const orig = byId.get(e.id)!;
+				const expected = fromTrack(orig.S, orig.u);
+				expect(e.x).toBeCloseTo(expected.x, 5);
+				expect(e.y).toBeCloseTo(expected.y, 5);
+			}
+		});
+
+		it('converts authored step poses to planar metres', () => {
+			const v6 = v6Doc();
+			const migrated = migrateBoardDoc(v6);
+			const clip = migrated.clips[0];
+			if (clip.kind !== 'authored') throw new Error('expected authored clip');
+			const step = clip.steps[0];
+			const origStep = (
+				v6.clips[0] as unknown as {
+					steps: { entities: Array<{ id: string; S: number; u: number }> }[];
+				}
+			).steps[0];
+			const byId = new Map(origStep.entities.map((e) => [e.id, e] as const));
+			for (const pose of step.entities) {
+				const orig = byId.get(pose.id)!;
+				const expected = fromTrack(orig.S, orig.u);
+				expect(pose.x).toBeCloseTo(expected.x, 5);
+				expect(pose.y).toBeCloseTo(expected.y, 5);
+			}
+		});
+
+		it('converts path points and annotation geometry to planar metres', () => {
+			const v6 = v6Doc();
+			const migrated = migrateBoardDoc(v6);
+			const clip = migrated.clips[0];
+			if (clip.kind !== 'authored') throw new Error('expected authored clip');
+			const step = clip.steps[0];
+
+			// Path points
+			expect(step.paths).toBeDefined();
+			for (const pt of step.paths![0].points) {
+				expect(Number.isFinite(pt.x)).toBe(true);
+				expect(Number.isFinite(pt.y)).toBe(true);
+			}
+			const expectedPath = fromTrack(2, 0.5);
+			expect(step.paths![0].points[1].x).toBeCloseTo(expectedPath.x, 5);
+
+			// Pen points
+			const pen = step.annotations![0];
+			if (pen.kind !== 'pen') throw new Error('expected pen');
+			for (const pt of pen.points) {
+				expect(Number.isFinite(pt.x)).toBe(true);
+				expect(Number.isFinite(pt.y)).toBe(true);
+			}
+
+			// Arrow from/to
+			const arrow = step.annotations![1];
+			if (arrow.kind !== 'arrow') throw new Error('expected arrow');
+			const expectedFrom = fromTrack(1, 0.3);
+			expect(arrow.from.x).toBeCloseTo(expectedFrom.x, 5);
+			const expectedTo = fromTrack(3, 0.7);
+			expect(arrow.to.x).toBeCloseTo(expectedTo.x, 5);
+
+			// Label at
+			const label = step.annotations![2];
+			if (label.kind !== 'label') throw new Error('expected label');
+			const expectedAt = fromTrack(6, 0.5);
+			expect(label.at.x).toBeCloseTo(expectedAt.x, 5);
+		});
+
+		it('is idempotent on an already-v7 document', () => {
+			const once = migrateBoardDoc(v6Doc());
+			const twice = migrateBoardDoc(once);
+			expect(twice).toEqual(once);
+		});
+
+		it('re-migrating a converted-then-downgraded doc leaves planar poses intact', () => {
+			// Convert, then pretend it's still v6: the planar poses (no S/u)
+			// must survive untouched (idempotent conversion).
+			const once = migrateBoardDoc(v6Doc());
+			const downgraded = { ...once, version: 6 } as BoardDoc;
+			const twice = migrateBoardDoc(downgraded);
+			expect(twice).toEqual(once);
+		});
+
+		it('coerces a non-finite stored S/u to a finite planar pose', () => {
+			const v6 = v6Doc();
+			// Corrupt one entity with NaN coordinates (as a bad save might).
+			v6.entities[0] = {
+				...v6.entities[0],
+				S: NaN,
+				u: NaN
+			} as unknown as (typeof v6.entities)[number];
+			const migrated = migrateBoardDoc(v6);
+			expect(Number.isFinite(migrated.entities[0].x)).toBe(true);
+			expect(Number.isFinite(migrated.entities[0].y)).toBe(true);
 		});
 	});
 });

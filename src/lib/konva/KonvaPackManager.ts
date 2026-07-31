@@ -13,7 +13,6 @@ import {
 import { boardSettings } from '$lib/stores/boardSettings';
 import type { KonvaPlayerManager } from './KonvaPlayerManager';
 import { poseStore } from '$lib/doc/poses';
-import { fromTrack } from '$lib/track/trackFrame';
 
 export class KonvaPackManager {
 	private engagementZonePath: Konva.Path;
@@ -85,7 +84,9 @@ export class KonvaPackManager {
 
 		const skaters: MeterSkater[] = blockers.map((p) => {
 			const pose = poseStore.effective(p.id);
-			const meterPos = pose ? fromTrack(pose.S, pose.u) : { x: 0, y: 0 };
+			// Poses are already planar metres — feed them straight to the pack
+			// analyser (which has always consumed Cartesian metres).
+			const meterPos = pose ? { x: pose.x, y: pose.y } : { x: 0, y: 0 };
 			return {
 				id: p.id,
 				x: meterPos.x,

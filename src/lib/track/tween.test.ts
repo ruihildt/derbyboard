@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { LAP_LENGTH } from '$lib/track/trackFrame';
+import { fromTrack, toTrack } from '$lib/track/trackFrame';
 import {
 	tweenPose,
 	tweenSteps,
@@ -12,10 +13,17 @@ import {
 	easeInOutCubic,
 	STEP_DURATION_MS
 } from './tween';
-import type { EntityPose, Step } from '$lib/doc/types';
+import type { EntityPose, PlanarPoint, Step } from '$lib/doc/types';
 
-function pose(id: string, S: number, u = 0.5, heading = 0): EntityPose {
-	return { id, S, u, heading };
+/** Planar pose at explicit world metres. */
+function pose(id: string, x: number, y = 0, heading = 0): EntityPose {
+	return { id, x, y, heading };
+}
+
+/** Planar pose built from track-space (S, u) — used for seam-curve tests. */
+function poseSU(id: string, S: number, u = 0.5, heading = 0): EntityPose {
+	const m = fromTrack(S, u);
+	return { id, x: m.x, y: m.y, heading };
 }
 
 describe('easeInOutCubic', () => {
@@ -35,10 +43,10 @@ describe('easeInOutCubic', () => {
 });
 
 describe('tweenPose', () => {
-	it('lerps S and u linearly (no easing option) along the straight', () => {
+	it('lerps x and y linearly (no easing option)', () => {
 		const r = tweenPose(pose('a', 10, 0.4), pose('a', 20, 0.6), 0.5);
-		expect(r.S).toBeCloseTo(15, 6);
-		expect(r.u).toBeCloseTo(0.5, 6);
+		expect(r.x).toBeCloseTo(15, 6);
+		expect(r.y).toBeCloseTo(0.5, 6);
 	});
 
 	it('at f=0 returns the from pose and at f=1 the to pose', () => {
@@ -46,23 +54,24 @@ describe('tweenPose', () => {
 		const b = pose('a', 20, 0.6, 1.2);
 		expect(tweenPose(a, b, 0)).toEqual(a);
 		expect(tweenPose(a, b, 1)).toEqual({ ...b, heading: b.heading });
-		expect(tweenPose(a, b, 1).S).toBeCloseTo(20, 6);
+		expect(tweenPose(a, b, 1).x).toBeCloseTo(20, 6);
 	});
 
 	it('crosses the seam forward (short way) when to is just past s=0', () => {
-		// from near end of lap, to near start: shortest path is forward across seam.
-		const fromS = LAP_LENGTH - 5;
-		const toS = 5;
-		const mid = tweenPose(pose('a', fromS), pose('a', toS), 0.5);
-		// Midpoint arc should be near LAP_LENGTH (forward path), not near 0 (backward).
-		expect(mid.S).toBeCloseTo(LAP_LENGTH, 0);
+		// from near end of lap, to near start: the two planar points hug the
+		// seam, so a planar lerp stays near the seam (track S ≈ LAP_LENGTH ≈ 0).
+		const mid = tweenPose(poseSU('a', LAP_LENGTH - 5), poseSU('a', 5), 0.5);
+		const midS = toTrack({ x: mid.x, y: mid.y }).s;
+		// Near the seam: close to either S=0 or S=LAP_LENGTH.
+		expect(Math.min(midS, LAP_LENGTH - midS)).toBeLessThan(5);
 	});
 
 	it('does not cut the infield by going the long way backward', () => {
-		// from=5, to=LAP_LENGTH-5: shortest is backward across seam (wraps to ~0).
-		const mid = tweenPose(pose('a', 5), pose('a', LAP_LENGTH - 5), 0.5);
-		// The covering-space midpoint is ~0 (just before the seam), never ~LAP_LENGTH/2.
-		expect(Math.abs(mid.S)).toBeLessThan(LAP_LENGTH / 4);
+		// from=S5, to=LAP_LENGTH-5: the two points still hug the seam, so the
+		// planar midpoint stays near the seam (never ~halfway round the track).
+		const mid = tweenPose(poseSU('a', 5), poseSU('a', LAP_LENGTH - 5), 0.5);
+		const midS = toTrack({ x: mid.x, y: mid.y }).s;
+		expect(Math.min(midS, LAP_LENGTH - midS)).toBeLessThan(5);
 	});
 
 	it('interpolates heading along the shortest rotational direction', () => {
@@ -86,32 +95,35 @@ describe('tweenSteps', () => {
 		const to = [pose('a', 10, 1), pose('b', 20, 0)];
 		const r = tweenSteps(from, to, 0.5);
 		expect(r).toHaveLength(2);
-		expect(r.find((p) => p.id === 'a')?.S).toBeCloseTo(5, 6);
-		expect(r.find((p) => p.id === 'b')?.S).toBeCloseTo(15, 6);
+		expect(r.find((p) => p.id === 'a')?.x).toBeCloseTo(5, 6);
+		expect(r.find((p) => p.id === 'b')?.x).toBeCloseTo(15, 6);
 	});
 
 	it('snaps entities present in only one endpoint', () => {
 		const from = [pose('a', 0, 0)];
 		const to = [pose('a', 10, 1), pose('b', 20, 0)];
 		const r = tweenSteps(from, to, 0.5);
-		expect(r.find((p) => p.id === 'a')?.S).toBeCloseTo(5, 6);
+		expect(r.find((p) => p.id === 'a')?.x).toBeCloseTo(5, 6);
 		// 'b' only exists in `to` -> snapped to its target pose, not invented.
-		expect(r.find((p) => p.id === 'b')?.S).toBe(20);
+		expect(r.find((p) => p.id === 'b')?.x).toBe(20);
 	});
 });
 
 describe('transitionDistanceMeters', () => {
-	it('is the max arc distance over entities', () => {
+	it('is the max planar distance over entities', () => {
 		const from = [pose('a', 0), pose('b', 0)];
 		const to = [pose('a', 3), pose('b', 7)];
 		expect(transitionDistanceMeters(from, to)).toBeCloseTo(7, 4);
 	});
 
-	it('takes the shortest arc across the seam', () => {
-		const from = [pose('a', LAP_LENGTH - 1)];
-		const to = [pose('a', 1)];
-		// Shortest distance across seam is 2 m, not LAP_LENGTH - 2.
-		expect(transitionDistanceMeters(from, to)).toBeCloseTo(2, 4);
+	it('takes the shortest planar distance across the seam', () => {
+		const from = [poseSU('a', LAP_LENGTH - 1)];
+		const to = [poseSU('a', 1)];
+		// The two seam-hugging points are ~2 m apart in the plane (the short
+		// chord), never the long way around (≈ LAP_LENGTH − 2).
+		const d = transitionDistanceMeters(from, to);
+		expect(d).toBeGreaterThan(1.5);
+		expect(d).toBeLessThan(3);
 	});
 });
 
@@ -163,15 +175,15 @@ describe('sampleAuthoredAt', () => {
 	it('returns the first step at/before t=0', () => {
 		const steps = [[pose('a', 0)], [pose('a', 10)]];
 		const tl = buildTimeline(steps.map((e) => ({ entities: e })));
-		expect(sampleAuthoredAt(tl, steps, 0)[0].S).toBe(0);
-		expect(sampleAuthoredAt(tl, steps, -5)[0].S).toBe(0);
+		expect(sampleAuthoredAt(tl, steps, 0)[0].x).toBe(0);
+		expect(sampleAuthoredAt(tl, steps, -5)[0].x).toBe(0);
 	});
 
 	it('returns the last step pose at/after the end', () => {
 		const steps = [[pose('a', 0)], [pose('a', 10)]];
 		const tl = buildTimeline(steps.map((e) => ({ entities: e })));
-		expect(sampleAuthoredAt(tl, steps, tl.totalMs)[0].S).toBe(10);
-		expect(sampleAuthoredAt(tl, steps, tl.totalMs + 999)[0].S).toBe(10);
+		expect(sampleAuthoredAt(tl, steps, tl.totalMs)[0].x).toBe(10);
+		expect(sampleAuthoredAt(tl, steps, tl.totalMs + 999)[0].x).toBe(10);
 	});
 
 	it('interpolates midway through a step', () => {
@@ -179,8 +191,8 @@ describe('sampleAuthoredAt', () => {
 		const tl = buildTimeline(steps.map((e) => ({ entities: e })));
 		const mid = sampleAuthoredAt(tl, steps, STEP_DURATION_MS / 2);
 		// Eased midpoint is not exactly 5, but lies strictly between 0 and 10.
-		expect(mid[0].S).toBeGreaterThan(0);
-		expect(mid[0].S).toBeLessThan(10);
+		expect(mid[0].x).toBeGreaterThan(0);
+		expect(mid[0].x).toBeLessThan(10);
 	});
 
 	it('dwells on the last step when it has no path', () => {
@@ -189,19 +201,19 @@ describe('sampleAuthoredAt', () => {
 		const steps = [[pose('a', 7)]];
 		const tl = buildTimeline(steps.map((e) => ({ entities: e })));
 		const atMid = sampleAuthoredAt(tl, steps, STEP_DURATION_MS / 2);
-		expect(atMid[0].S).toBe(7);
+		expect(atMid[0].x).toBe(7);
 		const atEnd = sampleAuthoredAt(tl, steps, tl.totalMs);
-		expect(atEnd[0].S).toBe(7);
+		expect(atEnd[0].x).toBe(7);
 	});
 
 	it('follows a path on the last step toward the path endpoint (single-step playback)', () => {
 		// Single step with a path: entity should move from its pose toward
 		// the path's last point during the 1-second playback.
-		const a = pose('a', 0, 0.5);
-		const pathPoints = [
-			{ S: 0, u: 0.5 },
-			{ S: 3, u: 0.5 },
-			{ S: 6, u: 0.5 }
+		const a = pose('a', 0, 5);
+		const pathPoints: PlanarPoint[] = [
+			{ x: 0, y: 5 },
+			{ x: 3, y: 5 },
+			{ x: 6, y: 5 }
 		];
 		const step: Step = {
 			id: 's0',
@@ -212,18 +224,18 @@ describe('sampleAuthoredAt', () => {
 		const tl = buildTimeline([{ entities: step.entities }]);
 		const stepMaps = [resolveStepPaths(step, undefined)];
 
-		// At t=0, entity is at its pose (S=0).
+		// At t=0, entity is at its pose (x=0).
 		const start = sampleAuthoredAt(tl, steps, 0, stepMaps);
-		expect(start[0].S).toBe(0);
+		expect(start[0].x).toBe(0);
 
 		// At the midpoint, entity should be moving along the path.
 		const mid = sampleAuthoredAt(tl, steps, STEP_DURATION_MS / 2, stepMaps);
-		expect(mid[0].S).toBeGreaterThan(0);
-		expect(mid[0].S).toBeLessThan(6);
+		expect(mid[0].x).toBeGreaterThan(0);
+		expect(mid[0].x).toBeLessThan(6);
 
-		// At the end, entity is at the path's last point (S=6).
+		// At the end, entity is at the path's last point (x=6).
 		const end = sampleAuthoredAt(tl, steps, tl.totalMs, stepMaps);
-		expect(end[0].S).toBeCloseTo(6, 4);
+		expect(end[0].x).toBeCloseTo(6, 4);
 	});
 });
 
@@ -247,93 +259,91 @@ describe('nearestStepAt', () => {
 describe('resolveStepPaths — endpoint injection', () => {
 	function stepWithPath(
 		entityId: string,
-		fromS: number,
-		fromU: number,
-		toS: number,
-		toU: number,
-		pathPoints: { S: number; u: number }[]
+		from: PlanarPoint,
+		to: PlanarPoint,
+		pathPoints: PlanarPoint[]
 	): Step {
 		return {
 			id: 's1',
-			entities: [{ id: entityId, S: fromS, u: fromU, heading: 0 }],
+			entities: [{ id: entityId, x: from.x, y: from.y, heading: 0 }],
 			paths: [{ id: 'p1', entityId, points: pathPoints }]
 		};
 	}
 
 	it('injects the FROM-step pose as the path start point', () => {
-		const step = stepWithPath('a', 10, 0.5, 20, 0.5, [
-			{ S: 0, u: 0.5 },
-			{ S: 5, u: 0.5 },
-			{ S: 15, u: 0.5 }
+		const step = stepWithPath('a', { x: 10, y: 0 }, { x: 20, y: 0 }, [
+			{ x: 0, y: 0 },
+			{ x: 5, y: 0 },
+			{ x: 15, y: 0 }
 		]);
 		const nextStep: Step = {
 			id: 's2',
-			entities: [{ id: 'a', S: 20, u: 0.5, heading: 0 }]
+			entities: [{ id: 'a', x: 20, y: 0, heading: 0 }]
 		};
 		const maps = resolveStepPaths(step, nextStep);
 		const arcPath = maps.get('a');
 		expect(arcPath).toBeDefined();
-		// First point should be the FROM-step pose (S=10), not the drawn S=0
-		expect(arcPath!.points[0].S).toBe(10);
+		// First point should be the FROM-step pose (x=10), not the drawn x=0
+		expect(arcPath!.points[0].x).toBe(10);
 	});
 
 	it('injects the TO-step pose as the path end point', () => {
-		const step = stepWithPath('a', 10, 0.5, 20, 0.5, [
-			{ S: 10, u: 0.5 },
-			{ S: 15, u: 0.5 },
-			{ S: 99, u: 0.9 } // garbage endpoint
+		const step = stepWithPath('a', { x: 10, y: 0 }, { x: 20, y: 0 }, [
+			{ x: 10, y: 0 },
+			{ x: 15, y: 0 },
+			{ x: 99, y: 9 } // garbage endpoint
 		]);
 		const nextStep: Step = {
 			id: 's2',
-			entities: [{ id: 'a', S: 20, u: 0.5, heading: 0 }]
+			entities: [{ id: 'a', x: 20, y: 0, heading: 0 }]
 		};
 		const maps = resolveStepPaths(step, nextStep);
 		const arcPath = maps.get('a');
 		expect(arcPath).toBeDefined();
-		// Last point should be the TO-step pose (S=20), not the drawn S=99
+		// Last point should be the TO-step pose (x=20), not the drawn x=99
 		const last = arcPath!.points[arcPath!.points.length - 1];
-		expect(last.S).toBe(20);
-		expect(last.u).toBe(0.5);
+		expect(last.x).toBe(20);
+		expect(last.y).toBe(0);
 	});
 
 	it('updates endpoints when step poses change (always in sync)', () => {
-		const step = stepWithPath('a', 10, 0.5, 20, 0.5, [
-			{ S: 10, u: 0.5 },
-			{ S: 15, u: 0.5 },
-			{ S: 20, u: 0.5 }
+		const step = stepWithPath('a', { x: 10, y: 0 }, { x: 20, y: 0 }, [
+			{ x: 10, y: 0 },
+			{ x: 15, y: 0 },
+			{ x: 20, y: 0 }
 		]);
 		const nextStep: Step = {
 			id: 's2',
-			entities: [{ id: 'a', S: 20, u: 0.5, heading: 0 }]
+			entities: [{ id: 'a', x: 20, y: 0, heading: 0 }]
 		};
 
 		// Modify the TO-step pose
-		nextStep.entities[0].S = 25;
-		nextStep.entities[0].u = 0.8;
+		nextStep.entities[0].x = 25;
+		nextStep.entities[0].y = 8;
 
 		const maps = resolveStepPaths(step, nextStep);
 		const arcPath = maps.get('a')!;
 		const last = arcPath.points[arcPath.points.length - 1];
-		expect(last.S).toBe(25);
-		expect(last.u).toBe(0.8);
+		expect(last.x).toBe(25);
+		expect(last.y).toBe(8);
 	});
 });
 
 describe('tweenPoseAlong — path-following playback', () => {
 	it('follows the path at intermediate fractions (not a straight lerp)', () => {
-		// Step 0: a@S=0,u=0.9 (outside lane). Step 1: a@S=10,u=0.1 (inside lane).
-		// Path dips to u=0.5 in the middle — a straight lerp would be at u=0.5
-		// at f=0.5 too, but the path's shape makes the MIDPOINT different.
-		const a = pose('a', 0, 0.9);
-		const b = pose('a', 10, 0.1);
+		// Step 0: a@(0, 9). Step 1: a@(10, 1). Path dips to y=3 in the
+		// middle — a straight lerp would be at y=5 at f=0.5, but the path's
+		// shape makes the MIDPOINT different.
+		const a = pose('a', 0, 9);
+		const b = pose('a', 10, 1);
 
 		// Build a path with a curve that deviates from the straight line
-		const pathPoints = [
-			{ S: 0, u: 0.9 },
-			{ S: 2, u: 0.3 }, // dips inside early
-			{ S: 5, u: 0.2 },
-			{ S: 8, u: 0.15 },
-			{ S: 10, u: 0.1 }
+		const pathPoints: PlanarPoint[] = [
+			{ x: 0, y: 9 },
+			{ x: 2, y: 3 }, // dips inside early
+			{ x: 5, y: 2 },
+			{ x: 8, y: 1.5 },
+			{ x: 10, y: 1 }
 		];
 
 		const step: Step = {
@@ -350,18 +360,18 @@ describe('tweenPoseAlong — path-following playback', () => {
 		const alongResult = tweenPoseAlong(a, b, 0.5, arcPath, false);
 		const straightResult = tweenPose(a, b, 0.5);
 
-		// The u values should differ because the path curves differently
+		// The y values should differ because the path curves differently
 		// than the straight lerp at that point.
-		expect(Math.abs(alongResult.u - straightResult.u)).toBeGreaterThan(0.01);
+		expect(Math.abs(alongResult.y - straightResult.y)).toBeGreaterThan(0.01);
 	});
 
 	it('clamps endpoints exactly to step poses', () => {
-		const a = pose('a', 5, 0.5);
-		const b = pose('a', 15, 0.5);
-		const pathPoints = [
-			{ S: 0, u: 0.5 },
-			{ S: 10, u: 0.5 },
-			{ S: 20, u: 0.5 }
+		const a = pose('a', 5, 5);
+		const b = pose('a', 15, 5);
+		const pathPoints: PlanarPoint[] = [
+			{ x: 0, y: 5 },
+			{ x: 10, y: 5 },
+			{ x: 20, y: 5 }
 		];
 		const step: Step = {
 			id: 's0',
@@ -374,16 +384,16 @@ describe('tweenPoseAlong — path-following playback', () => {
 
 		const atStart = tweenPoseAlong(a, b, 0, arcPath, false);
 		const atEnd = tweenPoseAlong(a, b, 1, arcPath, false);
-		expect(atStart.S).toBe(5);
-		expect(atEnd.S).toBe(15);
+		expect(atStart.x).toBe(5);
+		expect(atEnd.x).toBe(15);
 	});
 
 	it('falls back to straight tween when no path exists', () => {
-		const a = pose('a', 0, 0.5);
-		const b = pose('a', 10, 0.5);
+		const a = pose('a', 0, 5);
+		const b = pose('a', 10, 5);
 		const alongResult = tweenPoseAlong(a, b, 0.5, undefined, false);
 		const straightResult = tweenPose(a, b, 0.5);
-		expect(alongResult.S).toBeCloseTo(straightResult.S, 6);
-		expect(alongResult.u).toBeCloseTo(straightResult.u, 6);
+		expect(alongResult.x).toBeCloseTo(straightResult.x, 6);
+		expect(alongResult.y).toBeCloseTo(straightResult.y, 6);
 	});
 });

@@ -7,11 +7,15 @@ import {
 	pathTangentAt,
 	clampNodeToBudget
 } from './pathMath';
-import type { TrackPoint } from '$lib/doc/types';
-import { fromTrack, tangentAt, LAP_LENGTH } from '$lib/track/trackFrame';
+import type { PlanarPoint } from '$lib/doc/types';
+import { fromTrack, toTrack } from '$lib/track/trackFrame';
+import { trackLayer } from './trackLayer';
+import { LAP_LENGTH } from '$lib/track/trackFrame';
 
-function tp(S: number, u: number): TrackPoint {
-	return { S, u };
+/** A planar point at a track-space (S, u) location — so the geometric tests
+ *  exercise realistic track positions while the path code sees only planar pts. */
+function tp(S: number, u: number): PlanarPoint {
+	return fromTrack(S, u);
 }
 
 describe('pathMath — simplify', () => {
@@ -48,10 +52,10 @@ describe('pathMath — catmullRom', () => {
 	it('preserves endpoints exactly', () => {
 		const points = [tp(0, 0.5), tp(1, 0.5), tp(2, 0.5)];
 		const smoothed = catmullRom(points, 8);
-		expect(smoothed[0].S).toBeCloseTo(points[0].S, 6);
-		expect(smoothed[0].u).toBeCloseTo(points[0].u, 6);
-		expect(smoothed[smoothed.length - 1].S).toBeCloseTo(points[2].S, 6);
-		expect(smoothed[smoothed.length - 1].u).toBeCloseTo(points[2].u, 6);
+		expect(smoothed[0].x).toBeCloseTo(points[0].x, 6);
+		expect(smoothed[0].y).toBeCloseTo(points[0].y, 6);
+		expect(smoothed[smoothed.length - 1].x).toBeCloseTo(points[2].x, 6);
+		expect(smoothed[smoothed.length - 1].y).toBeCloseTo(points[2].y, 6);
 	});
 
 	it('produces expected output length', () => {
@@ -63,17 +67,16 @@ describe('pathMath — catmullRom', () => {
 	it('produces smooth curves (second differences small)', () => {
 		const points = [tp(0, 0.5), tp(1, 0.5), tp(2, 0.5), tp(3, 0.5)];
 		const smoothed = catmullRom(points, 8);
-		const metrePoints = smoothed.map((p) => fromTrack(p.S, p.u));
 
 		let maxSecondDiff = 0;
-		for (let i = 2; i < metrePoints.length; i++) {
+		for (let i = 2; i < smoothed.length; i++) {
 			const firstDiff = {
-				x: metrePoints[i].x - metrePoints[i - 1].x,
-				y: metrePoints[i].y - metrePoints[i - 1].y
+				x: smoothed[i].x - smoothed[i - 1].x,
+				y: smoothed[i].y - smoothed[i - 1].y
 			};
 			const prevFirstDiff = {
-				x: metrePoints[i - 1].x - metrePoints[i - 2].x,
-				y: metrePoints[i - 1].y - metrePoints[i - 2].y
+				x: smoothed[i - 1].x - smoothed[i - 2].x,
+				y: smoothed[i - 1].y - smoothed[i - 2].y
 			};
 			const secondDiff = Math.abs(firstDiff.x - prevFirstDiff.x + firstDiff.y - prevFirstDiff.y);
 			maxSecondDiff = Math.max(maxSecondDiff, secondDiff);
@@ -110,9 +113,9 @@ describe('pathMath — buildArcLength', () => {
 
 		let manualSum = 0;
 		for (let i = 1; i < points.length; i++) {
-			const m0 = fromTrack(points[i - 1].S, points[i - 1].u);
-			const m1 = fromTrack(points[i].S, points[i].u);
-			const dist = Math.sqrt((m1.x - m0.x) ** 2 + (m1.y - m0.y) ** 2);
+			const dist = Math.sqrt(
+				(points[i].x - points[i - 1].x) ** 2 + (points[i].y - points[i - 1].y) ** 2
+			);
 			manualSum += dist;
 		}
 
@@ -132,16 +135,16 @@ describe('pathMath — sampleAtArcLength', () => {
 		const points = [tp(0, 0.5), tp(1, 0.5), tp(2, 0.5)];
 		const path = buildArcLength(points);
 		const sampled = sampleAtArcLength(path, 0);
-		expect(sampled.S).toBeCloseTo(points[0].S, 6);
-		expect(sampled.u).toBeCloseTo(points[0].u, 6);
+		expect(sampled.x).toBeCloseTo(points[0].x, 6);
+		expect(sampled.y).toBeCloseTo(points[0].y, 6);
 	});
 
 	it('d=total returns last point', () => {
 		const points = [tp(0, 0.5), tp(1, 0.5), tp(2, 0.5)];
 		const path = buildArcLength(points);
 		const sampled = sampleAtArcLength(path, path.total);
-		expect(sampled.S).toBeCloseTo(points[points.length - 1].S, 6);
-		expect(sampled.u).toBeCloseTo(points[points.length - 1].u, 6);
+		expect(sampled.x).toBeCloseTo(points[points.length - 1].x, 6);
+		expect(sampled.y).toBeCloseTo(points[points.length - 1].y, 6);
 	});
 
 	it('produces uniform-speed sampling', () => {
@@ -152,7 +155,7 @@ describe('pathMath — sampleAtArcLength', () => {
 		for (let i = 0; i <= 10; i++) {
 			const d = (i / 10) * path.total;
 			const sampled = sampleAtArcLength(path, d);
-			metrePositions.push(fromTrack(sampled.S, sampled.u));
+			metrePositions.push({ x: sampled.x, y: sampled.y });
 		}
 
 		const distances: number[] = [];
@@ -174,16 +177,16 @@ describe('pathMath — sampleAtArcLength', () => {
 		const path = buildArcLength(points);
 		const under = sampleAtArcLength(path, -1);
 		const over = sampleAtArcLength(path, path.total * 2);
-		expect(under.S).toBeCloseTo(points[0].S, 6);
-		expect(over.S).toBeCloseTo(points[points.length - 1].S, 6);
+		expect(under.x).toBeCloseTo(points[0].x, 6);
+		expect(over.x).toBeCloseTo(points[points.length - 1].x, 6);
 	});
 
 	it('handles single-point path', () => {
 		const points = [tp(0, 0.5)];
 		const path = buildArcLength(points);
 		const sampled = sampleAtArcLength(path, 0.5);
-		expect(sampled.S).toBe(points[0].S);
-		expect(sampled.u).toBe(points[0].u);
+		expect(sampled.x).toBe(points[0].x);
+		expect(sampled.y).toBe(points[0].y);
 	});
 });
 
@@ -200,7 +203,7 @@ describe('pathMath — pathTangentAt', () => {
 		const points = [tp(0, 0.5), tp(1, 0.5), tp(2, 0.5)];
 		const path = buildArcLength(points);
 		const tangent = pathTangentAt(path, 0.5);
-		const trackTangent = tangentAt(points[1].S);
+		const trackTangent = trackLayer.tangentAt(points[1]);
 		const dot = tangent.x * trackTangent.x + tangent.y * trackTangent.y;
 		expect(dot).toBeGreaterThan(0);
 	});
@@ -219,8 +222,13 @@ describe('pathMath — seam handling', () => {
 		const points = [tp(LAP_LENGTH - 1, 0.5), tp(LAP_LENGTH - 0.5, 0.5), tp(0, 0.5), tp(0.5, 0.5)];
 		const path = buildArcLength(points);
 		const midSample = sampleAtArcLength(path, path.total / 2);
-		expect(midSample.S).toBeGreaterThanOrEqual(0);
-		expect(midSample.S).toBeLessThan(LAP_LENGTH);
+		// A planar sample has no seam: it is always a finite, valid point whose
+		// track-space S (if asked) wraps into [0, LAP_LENGTH).
+		expect(Number.isFinite(midSample.x)).toBe(true);
+		expect(Number.isFinite(midSample.y)).toBe(true);
+		const midS = toTrack({ x: midSample.x, y: midSample.y }).s;
+		expect(midS).toBeGreaterThanOrEqual(0);
+		expect(midS).toBeLessThan(LAP_LENGTH);
 	});
 });
 

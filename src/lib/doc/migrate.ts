@@ -1,8 +1,17 @@
-import type { BoardDoc, Entity, CapturedClip } from './types';
+import type {
+	BoardDoc,
+	Entity,
+	CapturedClip,
+	EntityPose,
+	EntityPath,
+	Annotation,
+	Step,
+	PlanarPoint
+} from './types';
 import { CURRENT_VERSION } from './types';
 import type { KonvaBoardState } from '$lib/stores/konvaBoardState';
 import type { TimelineProject } from '$lib/recording/timeline/types';
-import { toTrack, fromTrack } from '$lib/track/trackFrame';
+import { fromTrack } from '$lib/track/trackFrame';
 import { TRACK_SCALE } from '$lib/constants';
 import { createEmptyDoc } from './types';
 
@@ -18,8 +27,10 @@ function finiteOrZero(v: number | null | undefined): number {
 }
 
 /**
- * Migrate boardState v3 (pixel-relative positions) to BoardDoc v1 (track space S, u).
- * The viewport center is assumed to be at (0, 0) in the relative coordinate system.
+ * Migrate boardState v3 (pixel-relative positions) to BoardDoc v7 (planar
+ * world metres). The viewport center is assumed to be at (0, 0) in the relative
+ * coordinate system, so a pixel-relative `(rx, ry)` maps to world metres
+ * `(rx / TRACK_SCALE, ry / TRACK_SCALE)` directly — no track conversion.
  */
 export function migrateBoardState(state: KonvaBoardState): BoardDoc {
 	const doc = createEmptyDoc();
@@ -29,21 +40,18 @@ export function migrateBoardState(state: KonvaBoardState): BoardDoc {
 	// Convert team players
 	for (const player of state.teamPlayers) {
 		const id = player.id || crypto.randomUUID();
-		// Relative position is already relative to center, so we can use it directly as meters
-		// by dividing by TRACK_SCALE
-		const meterPos = {
-			x: finiteOrZero(player.relative.x) / TRACK_SCALE,
-			y: finiteOrZero(player.relative.y) / TRACK_SCALE
-		};
-		const { s, u } = toTrack(meterPos);
+		// Relative position is already relative to center, so we can use it
+		// directly as metres by dividing by TRACK_SCALE.
+		const x = finiteOrZero(player.relative.x) / TRACK_SCALE;
+		const y = finiteOrZero(player.relative.y) / TRACK_SCALE;
 
 		doc.entities.push({
 			id,
 			kind: 'skater',
 			team: player.team,
 			role: player.role,
-			S: s,
-			u,
+			x,
+			y,
 			heading: 0
 		});
 	}
@@ -51,18 +59,15 @@ export function migrateBoardState(state: KonvaBoardState): BoardDoc {
 	// Convert skating officials
 	for (const official of state.skatingOfficials) {
 		const id = official.id || crypto.randomUUID();
-		const meterPos = {
-			x: finiteOrZero(official.relative.x) / TRACK_SCALE,
-			y: finiteOrZero(official.relative.y) / TRACK_SCALE
-		};
-		const { s, u } = toTrack(meterPos);
+		const x = finiteOrZero(official.relative.x) / TRACK_SCALE;
+		const y = finiteOrZero(official.relative.y) / TRACK_SCALE;
 
 		doc.entities.push({
 			id,
 			kind: 'official',
 			role: official.role,
-			S: s,
-			u,
+			x,
+			y,
 			heading: 0
 		});
 	}
@@ -88,14 +93,13 @@ export function migrateTimelineProject(project: TimelineProject): CapturedClip {
 }
 
 /**
- * Convert a BoardDoc entity back to pixel-relative position for rendering.
- * This is the inverse of the migration process.
+ * Convert a BoardDoc entity to pixel-relative position for rendering.
+ * Positions are already planar metres, so this is a direct scale.
  */
 export function entityToPixelRelative(entity: Entity): { x: number; y: number } {
-	const meterPos = fromTrack(entity.S, entity.u);
 	return {
-		x: meterPos.x * TRACK_SCALE,
-		y: meterPos.y * TRACK_SCALE
+		x: entity.x * TRACK_SCALE,
+		y: entity.y * TRACK_SCALE
 	};
 }
 
@@ -117,6 +121,11 @@ export function entityToPixelRelative(entity: Entity): { x: number; y: number } 
  *    are relabelled to `'pinned'` (behaviour unchanged).
  *  - v5 → v6: added optional `annotations: Annotation[]` and `paths: EntityPath[]` to `Step`
  *    (geometry in track space). Absent means none, matching pre-v6 behaviour.
+ *  - v6 → v7: the canonical stored coordinate system moved from track space
+ *    `(S, u)` to planar world metres `(x, y)`. Every stored pose (`Entity`/
+ *    `EntityPose`), path point and annotation geometry is converted via
+ *    `fromTrack(S, u)`; heading modes and metadata are unchanged. `(S, u)`
+ *    becomes a derived view computed on demand by the track layer.
  */
 export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 	let next = doc;
@@ -225,6 +234,92 @@ export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 		next.version = 6;
 	}
 
+	if (next.version < 7) {
+		next = migrateV6ToV7(next);
+		next.version = 7;
+	}
+
 	next.version = CURRENT_VERSION;
 	return next;
+}
+
+/**
+ * v6 → v7: convert every stored `(S, u)` to planar `(x, y)` metres via
+ * `fromTrack`. Applies to board entities, authored step poses, movement-path
+ * points and annotation geometry. This is a near-exact inverse for in-bounds
+ * poses (the realistic case); see the `toTrack` singularity note for the
+ * deep-infield caveat. Non-finite coordinates are coerced to 0.
+ */
+function migrateV6ToV7(doc: BoardDoc): BoardDoc {
+	const posFromTrack = (S: number | undefined, u: number | undefined): { x: number; y: number } => {
+		const s = typeof S === 'number' && Number.isFinite(S) ? S : 0;
+		const lane = typeof u === 'number' && Number.isFinite(u) ? u : 0.5;
+		const m = fromTrack(s, lane);
+		return { x: Number.isFinite(m.x) ? m.x : 0, y: Number.isFinite(m.y) ? m.y : 0 };
+	};
+
+	const convertPose = <P extends { S?: number; u?: number; x?: number; y?: number }>(
+		p: P
+	): P & { x: number; y: number } => {
+		// Idempotent: a pose already in v7 form (has x/y, no S/u) is left as-is.
+		if ((p.x !== undefined || p.y !== undefined) && p.S === undefined && p.u === undefined) {
+			return { ...p, x: p.x ?? 0, y: p.y ?? 0 } as P & { x: number; y: number };
+		}
+		const { x, y } = posFromTrack(p.S, p.u);
+		// Strip the legacy S/u keys (keep all other fields), then add x/y.
+		const rest = { ...p } as Record<string, unknown>;
+		delete rest.S;
+		delete rest.u;
+		return { ...(rest as P), x, y };
+	};
+
+	// A legacy (v6) geometry point may carry `S`/`u`; an already-planar point
+	// carries `x`/`y`. Detect by shape (via unknown) and convert as needed.
+	const pointToPlanar = (pt: PlanarPoint): PlanarPoint => {
+		const raw = pt as unknown as { x?: number; y?: number; S?: number; u?: number };
+		if (raw.x !== undefined && raw.S === undefined) {
+			return { x: raw.x, y: raw.y ?? 0 };
+		}
+		return posFromTrack(raw.S, raw.u);
+	};
+
+	const convertPath = (path: EntityPath): EntityPath => ({
+		...path,
+		points: path.points.map(pointToPlanar)
+	});
+
+	const convertAnn = (ann: Annotation): Annotation => {
+		if (ann.kind === 'pen' || ann.kind === 'zone') {
+			return {
+				...ann,
+				points: ann.points.map(pointToPlanar)
+			} as Annotation;
+		}
+		if (ann.kind === 'arrow' || ann.kind === 'gap') {
+			return {
+				...ann,
+				from: pointToPlanar(ann.from),
+				to: pointToPlanar(ann.to)
+			} as Annotation;
+		}
+		// label
+		return { ...ann, at: pointToPlanar(ann.at) } as Annotation;
+	};
+
+	const convertStep = (step: Step): Step => {
+		const entities = step.entities.map((e) => convertPose(e as EntityPose) as EntityPose);
+		const out: Step = { ...step, entities };
+		if (step.paths) out.paths = step.paths.map(convertPath);
+		if (step.annotations) out.annotations = step.annotations.map(convertAnn);
+		return out;
+	};
+
+	const convertClip = (clip: BoardDoc['clips'][number]): BoardDoc['clips'][number] =>
+		clip.kind === 'authored' ? { ...clip, steps: clip.steps.map(convertStep) } : clip;
+
+	return {
+		...doc,
+		entities: doc.entities.map((e) => convertPose(e as Entity) as Entity),
+		clips: doc.clips.map(convertClip)
+	};
 }

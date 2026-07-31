@@ -33,7 +33,7 @@ import type { Snapshot, TimelineSample } from '$lib/recording/timeline/types';
 import { boardDoc } from '$lib/doc/store';
 import { poseStore } from '$lib/doc/poses';
 import { migrateBoardState } from '$lib/doc/migrate';
-import { fromTrack, toTrack, tangentAt } from '$lib/track/trackFrame';
+import { trackLayer } from '$lib/track/trackLayer';
 import { motionHeading } from '$lib/track/heading';
 import { tweenSteps, easeInOutCubic, MAX_PATH_LENGTH_M, MAX_PATH_POINTS } from '$lib/track/tween';
 import { buildArcLength, catmullRom, simplify, clampNodeToBudget } from '$lib/track/pathMath';
@@ -44,7 +44,7 @@ import type {
 	Step,
 	Annotation,
 	EntityPath,
-	TrackPoint
+	PlanarPoint
 } from '$lib/doc/types';
 import type { PathFrame } from '$lib/recording/timeline/types';
 import { setEntityPath, addAnnotation, deletePath } from '$lib/doc/clipOps';
@@ -138,8 +138,9 @@ export class KonvaGame {
 
 	/**
 	 * Cached last sample heading map for captured-clip motion-derived heading (P4.5).
+	 * Keyed by entity id; positions are planar world metres (center-relative).
 	 */
-	private capturedPrevS: Map<string, number> = new Map();
+	private capturedPrevPos: Map<string, PlanarPoint> = new Map();
 	private capturedLastHeading: Map<string, number> = new Map();
 
 	/**
@@ -153,7 +154,7 @@ export class KonvaGame {
 	 * Resets the captured-clip heading state (called on replay start/seek-large-jump).
 	 */
 	private resetCapturedHeadingState(): void {
-		this.capturedPrevS.clear();
+		this.capturedPrevPos.clear();
 		this.capturedLastHeading.clear();
 	}
 
@@ -321,9 +322,9 @@ export class KonvaGame {
 			}
 		});
 
-		// Drawing handler for annotation/path gestures
-		let drawingPoints: { S: number; u: number }[] = [];
-		let firstAnchor: { S: number; u: number } | null = null;
+		// Drawing handler for annotation/path gestures (planar world metres)
+		let drawingPoints: PlanarPoint[] = [];
+		let firstAnchor: PlanarPoint | null = null;
 		let previewLine: Konva.Line | null = null;
 		let rafId: number | null = null;
 		let pathLengthAccum = 0; // running arc-length for path cap enforcement
@@ -340,7 +341,7 @@ export class KonvaGame {
 			const pos = this.stage.getPointerPosition();
 			if (!pos) return;
 
-			const trackPos = this.pointerToTrack(pos);
+			const planePos = this.pointerToPlane(pos);
 
 			if (tool === 'drawPath') {
 				const selectedId = get(selectedEntityId);
@@ -355,20 +356,18 @@ export class KonvaGame {
 				const entityPose = step?.entities.find((en) => en.id === selectedId);
 				if (entityPose) {
 					drawingPoints = [
-						{ S: entityPose.S, u: entityPose.u },
-						{ S: trackPos.s, u: trackPos.u }
+						{ x: entityPose.x, y: entityPose.y },
+						{ x: planePos.x, y: planePos.y }
 					];
 					// Account for the initial straight segment in the length budget.
-					const a = fromTrack(entityPose.S, entityPose.u);
-					const b = fromTrack(trackPos.s, trackPos.u);
-					pathLengthAccum = Math.hypot(b.x - a.x, b.y - a.y);
+					pathLengthAccum = Math.hypot(planePos.x - entityPose.x, planePos.y - entityPose.y);
 				} else {
-					drawingPoints = [{ S: trackPos.s, u: trackPos.u }];
+					drawingPoints = [{ x: planePos.x, y: planePos.y }];
 				}
 			} else if (tool === 'pen' || tool === 'zone') {
-				drawingPoints = [{ S: trackPos.s, u: trackPos.u }];
+				drawingPoints = [{ x: planePos.x, y: planePos.y }];
 			} else if (tool === 'arrow' || tool === 'gap') {
-				firstAnchor = { S: trackPos.s, u: trackPos.u };
+				firstAnchor = { x: planePos.x, y: planePos.y };
 			} else if (tool === 'label') {
 				const text = prompt('Label text:');
 				if (text && text.trim()) {
@@ -376,7 +375,7 @@ export class KonvaGame {
 					this.createAnnotation({
 						id: crypto.randomUUID(),
 						kind: 'label',
-						at: { S: trackPos.s, u: trackPos.u },
+						at: { x: planePos.x, y: planePos.y },
 						text: text.trim(),
 						style: { color: '#e11d48', width: 2 }
 					});
@@ -390,7 +389,7 @@ export class KonvaGame {
 			if (tool === 'pen' || tool === 'drawPath' || tool === 'zone') {
 				previewLine = new Konva.Line({
 					points: drawingPoints.flatMap((pt) => {
-						const p = this.projectTrackPoint(pt.S, pt.u);
+						const p = this.projectPoint(pt.x, pt.y);
 						return [p.x, p.y];
 					}),
 					stroke: tool === 'drawPath' ? this.trailColorFor(get(selectedEntityId) ?? '') : '#e11d48',
@@ -415,7 +414,7 @@ export class KonvaGame {
 				const pos = this.stage.getPointerPosition();
 				if (!pos) return;
 
-				const trackPos = this.pointerToTrack(pos);
+				const planePos = this.pointerToPlane(pos);
 
 				if (tool === 'pen' || tool === 'drawPath' || tool === 'zone') {
 					// Enforce path-length cap for movement paths. Don't early-return
@@ -423,9 +422,7 @@ export class KonvaGame {
 					let acceptPoint = true;
 					if (tool === 'drawPath' && drawingPoints.length > 0) {
 						const last = drawingPoints[drawingPoints.length - 1];
-						const a = fromTrack(last.S, last.u);
-						const b = fromTrack(trackPos.s, trackPos.u);
-						const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+						const segLen = Math.hypot(planePos.x - last.x, planePos.y - last.y);
 						if (pathLengthAccum + segLen > MAX_PATH_LENGTH_M) {
 							acceptPoint = false;
 						} else {
@@ -434,12 +431,12 @@ export class KonvaGame {
 					}
 
 					if (acceptPoint) {
-						drawingPoints.push({ S: trackPos.s, u: trackPos.u });
+						drawingPoints.push({ x: planePos.x, y: planePos.y });
 					}
 
 					// Update preview
 					if (previewLine) {
-						const projectedPoints = drawingPoints.map((pt) => this.projectTrackPoint(pt.S, pt.u));
+						const projectedPoints = drawingPoints.map((pt) => this.projectPoint(pt.x, pt.y));
 						previewLine.points(projectedPoints.flatMap((p) => [p.x, p.y]));
 						if (tool === 'zone') {
 							previewLine.closed(true);
@@ -457,7 +454,7 @@ export class KonvaGame {
 					const layer = this.annotationLayer;
 					layer.destroyChildren(); // Clear previous preview
 
-					const firstPx = this.projectTrackPoint(firstAnchor!.S, firstAnchor!.u);
+					const firstPx = this.projectPoint(firstAnchor!.x, firstAnchor!.y);
 					const currentPx = { x: pos.x, y: pos.y };
 
 					new Konva.Line({
@@ -528,13 +525,13 @@ export class KonvaGame {
 			} else if ((tool === 'arrow' || tool === 'gap') && firstAnchor) {
 				const pos = this.stage.getPointerPosition();
 				if (pos) {
-					const trackPos = this.pointerToTrack(pos);
+					const planePos = this.pointerToPlane(pos);
 
 					this.createAnnotation({
 						id: crypto.randomUUID(),
 						kind: tool,
 						from: firstAnchor,
-						to: { S: trackPos.s, u: trackPos.u },
+						to: { x: planePos.x, y: planePos.y },
 						style: { color: '#e11d48', width: 2 }
 					});
 				}
@@ -777,7 +774,7 @@ export class KonvaGame {
 		}
 
 		// Step overlays (paths, annotations, onion skin) are drawn with absolute
-		// pixel coordinates baked in at render time via projectTrackPoint(), which
+		// pixel coordinates baked in at render time via projectPoint(), which
 		// is anchored to the stage center (width/2, height/2). The track + players
 		// were just rebuilt around the new center, so re-project these overlays too
 		// — otherwise paths stay floating at their old pixel positions instead of
@@ -1266,8 +1263,7 @@ export class KonvaGame {
 		const skatingOfficials: Snapshot['skatingOfficials'] = [];
 
 		for (const { entity, pose } of poseStore.effectiveAll()) {
-			const meterPos = fromTrack(pose.S, pose.u);
-			const relative = { x: meterPos.x * TRACK_SCALE, y: meterPos.y * TRACK_SCALE };
+			const relative = { x: pose.x * TRACK_SCALE, y: pose.y * TRACK_SCALE };
 
 			if (entity.kind === 'skater') {
 				teamPlayers.push({
@@ -1475,7 +1471,7 @@ export class KonvaGame {
 	 */
 	applyAuthoredPoses(poses: EntityPose[]): void {
 		for (const pose of poses) {
-			poseStore.setLive(pose.id, { S: pose.S, u: pose.u, heading: pose.heading });
+			poseStore.setLive(pose.id, { x: pose.x, y: pose.y, heading: pose.heading });
 		}
 		this.playerManager.applyEffectivePoses();
 		this.packManager.determinePack();
@@ -1503,8 +1499,8 @@ export class KonvaGame {
 
 		const currentPoses: EntityPose[] = poseStore.effectiveAll().map(({ entity, pose }) => ({
 			id: entity.id,
-			S: pose.S,
-			u: pose.u,
+			x: pose.x,
+			y: pose.y,
 			heading: pose.heading
 		}));
 
@@ -1574,9 +1570,8 @@ export class KonvaGame {
 		const center = this.centerPx();
 		const zoom = this.stage.scaleX();
 		for (const pose of poses) {
-			const meter = fromTrack(pose.S, pose.u);
-			const x = center.x + meter.x * TRACK_SCALE;
-			const y = center.y + meter.y * TRACK_SCALE;
+			const x = center.x + pose.x * TRACK_SCALE;
+			const y = center.y + pose.y * TRACK_SCALE;
 			let line = this.trails.get(pose.id);
 			if (!line) {
 				line = new Konva.Line({
@@ -1772,9 +1767,8 @@ export class KonvaGame {
 			if (!pose) return;
 
 			const center = this.getStageCenter();
-			const meterPos = fromTrack(pose.S, pose.u);
-			const cx = center.x + meterPos.x * TRACK_SCALE;
-			const cy = center.y + meterPos.y * TRACK_SCALE;
+			const cx = center.x + pose.x * TRACK_SCALE;
+			const cy = center.y + pose.y * TRACK_SCALE;
 
 			// Use the knob's own (freely dragged) position rather than the raw
 			// pointer, so the heading reflects where the knob actually is.
@@ -1805,8 +1799,8 @@ export class KonvaGame {
 			const kx = this.rotationHandle.x();
 			const ky = this.rotationHandle.y();
 			const angle = Math.atan2(
-				ky - (center.y + fromTrack(pose.S, pose.u).y * TRACK_SCALE),
-				kx - (center.x + fromTrack(pose.S, pose.u).x * TRACK_SCALE)
+				ky - (center.y + pose.y * TRACK_SCALE),
+				kx - (center.x + pose.x * TRACK_SCALE)
 			);
 			const mode = entity?.headingMode;
 			if (mode === 'pinned') {
@@ -1819,7 +1813,7 @@ export class KonvaGame {
 				poseStore.commitGesture('Rotate', { headingMode: 'fixed' });
 			} else {
 				// Automatic/relative: store the rotation as an offset from tangent.
-				const t = tangentAt(pose.S);
+				const t = trackLayer.tangentAt({ x: pose.x, y: pose.y });
 				const delta = normalizeAngle(angle - Math.atan2(t.y, t.x));
 				poseStore.commitGesture('Rotate', { headingMode: 'relative', headingDelta: delta });
 			}
@@ -1862,7 +1856,7 @@ export class KonvaGame {
 			poseStore.commitGesture('Lock direction', { headingMode: 'fixed' });
 		} else {
 			// Relative: keep the current facing as an offset from the tangent.
-			const t = tangentAt(pose.S);
+			const t = trackLayer.tangentAt({ x: pose.x, y: pose.y });
 			const delta = normalizeAngle(heading - Math.atan2(t.y, t.x));
 			poseStore.commitGesture('Auto direction', { headingMode: 'relative', headingDelta: delta });
 		}
@@ -1919,9 +1913,8 @@ export class KonvaGame {
 		}
 
 		const center = this.getStageCenter();
-		const meterPos = fromTrack(pose.S, pose.u);
-		const cx = center.x + meterPos.x * TRACK_SCALE;
-		const cy = center.y + meterPos.y * TRACK_SCALE;
+		const cx = center.x + pose.x * TRACK_SCALE;
+		const cy = center.y + pose.y * TRACK_SCALE;
 
 		const mode: HeadingMode = entity.headingMode ?? 'relative';
 		const pinned = mode === 'pinned' && !!entity.lookAt;
@@ -1932,7 +1925,7 @@ export class KonvaGame {
 			// Knob sits on the fixed look-at map point; skater faces toward it.
 			hx = center.x + entity.lookAt!.x * TRACK_SCALE;
 			hy = center.y + entity.lookAt!.y * TRACK_SCALE;
-			heading = Math.atan2(entity.lookAt!.y - meterPos.y, entity.lookAt!.x - meterPos.x);
+			heading = Math.atan2(entity.lookAt!.y - pose.y, entity.lookAt!.x - pose.x);
 		} else {
 			// Relative/fixed/auto: knob orbits the skater along the resolved
 			// facing (tangent+delta, or the frozen absolute angle).
@@ -1975,45 +1968,46 @@ export class KonvaGame {
 	}
 
 	/**
-	 * Converts a stage-space pointer position to track coordinates (S, u).
+	 * Converts a stage-space pointer position to planar world metres. The
+	 * canonical stored coordinate system is planar, so drawing/storing a point
+	 * needs no track conversion — `(S, u)` is derived on demand elsewhere.
 	 *
 	 * `stage.getPointerPosition()` returns the pointer relative to the stage's
 	 * top-left in raw viewport pixels — it does NOT undo the stage's own
 	 * zoom/pan transform (stage.scale / stage.position, set by fitToTrack,
-	 * wheel/pinch zoom, and panning). Undo that transform first so the track
+	 * wheel/pinch zoom, and panning). Undo that transform first so the planar
 	 * coordinate matches what is actually under the cursor at any zoom/pan.
 	 * Without this, a zoomed/panned board places drawn points off the cursor
 	 * (radially toward the transform's origin), which reads as a consistent
 	 * angular offset. Mirrors the inverse transform already used in `zoomAt`.
 	 */
-	private pointerToTrack(pos: { x: number; y: number }): { s: number; u: number } {
+	private pointerToPlane(pos: { x: number; y: number }): PlanarPoint {
 		const center = this.getStageCenter();
 		const scale = this.stage.scaleX();
 		const contentX = (pos.x - this.stage.x()) / scale;
 		const contentY = (pos.y - this.stage.y()) / scale;
-		return toTrack({
+		return {
 			x: (contentX - center.x) / TRACK_SCALE,
 			y: (contentY - center.y) / TRACK_SCALE
-		});
+		};
 	}
 
 	/**
-	 * Projects a track-space (S,u) point to stage pixel coordinates.
+	 * Projects a planar world-metre point to stage pixel coordinates.
 	 * Used by path/annotation/onion-skin renderers.
 	 */
-	private projectTrackPoint(S: number, u: number): { x: number; y: number } {
+	private projectPoint(x: number, y: number): { x: number; y: number } {
 		const center = this.getStageCenter();
-		const m = fromTrack(S, u);
-		return { x: center.x + m.x * TRACK_SCALE, y: center.y + m.y * TRACK_SCALE };
+		return { x: center.x + x * TRACK_SCALE, y: center.y + y * TRACK_SCALE };
 	}
 
 	/**
-	 * Smooths track-space points via Catmull-Rom and projects them to stage
+	 * Smooths planar points via Catmull-Rom and projects them to stage
 	 * pixels. Returns null if the arc length is zero (degenerate path).
 	 */
-	private smoothProject(points: TrackPoint[]): { x: number; y: number }[] | null {
+	private smoothProject(points: PlanarPoint[]): { x: number; y: number }[] | null {
 		if (buildArcLength(points).total === 0) return null;
-		return catmullRom(points, 8).map((pt) => this.projectTrackPoint(pt.S, pt.u));
+		return catmullRom(points, 8).map((pt) => this.projectPoint(pt.x, pt.y));
 	}
 
 	/**
@@ -2021,15 +2015,18 @@ export class KonvaGame {
 	 * publishes them to the pose store. Shared by both replay code paths.
 	 */
 	private applySampleOverrides(sample: TimelineSample): void {
-		const overrides: Array<[string, { S: number; u: number; heading: number }]> = [];
+		const overrides: Array<[string, { x: number; y: number; heading: number }]> = [];
 		const process = (id: string, relative: { x: number; y: number }): void => {
-			const trackPos = toTrack({ x: relative.x / TRACK_SCALE, y: relative.y / TRACK_SCALE });
-			const prevS = this.capturedPrevS.get(id) ?? trackPos.s;
+			const pos: PlanarPoint = {
+				x: relative.x / TRACK_SCALE,
+				y: relative.y / TRACK_SCALE
+			};
+			const prev = this.capturedPrevPos.get(id) ?? pos;
 			const fallback = this.capturedLastHeading.get(id) ?? 0;
-			const heading = motionHeading(prevS, trackPos.s, fallback, trackPos.u);
-			this.capturedPrevS.set(id, trackPos.s);
+			const heading = motionHeading(prev, pos, fallback);
+			this.capturedPrevPos.set(id, pos);
 			this.capturedLastHeading.set(id, heading);
-			overrides.push([id, { S: trackPos.s, u: trackPos.u, heading }]);
+			overrides.push([id, { x: pos.x, y: pos.y, heading }]);
 		};
 		for (const tp of sample.teamPlayers) if (tp.id) process(tp.id, tp.relative);
 		for (const so of sample.skatingOfficials) if (so.id) process(so.id, so.relative);
@@ -2065,7 +2062,7 @@ export class KonvaGame {
 		const strokeWidth = Math.max(2, (PLAYER_RADIUS * 0.4) / this.stage.scaleX());
 		const ghostStrokeWidth = Math.max(1.5, (PLAYER_RADIUS * 0.3) / this.stage.scaleX());
 
-		const addLine = (points: TrackPoint[], opts: Konva.LineConfig): void => {
+		const addLine = (points: PlanarPoint[], opts: Konva.LineConfig): void => {
 			const projected = this.smoothProject(points);
 			if (!projected) return;
 			this.pathLayer.add(
@@ -2111,7 +2108,7 @@ export class KonvaGame {
 		const renderPoints = path.points.map((p) => ({ ...p }));
 		const startPose = step!.entities.find((e) => e.id === entityId);
 		if (startPose && renderPoints.length > 0) {
-			renderPoints[0] = { S: startPose.S, u: startPose.u };
+			renderPoints[0] = { x: startPose.x, y: startPose.y };
 		}
 
 		const projected = this.smoothProject(renderPoints);
@@ -2184,7 +2181,7 @@ export class KonvaGame {
 			const startPose = step.entities.find((e) => e.id === path.entityId);
 			const renderPoints = path.points.map((p) => ({ ...p }));
 			if (startPose && renderPoints.length > 0) {
-				renderPoints[0] = { S: startPose.S, u: startPose.u };
+				renderPoints[0] = { x: startPose.x, y: startPose.y };
 			}
 
 			const projectedPoints = this.smoothProject(renderPoints);
@@ -2215,7 +2212,7 @@ export class KonvaGame {
 				// incident segment(s) change during a drag, so the budget is
 				// MAX_PATH_LENGTH_M minus the length used by every other segment — a
 				// node can never be dragged past the speed cap.
-				const metrePts = renderPoints.map((p) => fromTrack(p.S, p.u));
+				const metrePts = renderPoints.map((p) => ({ x: p.x, y: p.y }));
 				let totalLen = 0;
 				for (let k = 0; k < metrePts.length - 1; k++) {
 					totalLen += Math.hypot(
@@ -2226,7 +2223,7 @@ export class KonvaGame {
 
 				for (let i = 1; i < path.points.length; i++) {
 					const pt = renderPoints[i];
-					const px = this.projectTrackPoint(pt.S, pt.u);
+					const px = this.projectPoint(pt.x, pt.y);
 					const handleRadius = Math.max(8, 10 / this.stage.scaleX());
 
 					// Previous/next node in metres; the endpoint (last point) has no
@@ -2284,7 +2281,7 @@ export class KonvaGame {
 				// Delete affordance (small X button)
 				if (path.points.length > 1) {
 					const lastPt = renderPoints[renderPoints.length - 1];
-					const lastPx = this.projectTrackPoint(lastPt.S, lastPt.u);
+					const lastPx = this.projectPoint(lastPt.x, lastPt.y);
 					const deleteSize = 12;
 
 					const deleteBtn = new Konva.Group({ name: 'pathDelete', listening: true });
@@ -2354,7 +2351,7 @@ export class KonvaGame {
 		for (const ann of step.annotations) {
 			switch (ann.kind) {
 				case 'pen': {
-					const projected = ann.points.map((pt) => this.projectTrackPoint(pt.S, pt.u));
+					const projected = ann.points.map((pt) => this.projectPoint(pt.x, pt.y));
 					const points = projected.flatMap((p) => [p.x, p.y]);
 					new Konva.Line({
 						points,
@@ -2369,8 +2366,8 @@ export class KonvaGame {
 					break;
 				}
 				case 'arrow': {
-					const fromPx = this.projectTrackPoint(ann.from.S, ann.from.u);
-					const toPx = this.projectTrackPoint(ann.to.S, ann.to.u);
+					const fromPx = this.projectPoint(ann.from.x, ann.from.y);
+					const toPx = this.projectPoint(ann.to.x, ann.to.y);
 					const dx = toPx.x - fromPx.x;
 					const dy = toPx.y - fromPx.y;
 					const angle = Math.atan2(dy, dx);
@@ -2410,7 +2407,7 @@ export class KonvaGame {
 					break;
 				}
 				case 'zone': {
-					const projected = ann.points.map((pt) => this.projectTrackPoint(pt.S, pt.u));
+					const projected = ann.points.map((pt) => this.projectPoint(pt.x, pt.y));
 					const points = projected.flatMap((p) => [p.x, p.y]);
 					new Konva.Line({
 						points,
@@ -2428,7 +2425,7 @@ export class KonvaGame {
 					break;
 				}
 				case 'label': {
-					const atPx = this.projectTrackPoint(ann.at.S, ann.at.u);
+					const atPx = this.projectPoint(ann.at.x, ann.at.y);
 					const fontSize = Math.max(12, 14 / this.stage.scaleX());
 
 					// Backdrop for legibility
@@ -2458,8 +2455,8 @@ export class KonvaGame {
 					break;
 				}
 				case 'gap': {
-					const fromPx = this.projectTrackPoint(ann.from.S, ann.from.u);
-					const toPx = this.projectTrackPoint(ann.to.S, ann.to.u);
+					const fromPx = this.projectPoint(ann.from.x, ann.from.y);
+					const toPx = this.projectPoint(ann.to.x, ann.to.y);
 					const dx = toPx.x - fromPx.x;
 					const dy = toPx.y - fromPx.y;
 					const angle = Math.atan2(dy, dx);
@@ -2534,9 +2531,8 @@ export class KonvaGame {
 
 			for (const pose of step.entities) {
 				const center = this.getStageCenter();
-				const meterPos = fromTrack(pose.S, pose.u);
-				const cx = center.x + meterPos.x * TRACK_SCALE;
-				const cy = center.y + meterPos.y * TRACK_SCALE;
+				const cx = center.x + pose.x * TRACK_SCALE;
+				const cy = center.y + pose.y * TRACK_SCALE;
 
 				const color = this.trailColorFor(pose.id);
 
@@ -2662,11 +2658,7 @@ export class KonvaGame {
 	/**
 	 * Helper to set an entity path on the active step.
 	 */
-	private setEntityPath(
-		stepId: string,
-		entityId: string,
-		points: { S: number; u: number }[]
-	): void {
+	private setEntityPath(stepId: string, entityId: string, points: PlanarPoint[]): void {
 		setEntityPath(stepId, entityId, points);
 	}
 
@@ -2679,12 +2671,12 @@ export class KonvaGame {
 		if (!handles || handles.length === 0) return;
 
 		// Start from stored points so index 0 (entity pose) is preserved.
-		const newPoints: { S: number; u: number }[] = path.points.map((p) => ({ ...p }));
+		const newPoints: PlanarPoint[] = path.points.map((p) => ({ ...p }));
 
 		// Inject the entity's current pose as the first point.
 		const entityPose = step.entities.find((e) => e.id === path.entityId);
 		if (entityPose && newPoints.length > 0) {
-			newPoints[0] = { S: entityPose.S, u: entityPose.u };
+			newPoints[0] = { x: entityPose.x, y: entityPose.y };
 		}
 
 		// Overlay handle positions for indices 1..N.
@@ -2693,8 +2685,7 @@ export class KonvaGame {
 			const pointIndex = handle.getAttr('pointIndex');
 			const mx = (handle.x() - center.x) / TRACK_SCALE;
 			const my = (handle.y() - center.y) / TRACK_SCALE;
-			const trackPos = toTrack({ x: mx, y: my });
-			newPoints[pointIndex] = { S: trackPos.s, u: trackPos.u };
+			newPoints[pointIndex] = { x: mx, y: my };
 		});
 
 		// Re-render the line with updated points
@@ -2716,12 +2707,12 @@ export class KonvaGame {
 		const handles = this.pathLayer.find<Circle>('.pathHandle');
 		if (!handles || handles.length === 0) return;
 
-		const newPoints: { S: number; u: number }[] = path.points.map((p) => ({ ...p }));
+		const newPoints: PlanarPoint[] = path.points.map((p) => ({ ...p }));
 
 		// Inject the entity's current pose as the first point.
 		const entityPose = step.entities.find((e) => e.id === path.entityId);
 		if (entityPose && newPoints.length > 0) {
-			newPoints[0] = { S: entityPose.S, u: entityPose.u };
+			newPoints[0] = { x: entityPose.x, y: entityPose.y };
 		}
 
 		const center = this.getStageCenter();
@@ -2729,8 +2720,7 @@ export class KonvaGame {
 			const pointIndex = handle.getAttr('pointIndex');
 			const mx = (handle.x() - center.x) / TRACK_SCALE;
 			const my = (handle.y() - center.y) / TRACK_SCALE;
-			const trackPos = toTrack({ x: mx, y: my });
-			newPoints[pointIndex] = { S: trackPos.s, u: trackPos.u };
+			newPoints[pointIndex] = { x: mx, y: my };
 		});
 
 		// Commit via CRUD operation
@@ -2757,10 +2747,9 @@ export class KonvaGame {
 		if (!entity || !pose) return null;
 
 		const center = this.getStageCenter();
-		const meterPos = fromTrack(pose.S, pose.u);
 		const scale = this.stage.scaleX();
-		const localX = center.x + meterPos.x * TRACK_SCALE;
-		const localY = center.y + meterPos.y * TRACK_SCALE;
+		const localX = center.x + pose.x * TRACK_SCALE;
+		const localY = center.y + pose.y * TRACK_SCALE;
 
 		return {
 			screenX: this.stage.x() + localX * scale,
