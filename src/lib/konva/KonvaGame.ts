@@ -1,9 +1,12 @@
 import { get } from 'svelte/store';
 import Konva from 'konva';
+import type { Circle } from 'konva/lib/shapes/Circle';
 
 import { boardState } from '$lib/stores/konvaBoardState';
 import { selectedEntityId, directionControlActive } from '$lib/stores/selection';
 import { boardSettings } from '$lib/stores/boardSettings';
+import { authoringSession } from '$lib/stores/session';
+import { toolMode, isDrawingTool } from '$lib/stores/toolMode';
 import {
 	BASE_ZOOM,
 	CENTER_POINT_OFFSET,
@@ -32,8 +35,19 @@ import { poseStore } from '$lib/doc/poses';
 import { migrateBoardState } from '$lib/doc/migrate';
 import { fromTrack, toTrack, tangentAt } from '$lib/track/trackFrame';
 import { motionHeading } from '$lib/track/heading';
-import { tweenSteps, easeInOutCubic } from '$lib/track/tween';
-import type { Entity, EntityPose, HeadingMode } from '$lib/doc/types';
+import { tweenSteps, easeInOutCubic, MAX_PATH_LENGTH_M, MAX_PATH_POINTS } from '$lib/track/tween';
+import { buildArcLength, catmullRom, simplify, clampNodeToBudget } from '$lib/track/pathMath';
+import type {
+	Entity,
+	EntityPose,
+	HeadingMode,
+	Step,
+	Annotation,
+	EntityPath,
+	TrackPoint
+} from '$lib/doc/types';
+import type { PathFrame } from '$lib/recording/timeline/types';
+import { setEntityPath, addAnnotation, deletePath } from '$lib/doc/clipOps';
 import type { TeamPlayerRole, TeamPlayerTeam } from './KonvaTeamPlayer';
 import type { SkatingOfficialRole } from './KonvaSkatingOfficial';
 
@@ -60,6 +74,12 @@ export class KonvaGame {
 	private engagementZoneLayer: Konva.Layer;
 	/** Fading team-coloured tails behind entities during authored playback. */
 	private trailLayer: Konva.Layer;
+	/** Movement paths + path-overlay arrows */
+	private pathLayer: Konva.Layer;
+	/** Onion-skin ghosts of neighbouring steps */
+	private ghostLayer: Konva.Layer;
+	/** Freehand pen / arrow / zone / label / gap annotations */
+	private annotationLayer: Konva.Layer;
 	/** Top-most layer for the direction control (knob + guide line) so it sits
 	 * above players and every other layer while visible. */
 	private controlLayer: Konva.Layer;
@@ -113,11 +133,21 @@ export class KonvaGame {
 	private knobPinMark: Konva.Group | null = null;
 	private knobLockMark: Konva.Group | null = null;
 
+	/** Drawing handler for annotation/path gestures */
+	private drawingHandlerUnsubscribe: (() => void) | null = null;
+
 	/**
 	 * Cached last sample heading map for captured-clip motion-derived heading (P4.5).
 	 */
 	private capturedPrevS: Map<string, number> = new Map();
 	private capturedLastHeading: Map<string, number> = new Map();
+
+	/**
+	 * Last-rendered path overlay state. Updated whenever `renderPaths` or
+	 * `renderPathFrame` paints, so `getSnapshot()` captures what is actually
+	 * on screen (not a stale document lookup that ignores playback step).
+	 */
+	private currentPathFrame: PathFrame | undefined;
 
 	/**
 	 * Resets the captured-clip heading state (called on replay start/seek-large-jump).
@@ -176,8 +206,11 @@ export class KonvaGame {
 		this.trackSurfaceLayer = new Konva.Layer();
 		this.trackLinesLayer = new Konva.Layer();
 		this.engagementZoneLayer = new Konva.Layer();
-		this.playersLayer = new Konva.Layer();
+		this.pathLayer = new Konva.Layer();
 		this.trailLayer = new Konva.Layer();
+		this.ghostLayer = new Konva.Layer();
+		this.playersLayer = new Konva.Layer();
+		this.annotationLayer = new Konva.Layer();
 		this.controlLayer = new Konva.Layer();
 
 		// Add in correct order:
@@ -192,13 +225,22 @@ export class KonvaGame {
 		this.trackGeometry.addTrackLinesToLayer(this.trackLinesLayer);
 		this.stage.add(this.trackLinesLayer);
 
-		// 4. Trails
+		// 4. Path layer (paths sit on the track, under trails/ghosts/players)
+		this.stage.add(this.pathLayer);
+
+		// 5. Trails
 		this.stage.add(this.trailLayer);
 
-		// 5. Players (top)
+		// 6. Ghost layer (translucent ghosts under live players)
+		this.stage.add(this.ghostLayer);
+
+		// 7. Players (top)
 		this.stage.add(this.playersLayer);
 
-		// 6. Direction control (knob + guide line) — above everything.
+		// 8. Annotation layer (annotations read on top of skaters)
+		this.stage.add(this.annotationLayer);
+
+		// 9. Direction control (knob + guide line) — above everything.
 		this.stage.add(this.controlLayer);
 
 		// Build rotation handle (initially hidden).
@@ -223,6 +265,14 @@ export class KonvaGame {
 		// toggles (double-click to enter, single-click/canvas to exit).
 		this.directionControlUnsubscribe = directionControlActive.subscribe(() => {
 			this.updateRotationHandle();
+		});
+
+		// Control stage drag based on tool mode
+		this.drawingHandlerUnsubscribe = toolMode.subscribe((t) => {
+			const canDrag = t === 'select' && !this.replayMode && !this.authoredPlayback;
+			this.stage.draggable(canDrag);
+			// Player drag only works in select mode (and never during playback)
+			this.playersLayer.draggable(canDrag);
 		});
 
 		// Apply the persisted direction-marker visibility on first paint.
@@ -269,6 +319,241 @@ export class KonvaGame {
 			if (!this.replayMode) {
 				this.packManager.schedulePackUpdate();
 			}
+		});
+
+		// Drawing handler for annotation/path gestures
+		let drawingPoints: { S: number; u: number }[] = [];
+		let firstAnchor: { S: number; u: number } | null = null;
+		let previewLine: Konva.Line | null = null;
+		let rafId: number | null = null;
+		let pathLengthAccum = 0; // running arc-length for path cap enforcement
+
+		this.stage.on('pointerdown', (e) => {
+			const tool = get(toolMode);
+			if (!isDrawingTool(tool)) return;
+
+			// Only handle on stage or overlay layers, not on UI controls
+			if (e.target !== this.stage && e.target.parent !== this.stage) return;
+
+			e.cancelBubble = true;
+
+			const pos = this.stage.getPointerPosition();
+			if (!pos) return;
+
+			const trackPos = this.pointerToTrack(pos);
+
+			if (tool === 'drawPath') {
+				const selectedId = get(selectedEntityId);
+				if (!selectedId) {
+					// Need a selected entity to draw a path
+					return;
+				}
+				pathLengthAccum = 0;
+				// Prepend the entity's current pose so the path always starts at
+				// the skater, with a straight segment to the first click.
+				const step = this.getActiveStep();
+				const entityPose = step?.entities.find((en) => en.id === selectedId);
+				if (entityPose) {
+					drawingPoints = [
+						{ S: entityPose.S, u: entityPose.u },
+						{ S: trackPos.s, u: trackPos.u }
+					];
+					// Account for the initial straight segment in the length budget.
+					const a = fromTrack(entityPose.S, entityPose.u);
+					const b = fromTrack(trackPos.s, trackPos.u);
+					pathLengthAccum = Math.hypot(b.x - a.x, b.y - a.y);
+				} else {
+					drawingPoints = [{ S: trackPos.s, u: trackPos.u }];
+				}
+			} else if (tool === 'pen' || tool === 'zone') {
+				drawingPoints = [{ S: trackPos.s, u: trackPos.u }];
+			} else if (tool === 'arrow' || tool === 'gap') {
+				firstAnchor = { S: trackPos.s, u: trackPos.u };
+			} else if (tool === 'label') {
+				const text = prompt('Label text:');
+				if (text && text.trim()) {
+					// Create label annotation
+					this.createAnnotation({
+						id: crypto.randomUUID(),
+						kind: 'label',
+						at: { S: trackPos.s, u: trackPos.u },
+						text: text.trim(),
+						style: { color: '#e11d48', width: 2 }
+					});
+					// Auto-return to select after discrete tools
+					toolMode.set('select');
+				}
+				return;
+			}
+
+			// Create preview for freehand tools
+			if (tool === 'pen' || tool === 'drawPath' || tool === 'zone') {
+				previewLine = new Konva.Line({
+					points: drawingPoints.flatMap((pt) => {
+						const p = this.projectTrackPoint(pt.S, pt.u);
+						return [p.x, p.y];
+					}),
+					stroke: tool === 'drawPath' ? this.trailColorFor(get(selectedEntityId) ?? '') : '#e11d48',
+					strokeWidth: 2,
+					lineCap: 'round',
+					lineJoin: 'round',
+					opacity: 0.5,
+					listening: false
+				});
+				const layer = tool === 'drawPath' ? this.pathLayer : this.annotationLayer;
+				layer.add(previewLine);
+				layer.batchDraw();
+			}
+		});
+
+		this.stage.on('pointermove', () => {
+			const tool = get(toolMode);
+			if (!isDrawingTool(tool) || (!firstAnchor && drawingPoints.length === 0)) return;
+
+			if (rafId) return;
+			rafId = requestAnimationFrame(() => {
+				const pos = this.stage.getPointerPosition();
+				if (!pos) return;
+
+				const trackPos = this.pointerToTrack(pos);
+
+				if (tool === 'pen' || tool === 'drawPath' || tool === 'zone') {
+					// Enforce path-length cap for movement paths. Don't early-return
+					// (that would skip `rafId = null` and freeze all further drawing).
+					let acceptPoint = true;
+					if (tool === 'drawPath' && drawingPoints.length > 0) {
+						const last = drawingPoints[drawingPoints.length - 1];
+						const a = fromTrack(last.S, last.u);
+						const b = fromTrack(trackPos.s, trackPos.u);
+						const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+						if (pathLengthAccum + segLen > MAX_PATH_LENGTH_M) {
+							acceptPoint = false;
+						} else {
+							pathLengthAccum += segLen;
+						}
+					}
+
+					if (acceptPoint) {
+						drawingPoints.push({ S: trackPos.s, u: trackPos.u });
+					}
+
+					// Update preview
+					if (previewLine) {
+						const projectedPoints = drawingPoints.map((pt) => this.projectTrackPoint(pt.S, pt.u));
+						previewLine.points(projectedPoints.flatMap((p) => [p.x, p.y]));
+						if (tool === 'zone') {
+							previewLine.closed(true);
+						}
+						// Visual cue: turn amber near the cap, red at the cap.
+						if (tool === 'drawPath') {
+							const ratio = pathLengthAccum / MAX_PATH_LENGTH_M;
+							if (ratio >= 0.9) previewLine.stroke('#ef4444');
+							else if (ratio >= 0.7) previewLine.stroke('#f59e0b');
+						}
+						this.pathLayer.batchDraw();
+					}
+				} else if (tool === 'arrow' || (tool === 'gap' && firstAnchor)) {
+					// Update preview line from first anchor to current
+					const layer = this.annotationLayer;
+					layer.destroyChildren(); // Clear previous preview
+
+					const firstPx = this.projectTrackPoint(firstAnchor!.S, firstAnchor!.u);
+					const currentPx = { x: pos.x, y: pos.y };
+
+					new Konva.Line({
+						points: [firstPx.x, firstPx.y, currentPx.x, currentPx.y],
+						stroke: '#e11d48',
+						strokeWidth: 2,
+						opacity: 0.5,
+						dash: tool === 'gap' ? [8, 8] : [],
+						listening: false,
+						parent: layer
+					});
+				}
+
+				rafId = null;
+			});
+		});
+
+		this.stage.on('pointerup pointercancel', () => {
+			const tool = get(toolMode);
+			if (!isDrawingTool(tool)) return;
+
+			if (rafId) {
+				cancelAnimationFrame(rafId);
+				rafId = null;
+			}
+
+			// Clear preview
+			if (previewLine) {
+				previewLine.destroy();
+				previewLine = null;
+			} else if (tool === 'arrow' || tool === 'gap') {
+				this.annotationLayer.destroyChildren();
+			}
+
+			const step = this.getActiveStep();
+			if (!step) return;
+
+			// Commit the gesture
+			if (tool === 'drawPath') {
+				const selectedId = get(selectedEntityId);
+				if (selectedId && drawingPoints.length >= 2) {
+					// Simplify and cap to MAX_PATH_POINTS (most significant points kept).
+					const simplified = simplify(drawingPoints, 0.15, MAX_PATH_POINTS);
+					if (simplified.length >= 2) {
+						this.setEntityPath(step.id, selectedId, simplified);
+					}
+				}
+			} else if (tool === 'pen' && drawingPoints.length >= 2) {
+				const simplified = simplify(drawingPoints, 0.15);
+				if (simplified.length >= 2) {
+					this.createAnnotation({
+						id: crypto.randomUUID(),
+						kind: 'pen',
+						points: simplified,
+						style: { color: '#e11d48', width: 2 }
+					});
+				}
+			} else if (tool === 'zone' && drawingPoints.length >= 3) {
+				const simplified = simplify(drawingPoints, 0.15);
+				if (simplified.length >= 3) {
+					this.createAnnotation({
+						id: crypto.randomUUID(),
+						kind: 'zone',
+						points: simplified,
+						style: { color: '#e11d48', width: 2 }
+					});
+				}
+			} else if ((tool === 'arrow' || tool === 'gap') && firstAnchor) {
+				const pos = this.stage.getPointerPosition();
+				if (pos) {
+					const trackPos = this.pointerToTrack(pos);
+
+					this.createAnnotation({
+						id: crypto.randomUUID(),
+						kind: tool,
+						from: firstAnchor,
+						to: { S: trackPos.s, u: trackPos.u },
+						style: { color: '#e11d48', width: 2 }
+					});
+				}
+			}
+
+			// Reset
+			drawingPoints = [];
+			firstAnchor = null;
+			pathLengthAccum = 0;
+
+			// Auto-return to select after discrete/gesture tools so control
+			// points appear immediately on the just-drawn path.
+			if (tool === 'arrow' || tool === 'gap' || tool === 'label' || tool === 'drawPath') {
+				toolMode.set('select');
+			}
+
+			// Re-render overlays
+			const selectedId = get(selectedEntityId);
+			this.renderStepOverlays(step, selectedId);
 		});
 
 		this.playersLayer.on('collision', (e) => {
@@ -489,6 +774,19 @@ export class KonvaGame {
 			// Keep the user's zoom/pan; the track re-centers via fresh geometry.
 			this.loadViewSettings();
 			this.stage.batchDraw();
+		}
+
+		// Step overlays (paths, annotations, onion skin) are drawn with absolute
+		// pixel coordinates baked in at render time via projectTrackPoint(), which
+		// is anchored to the stage center (width/2, height/2). The track + players
+		// were just rebuilt around the new center, so re-project these overlays too
+		// — otherwise paths stay floating at their old pixel positions instead of
+		// following the player. (Replay is handled by renderSampleTransform above.)
+		if (boardDoc.current.activeClipId) {
+			const step = this.getActiveStep();
+			if (step) {
+				this.renderStepOverlays(step, get(selectedEntityId));
+			}
 		}
 	}
 
@@ -916,6 +1214,7 @@ export class KonvaGame {
 	setReplayMode(enabled: boolean, source?: { w: number; h: number }): void {
 		this.replayMode = enabled;
 		this.stage.draggable(!enabled);
+		this.playersLayer.draggable(!enabled && get(toolMode) === 'select');
 		this.playerManager.setPlayersDraggable(!enabled);
 		if (enabled) {
 			// Belt-and-braces: tear down any authoring residue (focus/dim,
@@ -986,6 +1285,11 @@ export class KonvaGame {
 			}
 		}
 
+		let pathFrame: PathFrame | undefined;
+		if (get(boardSettings).pathsVisible !== false) {
+			pathFrame = this.currentPathFrame;
+		}
+
 		return {
 			teamPlayers,
 			skatingOfficials,
@@ -993,7 +1297,8 @@ export class KonvaGame {
 				zoom: this.stage.scaleX(),
 				relativeX: this.stage.x() / centerX,
 				relativeY: this.stage.y() / centerY
-			}
+			},
+			pathFrame
 		};
 	}
 
@@ -1050,42 +1355,7 @@ export class KonvaGame {
 			y: fit.offY + fit.scale * (sample.view.relativeY * sCy - z * dy)
 		});
 
-		// Publish sample poses as overrides so determinePack() sees exactly
-		// what is rendered, not the stale document state. Convert pixel
-		// positions to track space (S, u) for the override tier.
-		// Use motionHeading (P4.5) for captured clips so skaters face their motion.
-		const overrides: Array<[string, { S: number; u: number; heading: number }]> = [];
-		for (const tp of sample.teamPlayers) {
-			if (!tp.id) continue;
-			const meterPos = { x: tp.relative.x / TRACK_SCALE, y: tp.relative.y / TRACK_SCALE };
-			const trackPos = toTrack(meterPos);
-			const prevS = this.capturedPrevS.get(tp.id) ?? trackPos.s;
-			const fallback = this.capturedLastHeading.get(tp.id) ?? 0;
-			const u = trackPos.u;
-			const heading = motionHeading(prevS, trackPos.s, fallback, u);
-			this.capturedPrevS.set(tp.id, trackPos.s);
-			this.capturedLastHeading.set(tp.id, heading);
-			overrides.push([tp.id, { S: trackPos.s, u: trackPos.u, heading }]);
-		}
-		for (const so of sample.skatingOfficials) {
-			if (!so.id) continue;
-			const meterPos = { x: so.relative.x / TRACK_SCALE, y: so.relative.y / TRACK_SCALE };
-			const trackPos = toTrack(meterPos);
-			const prevS = this.capturedPrevS.get(so.id) ?? trackPos.s;
-			const fallback = this.capturedLastHeading.get(so.id) ?? 0;
-			const u = trackPos.u;
-			const heading = motionHeading(prevS, trackPos.s, fallback, u);
-			this.capturedPrevS.set(so.id, trackPos.s);
-			this.capturedLastHeading.set(so.id, heading);
-			overrides.push([so.id, { S: trackPos.s, u: trackPos.u, heading }]);
-		}
-		poseStore.setOverrides(overrides);
-
-		this.packManager.determinePack();
-		this.trackSurfaceLayer.batchDraw();
-		this.trackLinesLayer.batchDraw();
-		this.engagementZoneLayer.batchDraw();
-		this.playersLayer.batchDraw();
+		this.applySampleOverrides(sample);
 	}
 
 	/**
@@ -1117,41 +1387,7 @@ export class KonvaGame {
 					y: sample.view.relativeY * centerY
 				});
 
-				// Publish sample poses as overrides so determinePack() sees exactly
-				// what is rendered, not the stale document state.
-				// Use motionHeading (P4.5) for captured clips so skaters face their motion.
-				const overrides: Array<[string, { S: number; u: number; heading: number }]> = [];
-				for (const tp of sample.teamPlayers) {
-					if (!tp.id) continue;
-					const meterPos = { x: tp.relative.x / TRACK_SCALE, y: tp.relative.y / TRACK_SCALE };
-					const trackPos = toTrack(meterPos);
-					const prevS = this.capturedPrevS.get(tp.id) ?? trackPos.s;
-					const fallback = this.capturedLastHeading.get(tp.id) ?? 0;
-					const u = trackPos.u;
-					const heading = motionHeading(prevS, trackPos.s, fallback, u);
-					this.capturedPrevS.set(tp.id, trackPos.s);
-					this.capturedLastHeading.set(tp.id, heading);
-					overrides.push([tp.id, { S: trackPos.s, u: trackPos.u, heading }]);
-				}
-				for (const so of sample.skatingOfficials) {
-					if (!so.id) continue;
-					const meterPos = { x: so.relative.x / TRACK_SCALE, y: so.relative.y / TRACK_SCALE };
-					const trackPos = toTrack(meterPos);
-					const prevS = this.capturedPrevS.get(so.id) ?? trackPos.s;
-					const fallback = this.capturedLastHeading.get(so.id) ?? 0;
-					const u = trackPos.u;
-					const heading = motionHeading(prevS, trackPos.s, fallback, u);
-					this.capturedPrevS.set(so.id, trackPos.s);
-					this.capturedLastHeading.set(so.id, heading);
-					overrides.push([so.id, { S: trackPos.s, u: trackPos.u, heading }]);
-				}
-				poseStore.setOverrides(overrides);
-
-				this.packManager.determinePack();
-				this.trackSurfaceLayer.batchDraw();
-				this.trackLinesLayer.batchDraw();
-				this.engagementZoneLayer.batchDraw();
-				this.playersLayer.batchDraw();
+				this.applySampleOverrides(sample);
 			}
 			this.lastSample = sample;
 		} finally {
@@ -1194,6 +1430,7 @@ export class KonvaGame {
 	beginAuthoredPlayback(): void {
 		this.authoredPlayback = true;
 		this.playerManager.setPlayersDraggable(false);
+		this.playersLayer.draggable(false);
 		this.clearTrails();
 	}
 
@@ -1202,6 +1439,7 @@ export class KonvaGame {
 		this.authoredPlayback = false;
 		poseStore.abortGesture();
 		this.playerManager.setPlayersDraggable(true);
+		this.playersLayer.draggable(get(toolMode) === 'select');
 		this.clearTrails();
 		this.updateRotationHandle();
 	}
@@ -1734,6 +1972,771 @@ export class KonvaGame {
 	 */
 	private getStageCenter(): { x: number; y: number } {
 		return { x: this.width / 2, y: this.height / 2 };
+	}
+
+	/**
+	 * Converts a stage-space pointer position to track coordinates (S, u).
+	 *
+	 * `stage.getPointerPosition()` returns the pointer relative to the stage's
+	 * top-left in raw viewport pixels — it does NOT undo the stage's own
+	 * zoom/pan transform (stage.scale / stage.position, set by fitToTrack,
+	 * wheel/pinch zoom, and panning). Undo that transform first so the track
+	 * coordinate matches what is actually under the cursor at any zoom/pan.
+	 * Without this, a zoomed/panned board places drawn points off the cursor
+	 * (radially toward the transform's origin), which reads as a consistent
+	 * angular offset. Mirrors the inverse transform already used in `zoomAt`.
+	 */
+	private pointerToTrack(pos: { x: number; y: number }): { s: number; u: number } {
+		const center = this.getStageCenter();
+		const scale = this.stage.scaleX();
+		const contentX = (pos.x - this.stage.x()) / scale;
+		const contentY = (pos.y - this.stage.y()) / scale;
+		return toTrack({
+			x: (contentX - center.x) / TRACK_SCALE,
+			y: (contentY - center.y) / TRACK_SCALE
+		});
+	}
+
+	/**
+	 * Projects a track-space (S,u) point to stage pixel coordinates.
+	 * Used by path/annotation/onion-skin renderers.
+	 */
+	private projectTrackPoint(S: number, u: number): { x: number; y: number } {
+		const center = this.getStageCenter();
+		const m = fromTrack(S, u);
+		return { x: center.x + m.x * TRACK_SCALE, y: center.y + m.y * TRACK_SCALE };
+	}
+
+	/**
+	 * Smooths track-space points via Catmull-Rom and projects them to stage
+	 * pixels. Returns null if the arc length is zero (degenerate path).
+	 */
+	private smoothProject(points: TrackPoint[]): { x: number; y: number }[] | null {
+		if (buildArcLength(points).total === 0) return null;
+		return catmullRom(points, 8).map((pt) => this.projectTrackPoint(pt.S, pt.u));
+	}
+
+	/**
+	 * Computes motion-heading overrides for a replay sample's entities and
+	 * publishes them to the pose store. Shared by both replay code paths.
+	 */
+	private applySampleOverrides(sample: TimelineSample): void {
+		const overrides: Array<[string, { S: number; u: number; heading: number }]> = [];
+		const process = (id: string, relative: { x: number; y: number }): void => {
+			const trackPos = toTrack({ x: relative.x / TRACK_SCALE, y: relative.y / TRACK_SCALE });
+			const prevS = this.capturedPrevS.get(id) ?? trackPos.s;
+			const fallback = this.capturedLastHeading.get(id) ?? 0;
+			const heading = motionHeading(prevS, trackPos.s, fallback, trackPos.u);
+			this.capturedPrevS.set(id, trackPos.s);
+			this.capturedLastHeading.set(id, heading);
+			overrides.push([id, { S: trackPos.s, u: trackPos.u, heading }]);
+		};
+		for (const tp of sample.teamPlayers) if (tp.id) process(tp.id, tp.relative);
+		for (const so of sample.skatingOfficials) if (so.id) process(so.id, so.relative);
+		poseStore.setOverrides(overrides);
+
+		// Apply heading to the Konva facing groups (reconcileTeamPlayers sets
+		// positions only; applyEffectivePoses rotates the chevrons from the
+		// override tier).
+		this.playerManager.applyEffectivePoses();
+		this.packManager.determinePack();
+		this.trackSurfaceLayer.batchDraw();
+		this.trackLinesLayer.batchDraw();
+		this.engagementZoneLayer.batchDraw();
+		this.playersLayer.batchDraw();
+
+		if (sample.pathFrame) this.renderPathFrame(sample.pathFrame);
+	}
+
+	/**
+	 * Renders the path overlay from a recorded PathFrame (used by replay and
+	 * export so captured recordings include per-step paths). Renders ALL paths
+	 * in the frame — the frame already represents the visual state captured at
+	 * record time, so no overlay/selection filtering is applied.
+	 */
+	renderPathFrame(frame: PathFrame | undefined): void {
+		this.currentPathFrame = frame;
+		this.pathLayer.destroyChildren();
+		if (!frame) {
+			this.pathLayer.draw();
+			return;
+		}
+
+		const strokeWidth = Math.max(2, (PLAYER_RADIUS * 0.4) / this.stage.scaleX());
+		const ghostStrokeWidth = Math.max(1.5, (PLAYER_RADIUS * 0.3) / this.stage.scaleX());
+
+		const addLine = (points: TrackPoint[], opts: Konva.LineConfig): void => {
+			const projected = this.smoothProject(points);
+			if (!projected) return;
+			this.pathLayer.add(
+				new Konva.Line({
+					points: projected.flatMap((p) => [p.x, p.y]),
+					listening: false,
+					...opts
+				})
+			);
+		};
+
+		const ghostOpts: Konva.LineConfig = {
+			stroke: '#dc2626',
+			strokeWidth: ghostStrokeWidth,
+			dash: [6, 4],
+			lineCap: 'round',
+			lineJoin: 'round',
+			opacity: 0.5
+		};
+		frame.prevPaths?.forEach((p) => addLine(p.points, ghostOpts));
+		frame.nextPaths?.forEach((p) => addLine(p.points, ghostOpts));
+
+		for (const path of frame.paths) {
+			addLine(path.points, {
+				stroke: this.trailColorFor(path.entityId),
+				strokeWidth,
+				tension: 0,
+				opacity: 0.85
+			});
+		}
+
+		this.pathLayer.draw();
+	}
+
+	/**
+	 * Renders a single path from an adjacent step as a non-interactive
+	 * light-grey dashed line (context only — no handles, no nodes).
+	 */
+	private renderGhostPath(step: Step | undefined, entityId: string): void {
+		const path = step?.paths?.find((p) => p.entityId === entityId);
+		if (!path) return;
+
+		const renderPoints = path.points.map((p) => ({ ...p }));
+		const startPose = step!.entities.find((e) => e.id === entityId);
+		if (startPose && renderPoints.length > 0) {
+			renderPoints[0] = { S: startPose.S, u: startPose.u };
+		}
+
+		const projected = this.smoothProject(renderPoints);
+		if (!projected) return;
+
+		this.pathLayer.add(
+			new Konva.Line({
+				points: projected.flatMap((p) => [p.x, p.y]),
+				stroke: '#dc2626',
+				strokeWidth: Math.max(1.5, (PLAYER_RADIUS * 0.3) / this.stage.scaleX()),
+				dash: [6, 4],
+				lineCap: 'round',
+				lineJoin: 'round',
+				opacity: 0.5,
+				listening: false
+			})
+		);
+	}
+
+	/**
+	 * Renders movement paths for a step. If step is undefined, clears the layer.
+	 * Paths are shown for the selected entity or when pathOverlay mode is 'all'.
+	 * When toolMode is 'select', adds draggable control point handles for the selected entity's path.
+	 *
+	 * When an entity is selected, the PREVIOUS step's path and NEXT step's path
+	 * for that entity are also rendered in light grey (context, non-interactive).
+	 */
+	renderPaths(
+		step: Step | undefined,
+		selectedEntityId: string | null,
+		prevStep?: Step | undefined,
+		nextStep?: Step | undefined
+	): void {
+		// During replay, the path layer is managed by renderPathFrame (called
+		// from renderSampleTransform). Bail out so the AuthoringPanel Svelte
+		// $effect (which fires when selectedEntityId is cleared on replay
+		// start) can't destroyChildren and wipe the paths just drawn.
+		if (this.replayMode) return;
+
+		this.pathLayer.destroyChildren();
+
+		// Render adjacent steps' paths for the selected entity as light-grey
+		// context lines (drawn first, behind the current step's paths).
+		if (selectedEntityId) {
+			this.renderGhostPath(prevStep, selectedEntityId);
+			this.renderGhostPath(nextStep, selectedEntityId);
+		}
+
+		if (!step?.paths) {
+			this.currentPathFrame = undefined;
+			this.pathLayer.batchDraw();
+			return;
+		}
+
+		const overlayMode = get(boardSettings).pathOverlay ?? 'off';
+		const currentTool = get(toolMode);
+
+		for (const path of step.paths) {
+			const shouldRender =
+				path.entityId === selectedEntityId ||
+				overlayMode === 'all' ||
+				(overlayMode === 'selected' && path.entityId === selectedEntityId);
+
+			if (!shouldRender) continue;
+
+			// Inject only the FIRST point with the entity's current pose so the
+			// visual line always starts at the skater. The last point is NOT
+			// injected — the stored endpoint is the visual end (chain propagation
+			// keeps it synced with the next step's pose).
+			const startPose = step.entities.find((e) => e.id === path.entityId);
+			const renderPoints = path.points.map((p) => ({ ...p }));
+			if (startPose && renderPoints.length > 0) {
+				renderPoints[0] = { S: startPose.S, u: startPose.u };
+			}
+
+			const projectedPoints = this.smoothProject(renderPoints);
+			if (!projectedPoints) continue;
+
+			const color = this.trailColorFor(path.entityId);
+			const strokeWidth = Math.max(2, (PLAYER_RADIUS * 0.4) / this.stage.scaleX());
+
+			// Main path line
+			const line = new Konva.Line({
+				name: 'lineShape',
+				points: projectedPoints.flatMap((p) => [p.x, p.y]),
+				stroke: color,
+				strokeWidth,
+				tension: 0,
+				opacity: 0.85,
+				listening: false
+			});
+			this.pathLayer.add(line);
+
+			// Control point handles for selected entity when in select mode
+			if (path.entityId === selectedEntityId && currentTool === 'select') {
+				// Add draggable handles for INTERIOR points and the endpoint.
+				// Skip index 0 — that's the entity's own position (injected at
+				// render time), not a separate control point.
+				// Precompute metre-space positions and total path length so each
+				// handle's length budget is cheap to derive. Only the dragged node's
+				// incident segment(s) change during a drag, so the budget is
+				// MAX_PATH_LENGTH_M minus the length used by every other segment — a
+				// node can never be dragged past the speed cap.
+				const metrePts = renderPoints.map((p) => fromTrack(p.S, p.u));
+				let totalLen = 0;
+				for (let k = 0; k < metrePts.length - 1; k++) {
+					totalLen += Math.hypot(
+						metrePts[k + 1].x - metrePts[k].x,
+						metrePts[k + 1].y - metrePts[k].y
+					);
+				}
+
+				for (let i = 1; i < path.points.length; i++) {
+					const pt = renderPoints[i];
+					const px = this.projectTrackPoint(pt.S, pt.u);
+					const handleRadius = Math.max(8, 10 / this.stage.scaleX());
+
+					// Previous/next node in metres; the endpoint (last point) has no
+					// next node, so only its single incident segment is budgeted.
+					const aM = metrePts[i - 1];
+					const bM = i < metrePts.length - 1 ? metrePts[i + 1] : null;
+					const incidentStatic =
+						Math.hypot(metrePts[i].x - aM.x, metrePts[i].y - aM.y) +
+						(bM ? Math.hypot(bM.x - metrePts[i].x, bM.y - metrePts[i].y) : 0);
+					const budget = MAX_PATH_LENGTH_M - (totalLen - incidentStatic);
+
+					const handle = new Konva.Circle({
+						x: px.x,
+						y: px.y,
+						radius: handleRadius,
+						fill: 'white',
+						stroke: color,
+						strokeWidth: 2,
+						draggable: true,
+						name: 'pathHandle',
+						listening: true
+					});
+					handle.setAttr('pointIndex', i);
+					handle.setAttr('pathId', path.id);
+
+					// Hard-clamp the drag so the path can't exceed MAX_PATH_LENGTH_M.
+					// `pos` is content (stage-local) pixels; convert to metres, clamp
+					// against the incident-segment budget, then convert back.
+					handle.dragBoundFunc((pos) => {
+						const center = this.getStageCenter();
+						const pM = {
+							x: (pos.x - center.x) / TRACK_SCALE,
+							y: (pos.y - center.y) / TRACK_SCALE
+						};
+						const c = clampNodeToBudget(aM, bM, pM, budget);
+						return {
+							x: center.x + c.x * TRACK_SCALE,
+							y: center.y + c.y * TRACK_SCALE
+						};
+					});
+
+					handle.on('dragmove', () => {
+						// Update live preview during drag
+						this.updatePathPreview(step, path);
+					});
+
+					handle.on('dragend', () => {
+						// Commit the path changes
+						this.commitPathChanges(step, path, selectedEntityId);
+					});
+
+					this.pathLayer.add(handle);
+				}
+
+				// Delete affordance (small X button)
+				if (path.points.length > 1) {
+					const lastPt = renderPoints[renderPoints.length - 1];
+					const lastPx = this.projectTrackPoint(lastPt.S, lastPt.u);
+					const deleteSize = 12;
+
+					const deleteBtn = new Konva.Group({ name: 'pathDelete', listening: true });
+					new Konva.Rect({
+						x: lastPx.x - deleteSize / 2,
+						y: lastPx.y - deleteSize / 2,
+						width: deleteSize,
+						height: deleteSize,
+						fill: '#e11d48',
+						radius: 2,
+						parent: deleteBtn
+					});
+					new Konva.Text({
+						x: lastPx.x,
+						y: lastPx.y,
+						text: '✕',
+						fontSize: 10,
+						fontFamily: 'Arial',
+						fill: 'white',
+						textBaseline: 'middle',
+						align: 'center',
+						offsetX: 3,
+						offsetY: 3,
+						parent: deleteBtn
+					});
+					deleteBtn.setAttr('pathId', path.id);
+
+					deleteBtn.on('click tap', () => {
+						if (!step) return;
+						deletePath(step.id, path.id);
+						const { prevStep, nextStep } = this.getAdjacentSteps();
+						this.renderPaths(step, selectedEntityId, prevStep, nextStep);
+					});
+
+					this.pathLayer.add(deleteBtn);
+				}
+			}
+		}
+
+		// Cache the full step path data for getSnapshot() so a recording
+		// captures the exact step currently being visualised (not whatever
+		// the document's active step happens to be).
+		const toEntries = (s: Step | undefined) =>
+			s?.paths?.map((p) => ({ id: p.id, entityId: p.entityId, points: p.points }));
+		this.currentPathFrame = {
+			paths: step.paths.map((p) => ({ id: p.id, entityId: p.entityId, points: p.points })),
+			selectedEntityId,
+			prevPaths: toEntries(prevStep),
+			nextPaths: toEntries(nextStep)
+		};
+
+		this.pathLayer.batchDraw();
+	}
+
+	/**
+	 * Renders annotations for a step. If step is undefined, clears the layer.
+	 * All annotations are drawn; visibility is controlled by the layer's visible flag.
+	 */
+	renderAnnotations(step: Step | undefined): void {
+		this.annotationLayer.destroyChildren();
+
+		if (!step?.annotations) {
+			this.annotationLayer.batchDraw();
+			return;
+		}
+
+		for (const ann of step.annotations) {
+			switch (ann.kind) {
+				case 'pen': {
+					const projected = ann.points.map((pt) => this.projectTrackPoint(pt.S, pt.u));
+					const points = projected.flatMap((p) => [p.x, p.y]);
+					new Konva.Line({
+						points,
+						stroke: ann.style.color,
+						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						lineCap: 'round',
+						lineJoin: 'round',
+						tension: 0,
+						listening: false,
+						parent: this.annotationLayer
+					});
+					break;
+				}
+				case 'arrow': {
+					const fromPx = this.projectTrackPoint(ann.from.S, ann.from.u);
+					const toPx = this.projectTrackPoint(ann.to.S, ann.to.u);
+					const dx = toPx.x - fromPx.x;
+					const dy = toPx.y - fromPx.y;
+					const angle = Math.atan2(dy, dx);
+					const headLength = 15;
+
+					// Line
+					new Konva.Line({
+						points: [fromPx.x, fromPx.y, toPx.x, toPx.y],
+						stroke: ann.style.color,
+						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						tension: 0,
+						listening: false,
+						parent: this.annotationLayer
+					});
+
+					// Arrowhead
+					const tip = {
+						x: toPx.x,
+						y: toPx.y
+					};
+					const base1 = {
+						x: toPx.x - headLength * Math.cos(angle - 0.5),
+						y: toPx.y - headLength * Math.sin(angle - 0.5)
+					};
+					const base2 = {
+						x: toPx.x - headLength * Math.cos(angle + 0.5),
+						y: toPx.y - headLength * Math.sin(angle + 0.5)
+					};
+					new Konva.Line({
+						points: [tip.x, tip.y, base1.x, base1.y, base2.x, base2.y],
+						stroke: ann.style.color,
+						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						tension: 0,
+						listening: false,
+						parent: this.annotationLayer
+					});
+					break;
+				}
+				case 'zone': {
+					const projected = ann.points.map((pt) => this.projectTrackPoint(pt.S, pt.u));
+					const points = projected.flatMap((p) => [p.x, p.y]);
+					new Konva.Line({
+						points,
+						stroke: ann.style.color,
+						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						lineCap: 'round',
+						lineJoin: 'round',
+						tension: 0,
+						closed: true,
+						fill: ann.style.color,
+						opacity: 0.15,
+						listening: false,
+						parent: this.annotationLayer
+					});
+					break;
+				}
+				case 'label': {
+					const atPx = this.projectTrackPoint(ann.at.S, ann.at.u);
+					const fontSize = Math.max(12, 14 / this.stage.scaleX());
+
+					// Backdrop for legibility
+					const textNode = new Konva.Text({
+						x: atPx.x,
+						y: atPx.y,
+						text: ann.text,
+						fontSize,
+						fontFamily: 'Arial',
+						fill: ann.style.color,
+						listening: false,
+						parent: this.annotationLayer
+					});
+					// Use width approximation (fontSize * charCount) for backdrop
+					const charWidth = fontSize * 0.6;
+					const estimatedWidth = Math.max(100, ann.text.length * charWidth);
+					new Konva.Rect({
+						x: atPx.x - 4,
+						y: atPx.y - fontSize + 4,
+						width: estimatedWidth + 8,
+						height: fontSize + 8,
+						fill: 'rgba(255,255,255,0.8)',
+						listening: false,
+						parent: this.annotationLayer
+					});
+					textNode.moveToTop();
+					break;
+				}
+				case 'gap': {
+					const fromPx = this.projectTrackPoint(ann.from.S, ann.from.u);
+					const toPx = this.projectTrackPoint(ann.to.S, ann.to.u);
+					const dx = toPx.x - fromPx.x;
+					const dy = toPx.y - fromPx.y;
+					const angle = Math.atan2(dy, dx);
+					const tickOffset = 8;
+
+					// Main line (dashed)
+					new Konva.Line({
+						points: [fromPx.x, fromPx.y, toPx.x, toPx.y],
+						stroke: ann.style.color,
+						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						dash: [8, 8],
+						tension: 0,
+						listening: false,
+						parent: this.annotationLayer
+					});
+
+					// Perpendicular tick at from
+					const fromTick1 = {
+						x: fromPx.x + tickOffset * Math.cos(angle + Math.PI / 2),
+						y: fromPx.y + tickOffset * Math.sin(angle + Math.PI / 2)
+					};
+					const fromTick2 = {
+						x: fromPx.x + tickOffset * Math.cos(angle - Math.PI / 2),
+						y: fromPx.y + tickOffset * Math.sin(angle - Math.PI / 2)
+					};
+					new Konva.Line({
+						points: [fromTick1.x, fromTick1.y, fromTick2.x, fromTick2.y],
+						stroke: ann.style.color,
+						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						tension: 0,
+						listening: false,
+						parent: this.annotationLayer
+					});
+
+					// Perpendicular tick at to
+					const toTick1 = {
+						x: toPx.x + tickOffset * Math.cos(angle + Math.PI / 2),
+						y: toPx.y + tickOffset * Math.sin(angle + Math.PI / 2)
+					};
+					const toTick2 = {
+						x: toPx.x + tickOffset * Math.cos(angle - Math.PI / 2),
+						y: toPx.y + tickOffset * Math.sin(angle - Math.PI / 2)
+					};
+					new Konva.Line({
+						points: [toTick1.x, toTick1.y, toTick2.x, toTick2.y],
+						stroke: ann.style.color,
+						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						tension: 0,
+						listening: false,
+						parent: this.annotationLayer
+					});
+					break;
+				}
+			}
+		}
+
+		this.annotationLayer.batchDraw();
+	}
+
+	/**
+	 * Renders onion-skin ghosts of neighbouring steps.
+	 * Ghosts are translucent circles at each entity's pose.
+	 */
+	renderOnionSkin(prevStep: Step | undefined, nextStep: Step | undefined, depth: number): void {
+		this.ghostLayer.destroyChildren();
+
+		const renderGhosts = (step: Step | undefined, offset: number) => {
+			if (!step) return;
+
+			const group = new Konva.Group({ listening: false });
+			const opacity = depth >= 2 && Math.abs(offset) === 2 ? 0.12 : 0.25;
+
+			for (const pose of step.entities) {
+				const center = this.getStageCenter();
+				const meterPos = fromTrack(pose.S, pose.u);
+				const cx = center.x + meterPos.x * TRACK_SCALE;
+				const cy = center.y + meterPos.y * TRACK_SCALE;
+
+				const color = this.trailColorFor(pose.id);
+
+				new Konva.Circle({
+					x: cx,
+					y: cy,
+					radius: PLAYER_RADIUS,
+					fill: color,
+					opacity,
+					stroke: 'black',
+					strokeWidth: 1,
+					listening: false,
+					parent: group
+				});
+			}
+
+			this.ghostLayer.add(group);
+		};
+
+		// ±1 always available
+		renderGhosts(prevStep, -1);
+		renderGhosts(nextStep, 1);
+
+		// ±2 when depth >= 2
+		if (depth >= 2) {
+			renderGhosts(undefined, -2); // Placeholder for deeper prev
+			renderGhosts(undefined, 2); // Placeholder for deeper next
+		}
+
+		this.ghostLayer.batchDraw();
+	}
+
+	/**
+	 * Visibility setters for layers.
+	 */
+	setPathsVisible(visible: boolean): void {
+		this.pathLayer.visible(visible);
+		this.pathLayer.batchDraw();
+		boardSettings.update((s) => ({ ...s, pathsVisible: visible }));
+	}
+
+	setAnnotationsVisible(visible: boolean): void {
+		this.annotationLayer.visible(visible);
+		this.annotationLayer.batchDraw();
+		boardSettings.update((s) => ({ ...s, annotationsVisible: visible }));
+	}
+
+	setOnionSkin(enabled: boolean, depth: number): void {
+		this.ghostLayer.visible(enabled);
+		this.ghostLayer.batchDraw();
+		boardSettings.update((s) => ({ ...s, onionSkin: enabled, onionSkinDepth: depth as 1 | 2 }));
+	}
+
+	setPathOverlay(mode: 'off' | 'all' | 'selected'): void {
+		boardSettings.update((s) => ({ ...s, pathOverlay: mode }));
+		// Re-render paths with new overlay mode
+		const step = this.getActiveStep();
+		const selectedId = get(selectedEntityId);
+		const { prevStep, nextStep } = this.getAdjacentSteps();
+		this.renderPaths(step, selectedId, prevStep, nextStep);
+	}
+
+	/**
+	 * Returns the steps immediately before and after the active step.
+	 */
+	private getAdjacentSteps(): { prevStep: Step | undefined; nextStep: Step | undefined } {
+		const clipId = boardDoc.current.activeClipId;
+		if (!clipId) return { prevStep: undefined, nextStep: undefined };
+		const clip = boardDoc.current.clips.find((c) => c.id === clipId);
+		if (!clip || clip.kind !== 'authored') return { prevStep: undefined, nextStep: undefined };
+		const session = get(authoringSession);
+		const idx = session.activeStepIndex;
+		return {
+			prevStep: idx > 0 ? clip.steps[idx - 1] : undefined,
+			nextStep: idx < clip.steps.length - 1 ? clip.steps[idx + 1] : undefined
+		};
+	}
+
+	/**
+	 * Public render entry used by the UI.
+	 * Renders all step-attached overlays for the given active step.
+	 */
+	renderStepOverlays(step: Step | undefined, selectedEntityId: string | null): void {
+		const settings = get(boardSettings);
+
+		const { prevStep, nextStep } = this.getAdjacentSteps();
+		this.renderPaths(step, selectedEntityId, prevStep, nextStep);
+		this.renderAnnotations(step);
+
+		if (settings.onionSkin && !this.authoredPlayback) {
+			if (prevStep || nextStep) {
+				this.renderOnionSkin(prevStep, nextStep, settings.onionSkinDepth ?? 1);
+			}
+		} else {
+			this.ghostLayer.destroyChildren();
+			this.ghostLayer.batchDraw();
+		}
+	}
+
+	/**
+	 * Helper to get the active step from the current document state.
+	 */
+	private getActiveStep(): Step | undefined {
+		const clipId = boardDoc.current.activeClipId;
+		if (!clipId) return undefined;
+		const clip = boardDoc.current.clips.find((c) => c.id === clipId);
+		if (!clip || clip.kind !== 'authored') return undefined;
+		const session = get(authoringSession);
+		const stepIndex = Math.max(0, Math.min(session.activeStepIndex, clip.steps.length - 1));
+		return clip.steps[stepIndex];
+	}
+
+	/**
+	 * Helper to create an annotation on the active step.
+	 */
+	private createAnnotation(ann: Annotation): void {
+		const step = this.getActiveStep();
+		if (!step) return;
+
+		addAnnotation(step.id, ann as Annotation & { id?: string });
+	}
+
+	/**
+	 * Helper to set an entity path on the active step.
+	 */
+	private setEntityPath(
+		stepId: string,
+		entityId: string,
+		points: { S: number; u: number }[]
+	): void {
+		setEntityPath(stepId, entityId, points);
+	}
+
+	/**
+	 * Updates the path preview during handle drag. Reads handle positions from
+	 * the layer, preserving index 0 (entity pose, no handle) from stored points.
+	 */
+	private updatePathPreview(step: Step, path: EntityPath): void {
+		const handles = this.pathLayer.find<Circle>('.pathHandle');
+		if (!handles || handles.length === 0) return;
+
+		// Start from stored points so index 0 (entity pose) is preserved.
+		const newPoints: { S: number; u: number }[] = path.points.map((p) => ({ ...p }));
+
+		// Inject the entity's current pose as the first point.
+		const entityPose = step.entities.find((e) => e.id === path.entityId);
+		if (entityPose && newPoints.length > 0) {
+			newPoints[0] = { S: entityPose.S, u: entityPose.u };
+		}
+
+		// Overlay handle positions for indices 1..N.
+		const center = this.getStageCenter();
+		handles.forEach((handle) => {
+			const pointIndex = handle.getAttr('pointIndex');
+			const mx = (handle.x() - center.x) / TRACK_SCALE;
+			const my = (handle.y() - center.y) / TRACK_SCALE;
+			const trackPos = toTrack({ x: mx, y: my });
+			newPoints[pointIndex] = { S: trackPos.s, u: trackPos.u };
+		});
+
+		// Re-render the line with updated points
+		const line = this.pathLayer.findOne<Konva.Line>('.lineShape');
+		if (line && newPoints.length >= 2) {
+			const projected = this.smoothProject(newPoints);
+			if (projected) {
+				line.points(projected.flatMap((p) => [p.x, p.y]));
+				this.pathLayer.batchDraw();
+			}
+		}
+	}
+
+	/**
+	 * Commits path changes after drag ends. Preserves index 0 from stored
+	 * points (entity pose, no handle) and writes handle positions for 1..N.
+	 */
+	private commitPathChanges(step: Step, path: EntityPath, selectedEntityId: string | null): void {
+		const handles = this.pathLayer.find<Circle>('.pathHandle');
+		if (!handles || handles.length === 0) return;
+
+		const newPoints: { S: number; u: number }[] = path.points.map((p) => ({ ...p }));
+
+		// Inject the entity's current pose as the first point.
+		const entityPose = step.entities.find((e) => e.id === path.entityId);
+		if (entityPose && newPoints.length > 0) {
+			newPoints[0] = { S: entityPose.S, u: entityPose.u };
+		}
+
+		const center = this.getStageCenter();
+		handles.forEach((handle) => {
+			const pointIndex = handle.getAttr('pointIndex');
+			const mx = (handle.x() - center.x) / TRACK_SCALE;
+			const my = (handle.y() - center.y) / TRACK_SCALE;
+			const trackPos = toTrack({ x: mx, y: my });
+			newPoints[pointIndex] = { S: trackPos.s, u: trackPos.u };
+		});
+
+		// Commit via CRUD operation
+		this.setEntityPath(step.id, path.entityId, newPoints);
+		const { prevStep, nextStep } = this.getAdjacentSteps();
+		this.renderPaths(step, selectedEntityId, prevStep, nextStep);
 	}
 
 	/**

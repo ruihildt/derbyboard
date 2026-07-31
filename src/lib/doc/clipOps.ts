@@ -2,7 +2,16 @@ import { get } from 'svelte/store';
 import { boardDoc } from './store';
 import { poseStore, type Pose, type CommitGestureOptions, applyHeadingModeOpts } from './poses';
 import { authoringSession } from '$lib/stores/session';
-import type { AuthoredClip, BoardDoc, Entity, EntityPose, Step } from './types';
+import type {
+	AuthoredClip,
+	BoardDoc,
+	Entity,
+	EntityPose,
+	Step,
+	TrackPoint,
+	Annotation
+} from './types';
+import { MAX_STEPS_PER_CLIP } from './types';
 import { LAP_LENGTH } from '$lib/track/trackFrame';
 
 /** Captures the live board's poses (id + S/u/heading) as a step payload. */
@@ -17,6 +26,22 @@ export function snapshotPoses(entities: Entity[]): EntityPose[] {
 		headingDelta: e.headingDelta,
 		lookAt: e.lookAt
 	}));
+}
+
+/**
+ * Computes where each entity ENDS up after a step — i.e. the path's last
+ * point if a path exists, or the step's start pose if not. Used when adding
+ * a new step so it starts where the previous step's movement finishes.
+ */
+function arrivalPosesFromStep(step: Step): EntityPose[] {
+	return step.entities.map((e) => {
+		const path = step.paths?.find((p) => p.entityId === e.id);
+		if (path && path.points.length > 0) {
+			const last = path.points[path.points.length - 1];
+			return { ...e, S: last.S, u: last.u };
+		}
+		return { ...e };
+	});
 }
 
 function newId(): string {
@@ -79,8 +104,14 @@ export function createAuthoredClipFromBoard(title?: string): string {
 export function addStepFromBoard(title?: string): string | null {
 	const clip = getActiveClip();
 	if (!clip) return null;
+	if (clip.steps.length >= MAX_STEPS_PER_CLIP) return null;
 	const stepId = newId();
-	const poses = snapshotPoses(boardDoc.current.entities);
+	// The new step starts where the previous step's movement ends — at the
+	// path endpoint, not the previous step's start pose.
+	const lastStep = clip.steps[clip.steps.length - 1];
+	const poses = lastStep
+		? arrivalPosesFromStep(lastStep)
+		: snapshotPoses(boardDoc.current.entities);
 	const insertAt = clip.steps.length;
 	boardDoc.applyEdit((draft) => {
 		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
@@ -100,17 +131,27 @@ export function duplicateActiveStep(): string | null {
 	const clip = getActiveClip();
 	const idx = activeStepIndex();
 	if (!clip || idx < 0) return null;
+	if (clip.steps.length >= MAX_STEPS_PER_CLIP) return null;
 	const source = clip.steps[idx];
 	const stepId = newId();
 	const insertAt = idx + 1;
+	// The duplicate starts where the source step ENDS (at path endpoints),
+	// not where it started. Paths are NOT inherited — the duplicate is a
+	// fresh starting point for the next movement.
+	const arrivalPoses = arrivalPosesFromStep(source);
 	boardDoc.applyEdit((draft) => {
 		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
 		if (!c) return;
 		const copy: Step = {
 			id: stepId,
 			title: source.title,
-			entities: source.entities.map((p) => ({ ...p })),
-			holdMs: source.holdMs,
+			entities: arrivalPoses.map((p) => ({ ...p })),
+			annotations: source.annotations?.map((a) => ({
+				...a,
+				...(a.kind === 'pen' || a.kind === 'zone'
+					? { points: a.points.map((pt) => ({ ...pt })) }
+					: {})
+			})),
 			showPackZone: source.showPackZone
 		};
 		c.steps.splice(insertAt, 0, copy);
@@ -181,6 +222,148 @@ export function setStepPackZone(stepId: string, show: boolean): void {
 }
 
 /**
+ * Sets (replaces) the path for `entityId` on `stepId`. One undo entry.
+ *
+ * **Chain propagation:** the path's last point is also written onto the next
+ * step's entity pose so the visual endpoint always matches what was drawn.
+ * Without this, endpoint injection at resolve time would snap the visual end
+ * to whatever pose step i+1 happens to have, ignoring the drawn destination.
+ */
+export function setEntityPath(stepId: string, entityId: string, points: TrackPoint[]): void {
+	boardDoc.applyEdit((draft) => {
+		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
+		if (!c) return;
+		const stepIdx = c.steps.findIndex((s) => s.id === stepId);
+		if (stepIdx < 0) return;
+		const step = c.steps[stepIdx];
+
+		if (!step.paths) step.paths = [];
+		const finitePoints = points.filter((p) => Number.isFinite(p.S) && Number.isFinite(p.u));
+
+		const existingIdx = step.paths.findIndex((p) => p.entityId === entityId);
+		if (existingIdx >= 0) {
+			step.paths[existingIdx] = {
+				id: step.paths[existingIdx].id,
+				entityId,
+				points: finitePoints.map((pt) => ({ ...pt }))
+			};
+		} else {
+			step.paths.push({
+				id: newId(),
+				entityId,
+				points: finitePoints.map((pt) => ({ ...pt }))
+			});
+		}
+
+		// Chain: propagate the path's last point to the next step's entity pose
+		// so the drawn endpoint and the stored arrival pose agree.
+		if (finitePoints.length >= 2 && stepIdx < c.steps.length - 1) {
+			const endPoint = finitePoints[finitePoints.length - 1];
+			const nextStep = c.steps[stepIdx + 1];
+			const nextEntity = nextStep.entities.find((e) => e.id === entityId);
+			if (nextEntity) {
+				nextEntity.S = endPoint.S;
+				nextEntity.u = endPoint.u;
+			}
+		}
+	}, 'Draw path');
+}
+
+/** Removes the path for `entityId` from `stepId`. No-op if absent. */
+export function clearEntityPath(stepId: string, entityId: string): void {
+	boardDoc.applyEdit((draft) => {
+		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
+		if (!c) return;
+		const step = c.steps.find((s) => s.id === stepId);
+		if (!step || !step.paths) return;
+		step.paths = step.paths.filter((p) => p.entityId !== entityId);
+	}, 'Clear path');
+}
+
+/** Deletes the path object with `pathId` from `stepId`. No-op if absent. */
+export function deletePath(stepId: string, pathId: string): void {
+	boardDoc.applyEdit((draft) => {
+		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
+		if (!c) return;
+		const step = c.steps.find((s) => s.id === stepId);
+		if (!step || !step.paths) return;
+		step.paths = step.paths.filter((p) => p.id !== pathId);
+	}, 'Delete path');
+}
+
+/** Appends an annotation to `stepId`. Returns the new annotation id (caller may pass its own id). */
+export function addAnnotation(
+	stepId: string,
+	ann: Omit<Annotation, 'id'> & { id?: string }
+): string {
+	const id = ann.id ?? newId();
+	boardDoc.applyEdit((draft) => {
+		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
+		if (!c) return;
+		const step = c.steps.find((s) => s.id === stepId);
+		if (!step) return;
+
+		if (!step.annotations) step.annotations = [];
+
+		const filtered: Annotation = { ...ann, id } as Annotation;
+
+		if ('points' in filtered && Array.isArray(filtered.points)) {
+			(filtered as Extract<Annotation, { kind: 'pen' | 'zone' }>).points = filtered.points.filter(
+				(p) => Number.isFinite(p.S) && Number.isFinite(p.u)
+			);
+		}
+
+		step.annotations.push(filtered);
+	}, 'Add annotation');
+	return id;
+}
+
+/** Replaces an annotation by id (full replacement; used after a reshape/edit). */
+export function updateAnnotation(stepId: string, annId: string, ann: Annotation): void {
+	boardDoc.applyEdit((draft) => {
+		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
+		if (!c) return;
+		const step = c.steps.find((s) => s.id === stepId);
+		if (!step || !step.annotations) return;
+
+		const idx = step.annotations.findIndex((a) => a.id === annId);
+		if (idx >= 0) {
+			const filtered: Annotation = { ...ann, id: annId };
+
+			if ('points' in filtered && Array.isArray(filtered.points)) {
+				(filtered as Extract<Annotation, { kind: 'pen' | 'zone' }>).points = filtered.points.filter(
+					(p) => Number.isFinite(p.S) && Number.isFinite(p.u)
+				);
+			}
+
+			step.annotations[idx] = filtered;
+		}
+	}, 'Edit annotation');
+}
+
+/** Deletes an annotation by id. No-op if absent. */
+export function deleteAnnotation(stepId: string, annId: string): void {
+	boardDoc.applyEdit((draft) => {
+		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
+		if (!c) return;
+		const step = c.steps.find((s) => s.id === stepId);
+		if (!step || !step.annotations) return;
+		step.annotations = step.annotations.filter((a) => a.id !== annId);
+	}, 'Delete annotation');
+}
+
+/** Removes every annotation from `stepId`. */
+export function clearAnnotations(stepId: string): void {
+	boardDoc.applyEdit((draft) => {
+		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
+		if (!c) return;
+		const step = c.steps.find((s) => s.id === stepId);
+		if (!step) return;
+		step.annotations = undefined;
+	}, 'Clear annotations');
+}
+
+/**
  * Writes the current board poses onto the active step within ONE undo entry
  * that also writes the live poses to the document — so undo reverts the board
  * move and the step snapshot together. Registered as the PoseStore commit
@@ -229,6 +412,28 @@ function commitAuthoringGesture(
 					applyHeadingModeOpts(stepEntity, opts);
 				}
 			}
+
+			// Backward chain propagation: a moved arrival pose must also move the
+			// PREVIOUS step's path endpoint for that entity, so the drawn path's
+			// last point tracks the new position. setEntityPath does the forward
+			// mirror (path endpoint → next step pose); this completes the pair.
+			// renderPaths draws the STORED endpoint (not injected, by design), so
+			// without this the visual lags the pose even though playback — which
+			// re-derives the endpoint from the pose — already follows it.
+			if (idx > 0) {
+				const prevStep = c.steps[idx - 1];
+				if (prevStep.paths) {
+					for (const [id, pose] of poses) {
+						if (!Number.isFinite(pose.S) || !Number.isFinite(pose.u)) continue;
+						const path = prevStep.paths.find((p) => p.entityId === id);
+						if (path && path.points.length >= 2) {
+							const last = path.points[path.points.length - 1];
+							last.S = pose.S;
+							last.u = pose.u;
+						}
+					}
+				}
+			}
 		}
 	}, label);
 }
@@ -265,6 +470,25 @@ export function loadStepOntoBoard(index: number): void {
 	const clip = getActiveClip(doc);
 	const step = clip?.steps[index];
 	boardDoc.setView(applyStepPosesToBoard(doc, step));
+}
+
+/**
+ * Loads a step's ARRIVAL poses (path endpoints) onto the board so entities
+ * show where they end up after the step's movement completes. Used after
+ * playback so the board doesn't snap back to start poses.
+ */
+export function loadStepArrivalOntoBoard(index: number): void {
+	const doc = boardDoc.current;
+	const clip = getActiveClip(doc);
+	const step = clip?.steps[index];
+	if (!step) return;
+	const arrival = arrivalPosesFromStep(step);
+	const byId = new Map(arrival.map((p) => [p.id, p]));
+	const entities = doc.entities.map((e) => {
+		const p = byId.get(e.id);
+		return p ? { ...e, S: p.S, u: p.u, heading: p.heading } : e;
+	});
+	boardDoc.setView({ ...doc, entities });
 }
 
 /**

@@ -423,5 +423,36 @@ describe('migrate', () => {
 			if (clip.kind !== 'authored') return;
 			expect(clip.steps[0].entities[0].manualHeading).toBe(true);
 		});
+
+		it('bumps a v5 document to v6, adding annotations and paths fields', () => {
+			const v5 = migrateBoardState({
+				version: 3,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				teamPlayers: [],
+				skatingOfficials: []
+			});
+			v5.version = 5;
+			const migrated = migrateBoardDoc(v5);
+			expect(migrated.version).toBe(6);
+			const clip = migrated.clips[0];
+			if (!clip || clip.kind !== 'authored') return;
+			// annotations and paths should be undefined (absent = none)
+			expect(clip.steps[0].annotations).toBeUndefined();
+			expect(clip.steps[0].paths).toBeUndefined();
+		});
+
+		it('is idempotent on a v6 document', () => {
+			const v5 = migrateBoardState({
+				version: 3,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				teamPlayers: [],
+				skatingOfficials: []
+			});
+			v5.version = 5;
+			const once = migrateBoardDoc(v5);
+			const twice = migrateBoardDoc(once);
+			expect(twice.version).toBe(6);
+			expect(twice).toEqual(once);
+		});
 	});
 });

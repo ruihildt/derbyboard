@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { boardDoc } from './store';
 import { poseStore } from './poses';
 import { createEmptyDoc } from './types';
-import type { Entity } from './types';
+import type { Entity, Annotation } from './types';
 import { authoringSession } from '$lib/stores/session';
 import {
 	createAuthoredClipFromBoard,
@@ -18,7 +18,14 @@ import {
 	getActiveStep,
 	exitAuthoring,
 	snapshotPoses,
-	findAuthoredClip
+	findAuthoredClip,
+	setEntityPath,
+	clearEntityPath,
+	deletePath,
+	addAnnotation,
+	updateAnnotation,
+	deleteAnnotation,
+	clearAnnotations
 } from './clipOps';
 
 function entity(id: string, S: number, u = 0.5, heading = 0): Entity {
@@ -63,15 +70,19 @@ describe('clipOps — createAuthoredClipFromBoard', () => {
 describe('clipOps — addStepFromBoard', () => {
 	beforeEach(() => resetBoard([entity('a', 10)]));
 
-	it('appends a step snapshotting the current board', () => {
+	it('appends a step with the previous step arrival poses', () => {
 		createAuthoredClipFromBoard();
-		// Move the board (via document edit) then snapshot a new step.
-		boardDoc.applyEdit((d) => {
-			d.entities.find((e) => e.id === 'a')!.S = 40;
-		}, 'move');
+		// Draw a path on step 0 so the entity arrives at S=40.
+		const step0Id = getActiveClip()!.steps[0].id;
+		setEntityPath(step0Id, 'a', [
+			{ S: 10, u: 0.5 },
+			{ S: 25, u: 0.5 },
+			{ S: 40, u: 0.5 }
+		]);
 		addStepFromBoard();
 		const clip = getActiveClip()!;
 		expect(clip.steps).toHaveLength(2);
+		// New step starts where the path ends (S=40), not where it began (S=10).
 		expect(clip.steps[1].entities[0].S).toBe(40);
 		expect(activeStepIndex()).toBe(1);
 	});
@@ -176,6 +187,274 @@ describe('clipOps — deleteStep / moveStep / renameStep / setStepPackZone', () 
 		setStepPackZone(id, true);
 		expect(getActiveClip()!.steps[0].showPackZone).toBe(true);
 	});
+
+	it('duplicateActiveStep copies annotations and paths deeply', () => {
+		createAuthoredClipFromBoard();
+		const annId = 'test-ann';
+		const pathId = 'test-path';
+		boardDoc.applyEdit((d) => {
+			const c = getActiveClip(d);
+			if (!c) return;
+			c.steps[0].annotations = [
+				{
+					id: annId,
+					kind: 'pen',
+					points: [
+						{ S: 0, u: 0.5 },
+						{ S: 1, u: 0.5 },
+						{ S: 2, u: 0.5 }
+					],
+					style: { color: '#ff0000', width: 2 }
+				}
+			];
+			c.steps[0].paths = [
+				{
+					id: pathId,
+					entityId: 'a',
+					points: [
+						{ S: 0, u: 0.5 },
+						{ S: 1, u: 0.5 },
+						{ S: 2, u: 0.5 },
+						{ S: 3, u: 0.5 }
+					]
+				}
+			];
+		}, 'add annotations and paths');
+		const sourceStep = getActiveClip()!.steps[0];
+		expect(sourceStep.annotations).toHaveLength(1);
+		expect(sourceStep.paths).toHaveLength(1);
+		duplicateActiveStep();
+		const copyStep = getActiveClip()!.steps[1];
+		expect(copyStep.annotations).toHaveLength(1);
+		// Paths are NOT copied — the duplicate starts fresh from the arrival pose.
+		expect(copyStep.paths).toBeUndefined();
+
+		if (sourceStep.annotations![0].kind === 'pen' && copyStep.annotations![0].kind === 'pen') {
+			// Deep copy: point objects should be distinct
+			expect(copyStep.annotations![0].points[0]).not.toBe(sourceStep.annotations![0].points[0]);
+			// Geometry should be equal
+			expect(copyStep.annotations![0].points).toEqual(sourceStep.annotations![0].points);
+		}
+	});
+});
+
+describe('clipOps — paths and annotations', () => {
+	beforeEach(() => resetBoard([entity('a', 10)]));
+
+	it('setEntityPath creates a new path for an entity', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		const points = [
+			{ S: 0, u: 0.5 },
+			{ S: 1, u: 0.5 },
+			{ S: 2, u: 0.5 }
+		];
+		setEntityPath(stepId, 'a', points);
+		const step = getActiveClip()!.steps[0];
+		expect(step.paths).toHaveLength(1);
+		expect(step.paths![0].entityId).toBe('a');
+		expect(step.paths![0].points).toEqual(points);
+	});
+
+	it('setEntityPath replaces an existing path for the same entity', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		setEntityPath(stepId, 'a', [
+			{ S: 0, u: 0.5 },
+			{ S: 1, u: 0.5 }
+		]);
+		setEntityPath(stepId, 'a', [
+			{ S: 2, u: 0.5 },
+			{ S: 3, u: 0.5 }
+		]);
+		const step = getActiveClip()!.steps[0];
+		expect(step.paths).toHaveLength(1);
+		expect(step.paths![0].points).toEqual([
+			{ S: 2, u: 0.5 },
+			{ S: 3, u: 0.5 }
+		]);
+	});
+
+	it('clearEntityPath removes the path for an entity', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		setEntityPath(stepId, 'a', [
+			{ S: 0, u: 0.5 },
+			{ S: 1, u: 0.5 }
+		]);
+		clearEntityPath(stepId, 'a');
+		const step = getActiveClip()!.steps[0];
+		expect(step.paths).toHaveLength(0);
+	});
+
+	it('deletePath removes a path by id', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		setEntityPath(stepId, 'a', [
+			{ S: 0, u: 0.5 },
+			{ S: 1, u: 0.5 }
+		]);
+		const pathId = getActiveClip()!.steps[0].paths![0].id;
+		deletePath(stepId, pathId);
+		const step = getActiveClip()!.steps[0];
+		expect(step.paths).toHaveLength(0);
+	});
+
+	it('addAnnotation creates a new annotation', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		const id = addAnnotation(stepId, {
+			kind: 'pen',
+			points: [
+				{ S: 0, u: 0.5 },
+				{ S: 1, u: 0.5 }
+			],
+			style: { color: '#ff0000' }
+		} as Omit<Annotation, 'id'>);
+		const step = getActiveClip()!.steps[0];
+		expect(step.annotations).toHaveLength(1);
+		expect(step.annotations![0].id).toBe(id);
+		if (step.annotations![0].kind === 'pen') {
+			expect(step.annotations![0].points).toEqual([
+				{ S: 0, u: 0.5 },
+				{ S: 1, u: 0.5 }
+			]);
+		}
+	});
+
+	it('updateAnnotation replaces an annotation by id', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		const id = addAnnotation(stepId, {
+			kind: 'pen',
+			points: [
+				{ S: 0, u: 0.5 },
+				{ S: 1, u: 0.5 }
+			],
+			style: { color: '#ff0000' }
+		} as Omit<Annotation, 'id'>);
+		updateAnnotation(stepId, id, {
+			id,
+			kind: 'pen',
+			points: [
+				{ S: 2, u: 0.5 },
+				{ S: 3, u: 0.5 }
+			],
+			style: { color: '#00ff00' }
+		});
+		const step = getActiveClip()!.steps[0];
+		expect(step.annotations).toHaveLength(1);
+		if (step.annotations![0].kind === 'pen') {
+			expect(step.annotations![0].points).toEqual([
+				{ S: 2, u: 0.5 },
+				{ S: 3, u: 0.5 }
+			]);
+			expect(step.annotations![0].style.color).toBe('#00ff00');
+		}
+	});
+
+	it('deleteAnnotation removes an annotation by id', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		const id = addAnnotation(stepId, {
+			kind: 'pen',
+			points: [
+				{ S: 0, u: 0.5 },
+				{ S: 1, u: 0.5 }
+			],
+			style: { color: '#ff0000' }
+		} as Omit<Annotation, 'id'>);
+		deleteAnnotation(stepId, id);
+		const step = getActiveClip()!.steps[0];
+		expect(step.annotations).toHaveLength(0);
+	});
+
+	it('clearAnnotations removes all annotations from a step', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		addAnnotation(stepId, {
+			kind: 'pen',
+			points: [
+				{ S: 0, u: 0.5 },
+				{ S: 1, u: 0.5 }
+			],
+			style: { color: '#ff0000' }
+		} as Omit<Annotation, 'id'>);
+		addAnnotation(stepId, {
+			kind: 'pen',
+			points: [
+				{ S: 2, u: 0.5 },
+				{ S: 3, u: 0.5 }
+			],
+			style: { color: '#00ff00' }
+		} as Omit<Annotation, 'id'>);
+		clearAnnotations(stepId);
+		const step = getActiveClip()!.steps[0];
+		expect(step.annotations).toBeUndefined();
+	});
+
+	it('path/annotation ops create one undo entry each', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		const historyDepth = undoDepth();
+
+		setEntityPath(stepId, 'a', [
+			{ S: 0, u: 0.5 },
+			{ S: 1, u: 0.5 }
+		]);
+		expect(undoDepth()).toBe(historyDepth + 1);
+
+		addAnnotation(stepId, {
+			kind: 'pen',
+			points: [
+				{ S: 0, u: 0.5 },
+				{ S: 1, u: 0.5 }
+			],
+			style: { color: '#ff0000' }
+		} as Omit<Annotation, 'id'>);
+		expect(undoDepth()).toBe(historyDepth + 2);
+
+		boardDoc.undo();
+		const step = getActiveClip()!.steps[0];
+		expect(step.annotations).toBeUndefined();
+
+		boardDoc.undo();
+		const step2 = getActiveClip()!.steps[0];
+		expect(step2.paths).toBeUndefined();
+	});
+
+	it('non-finite points are dropped', () => {
+		createAuthoredClipFromBoard();
+		const stepId = getActiveClip()!.steps[0].id;
+		const pointsWithNaN = [
+			{ S: 0, u: 0.5 },
+			{ S: NaN, u: 0.5 },
+			{ S: 1, u: 0.5 },
+			{ S: 2, u: Infinity },
+			{ S: 3, u: 0.5 }
+		];
+		setEntityPath(stepId, 'a', pointsWithNaN);
+		const step = getActiveClip()!.steps[0];
+		expect(step.paths![0].points).toEqual([
+			{ S: 0, u: 0.5 },
+			{ S: 1, u: 0.5 },
+			{ S: 3, u: 0.5 }
+		]);
+
+		addAnnotation(stepId, {
+			kind: 'pen',
+			points: pointsWithNaN,
+			style: { color: '#ff0000' }
+		} as Omit<Annotation, 'id'>);
+		const step2 = getActiveClip()!.steps[0];
+		if (step2.annotations![0].kind === 'pen') {
+			expect(step2.annotations![0].points).toEqual([
+				{ S: 0, u: 0.5 },
+				{ S: 1, u: 0.5 },
+				{ S: 3, u: 0.5 }
+			]);
+		}
+	});
 });
 
 describe('clipOps — navigateToStep (history-less)', () => {
@@ -183,12 +462,15 @@ describe('clipOps — navigateToStep (history-less)', () => {
 
 	it('loads a step onto the board without creating undo history', () => {
 		createAuthoredClipFromBoard();
-		// Step 0: a@10. Add a step with a@50.
-		boardDoc.applyEdit((d) => {
-			d.entities.find((e) => e.id === 'a')!.S = 50;
-		}, 'move');
-		addStepFromBoard();
-		// Undo history now has: create, move, add.
+		// Draw a path on step 0 so the entity arrives at S=50.
+		const step0Id = getActiveClip()!.steps[0].id;
+		setEntityPath(step0Id, 'a', [
+			{ S: 10, u: 0.5 },
+			{ S: 30, u: 0.5 },
+			{ S: 50, u: 0.5 }
+		]);
+		addStepFromBoard(); // step 1 starts at path endpoint (a@50)
+		// Undo history now has: create, draw path, add.
 		const historyDepth = undoDepth();
 		navigateToStep(0); // back to step 0 (a@10)
 		expect(boardDoc.current.entities.find((e) => e.id === 'a')?.S).toBe(10);
@@ -196,6 +478,49 @@ describe('clipOps — navigateToStep (history-less)', () => {
 		expect(undoDepth()).toBe(historyDepth);
 		navigateToStep(1); // forward to step 1 (a@50)
 		expect(boardDoc.current.entities.find((e) => e.id === 'a')?.S).toBe(50);
+	});
+});
+
+describe('clipOps — backward chain propagation', () => {
+	beforeEach(() => resetBoard([entity('a', 10)]));
+
+	it('moving a step pose updates the previous step path endpoint', () => {
+		createAuthoredClipFromBoard();
+		// Draw a path on step 0 ending at S=50; forward propagation seeds step 1.
+		const step0Id = getActiveClip()!.steps[0].id;
+		setEntityPath(step0Id, 'a', [
+			{ S: 10, u: 0.5 },
+			{ S: 30, u: 0.5 },
+			{ S: 50, u: 0.5 }
+		]);
+		addStepFromBoard(); // step 1 starts at the path endpoint (a@50)
+		expect(getActiveStep()!.entities.find((e) => e.id === 'a')?.S).toBe(50);
+
+		// Move entity a on step 1 to S=70 via a gesture commit.
+		poseStore.setLive('a', { S: 70, u: 0.5, heading: 0 });
+		poseStore.commitGesture('move');
+
+		// Backward propagation: step 0's path endpoint now follows step 1's pose.
+		const step0 = getActiveClip()!.steps[0];
+		const last = step0.paths![0].points[step0.paths![0].points.length - 1];
+		expect(last).toEqual({ S: 70, u: 0.5 });
+	});
+
+	it('does not touch the previous step when on step 0', () => {
+		createAuthoredClipFromBoard();
+		const step0Id = getActiveClip()!.steps[0].id;
+		setEntityPath(step0Id, 'a', [
+			{ S: 10, u: 0.5 },
+			{ S: 30, u: 0.5 },
+			{ S: 50, u: 0.5 }
+		]);
+		// No previous step on step 0: moving the pose must not change the path's
+		// stored endpoint (it stays at the drawn destination, S=50).
+		poseStore.setLive('a', { S: 70, u: 0.5, heading: 0 });
+		poseStore.commitGesture('move');
+		const step0 = getActiveClip()!.steps[0];
+		const last = step0.paths![0].points[step0.paths![0].points.length - 1];
+		expect(last).toEqual({ S: 50, u: 0.5 });
 	});
 });
 

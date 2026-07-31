@@ -6,7 +6,6 @@
 		PauseOutline,
 		CloseOutline,
 		PlusOutline,
-		FileCopyOutline,
 		TrashBinOutline,
 		BackwardStepOutline,
 		ForwardStepOutline,
@@ -22,21 +21,36 @@
 		navigateToStep,
 		loadStepOntoBoard,
 		addStepFromBoard,
-		duplicateActiveStep,
 		deleteStep,
 		moveStep,
-		exitAuthoring
+		exitAuthoring,
+		loadStepArrivalOntoBoard
 	} from '$lib/doc/clipOps';
 	import { AuthoredPlayer } from '$lib/recording/authored/AuthoredPlayer';
-	import { nearestStepAt, buildTimeline } from '$lib/track/tween';
+	import { nearestStepAt, buildTimeline, STEP_DURATION_MS } from '$lib/track/tween';
 	import { isMobile } from '$lib/stores/viewport';
 	import { authoringSession } from '$lib/stores/session';
+	import { toolMode, type DrawTool } from '$lib/stores/toolMode';
+	import { selectedEntityId } from '$lib/stores/selection';
+	import { MAX_STEPS_PER_CLIP } from '$lib/doc/types';
+
+	const tools: { id: DrawTool; label: string; icon: string }[] = [
+		{ id: 'select', label: 'Select / pan', icon: '✋' },
+		{ id: 'drawPath', label: 'Draw movement path', icon: '↗' },
+		{ id: 'pen', label: 'Freehand pen', icon: '✏' },
+		{ id: 'arrow', label: 'Arrow', icon: '→' },
+		{ id: 'zone', label: 'Zone', icon: '◯' },
+		{ id: 'label', label: 'Label', icon: 'A' },
+		{ id: 'gap', label: 'Gap', icon: '⫶' }
+	];
 
 	let { game }: { game: KonvaGame } = $props();
 
 	let clip = $derived($authoringSession.activeClipId ? getActiveClip($boardDoc) : undefined);
 	let steps = $derived(clip?.steps ?? []);
 	let activeIdx = $derived(activeStepIndex($boardDoc));
+	/** Playback is possible with 2+ steps, or a single step that has a path. */
+	let canPlay = $derived(steps.length >= 2 || steps.some((s) => s.paths && s.paths.length > 0));
 
 	// Local counter for rapid next/prev clicks. `activeIdx` is reactive and
 	// may lag behind rapid successive clicks, so we track the last navigated
@@ -53,6 +67,8 @@
 	let currentTime = $state(0);
 	let duration = $state(0);
 	let playbackStep = $state(0);
+	/** When non-null, a single step is being played (step-play mode). */
+	let stepPlaybackIdx = $state<number | null>(null);
 	let loop = $state(false);
 	const SPEEDS = [0.25, 0.5, 0.75, 1];
 	let speedIdx = $state(0); // default 0.25×
@@ -62,7 +78,7 @@
 	// Keep duration in sync with the clip timeline so the scrub bar is usable
 	// before playback starts.
 	$effect(() => {
-		if (steps.length >= 2) {
+		if (canPlay) {
 			duration = buildTimeline(steps).totalMs;
 		} else {
 			duration = 0;
@@ -84,6 +100,22 @@
 		if (!player) {
 			const step = getActiveStep();
 			game.setPackZoneVisible(step?.showPackZone ?? true);
+		}
+	});
+
+	// Sync step overlays (paths, annotations, onion skin) on step/selection/tool changes.
+	$effect(() => {
+		void $boardDoc;
+		void $toolMode;
+		void $selectedEntityId;
+		if (!game) return;
+		if (!player) {
+			const step = getActiveStep();
+			game.renderStepOverlays(step, $selectedEntityId);
+		} else {
+			// During playback, re-render paths for the current step so the
+			// selected entity's path updates immediately on selection change.
+			renderPathsForStep(playbackStep);
 		}
 	});
 
@@ -147,10 +179,56 @@
 		addStepFromBoard();
 	}
 
-	function duplicateStep(i: number) {
+	function playStep(i: number) {
+		// If this step is already being played, toggle pause/play.
+		if (stepPlaybackIdx === i && player) {
+			player.toggle();
+			playing = player.isPlaying();
+			return;
+		}
 		if (playing || player) stopPlayback(false);
-		navigateToStep(i);
-		duplicateActiveStep();
+		if (!game || !clip) return;
+
+		stepPlaybackIdx = i;
+		playbackStep = i;
+		const stepStartMs = i * STEP_DURATION_MS;
+		const stepEndMs = stepStartMs + STEP_DURATION_MS;
+
+		// Navigate to the step to load its start poses (no tween animation).
+		navigateToStep(i, false);
+		// Update path overlays to show this step's paths + adjacent context.
+		const step = steps[i];
+		if (step && game) game.renderStepOverlays(step, $selectedEntityId);
+
+		player = new AuthoredPlayer({
+			game,
+			clip,
+			onTick: (t) => {
+				currentTime = t;
+				if (t >= stepEndMs) {
+					stopPlayback(false);
+					navigateToStep(i);
+					return;
+				}
+				// playbackStep stays at i — per-step playback never crosses
+				// a step boundary, so the chip and path overlay must not tip
+				// to the next step at the midpoint.
+			},
+			onEnd: () => {
+				playing = false;
+				stopPlayback(false);
+				navigateToStep(i);
+			}
+		});
+
+		duration = player.getDuration();
+		player.setLoop(false);
+		player.setSpeed(SPEEDS[speedIdx]);
+		game.beginAuthoredPlayback();
+		player.seek(stepStartMs);
+		currentTime = stepStartMs;
+		player.play();
+		playing = player.isPlaying();
 	}
 
 	function removeStep(id: string) {
@@ -172,7 +250,7 @@
 
 	// ---- Playback -----------------------------------------------------------
 	function togglePlay() {
-		if (!clip || steps.length < 2) return;
+		if (!clip || !canPlay) return;
 		if (!player) {
 			startPlayback();
 			return;
@@ -184,12 +262,20 @@
 	function startPlayback() {
 		if (!clip || !game) return;
 		stopPlayback(false);
+		const startIdx = Math.max(0, activeIdx);
+		const startMs = startIdx * STEP_DURATION_MS;
 		player = new AuthoredPlayer({
 			game,
 			clip,
 			onTick: (t) => {
 				currentTime = t;
-				playbackStep = nearestStepAt(player!.getTimeline(), t);
+				// Update chip + path overlays only when the step's animation
+				// completes (at step boundaries), not mid-tween.
+				const stepIdx = Math.min(steps.length - 1, Math.floor(t / STEP_DURATION_MS));
+				if (stepIdx !== playbackStep) {
+					playbackStep = stepIdx;
+					renderPathsForStep(stepIdx);
+				}
 			},
 			onEnd: () => {
 				playing = false;
@@ -202,9 +288,27 @@
 		player.setSpeed(SPEEDS[speedIdx]);
 		game.beginAuthoredPlayback();
 		if (focusMode) game.setFocus(focusIds);
-		currentTime = 0;
+		// Start from the currently selected step.
+		playbackStep = startIdx;
+		renderPathsForStep(startIdx);
+		player.seek(startMs);
+		currentTime = startMs;
 		player.play();
 		playing = player.isPlaying();
+	}
+
+	/**
+	 * Renders path overlays for a step index, computing prev/next steps
+	 * directly from the steps array (not from the session, which may be
+	 * stale during playback).
+	 */
+	function renderPathsForStep(stepIdx: number): void {
+		if (!game) return;
+		const step = steps[stepIdx];
+		if (!step) return;
+		const prevStep = stepIdx > 0 ? steps[stepIdx - 1] : undefined;
+		const nextStep = stepIdx < steps.length - 1 ? steps[stepIdx + 1] : undefined;
+		game.renderPaths(step, $selectedEntityId, prevStep, nextStep);
 	}
 
 	function stopPlayback(settleStep: boolean) {
@@ -213,10 +317,16 @@
 			player = null;
 		}
 		playing = false;
+		stepPlaybackIdx = null;
 		if (game) game.endAuthoredPlayback();
 		if (settleStep) {
-			// Land on the step nearest where playback stopped.
-			navigateToStep(Math.min(steps.length - 1, Math.max(0, playbackStep)));
+			// Load arrival poses (path endpoints) so entities show their
+			// final positions after playback, not the start poses.
+			const stepIdx = Math.min(steps.length - 1, Math.max(0, playbackStep));
+			loadStepArrivalOntoBoard(stepIdx);
+			navigateToStep(stepIdx, false);
+			const step = steps[stepIdx];
+			if (step && game) game.renderStepOverlays(step, $selectedEntityId);
 		}
 	}
 
@@ -322,10 +432,10 @@
 			<ToolbarButton
 				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg bg-primary-100 text-primary-700 hover:bg-primary-200"
 				onclick={togglePlay}
-				disabled={steps.length < 2}
-				aria-label={playing ? 'Pause' : 'Play'}
+				disabled={!canPlay || stepPlaybackIdx !== null}
+				aria-label={playing && stepPlaybackIdx === null ? 'Pause' : 'Play'}
 			>
-				{#if playing}
+				{#if playing && stepPlaybackIdx === null}
 					<PauseOutline class="h-5 w-5" />
 				{:else}
 					<PlayOutline class="h-5 w-5" />
@@ -350,7 +460,7 @@
 				<ForwardStepOutline class="h-5 w-5" />
 			</ToolbarButton>
 
-			{#if steps.length >= 2}
+			{#if canPlay}
 				<!-- Scrub bar -->
 				<div
 					bind:this={trackEl}
@@ -378,7 +488,7 @@
 					{fmt(currentTime)} / {fmt(duration)}
 				</span>
 			{:else}
-				<span class="px-2 text-xs text-gray-400">Add a 2nd step to play</span>
+				<span class="px-2 text-xs text-gray-400">Add a path or another step to play</span>
 			{/if}
 
 			<ToolbarButton
@@ -444,11 +554,15 @@
 								class="rounded p-0.5 hover:bg-black/5"
 								onclick={(e) => {
 									e.stopPropagation();
-									duplicateStep(i);
+									playStep(i);
 								}}
-								aria-label="Duplicate step"
+								aria-label={stepPlaybackIdx === i && playing ? 'Pause step' : 'Play step'}
 							>
-								<FileCopyOutline class="h-3.5 w-3.5" />
+								{#if stepPlaybackIdx === i && playing}
+									<PauseOutline class="h-3.5 w-3.5" />
+								{:else}
+									<PlayOutline class="h-3.5 w-3.5" />
+								{/if}
 							</button>
 							{#if steps.length > 1}
 								<button
@@ -469,14 +583,36 @@
 					</div>
 				</div>
 			{/each}
-			<button
-				type="button"
-				class="flex min-w-[2.5rem] flex-none items-center justify-center rounded-md border border-dashed border-gray-300 px-2 py-3 text-gray-400 hover:border-primary-400 hover:text-primary-500"
-				onclick={addStep}
-				aria-label="Add step"
-			>
-				<PlusOutline class="h-5 w-5" />
-			</button>
+			{#if steps.length < MAX_STEPS_PER_CLIP}
+				<button
+					type="button"
+					class="flex min-w-[2.5rem] flex-none items-center justify-center rounded-md border border-dashed border-gray-300 px-2 py-3 text-gray-400 hover:border-primary-400 hover:text-primary-500"
+					onclick={addStep}
+					aria-label="Add step"
+				>
+					<PlusOutline class="h-5 w-5" />
+				</button>
+			{/if}
+		</div>
+
+		<!-- Tool palette -->
+		<div
+			class="flex items-center gap-1 overflow-x-auto rounded-lg bg-white px-2 py-1.5 shadow-lg shadow-black/10 touch-none"
+		>
+			{#each tools as tool (tool.id)}
+				<button
+					type="button"
+					class="flex min-h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-medium transition-colors {$toolMode ===
+					tool.id
+						? 'bg-primary-100 text-primary-700'
+						: 'text-gray-600 hover:bg-primary-50'}"
+					onclick={() => toolMode.set(tool.id)}
+					aria-label={tool.label}
+					title={tool.label}
+				>
+					{tool.icon}
+				</button>
+			{/each}
 		</div>
 	</div>
 {/if}

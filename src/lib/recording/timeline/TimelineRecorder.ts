@@ -122,6 +122,20 @@ export class TimelineRecorder {
 		if (Math.abs(a.view.relativeX - b.view.relativeX) > VIEW_EPSILON) return true;
 		if (Math.abs(a.view.relativeY - b.view.relativeY) > VIEW_EPSILON) return true;
 
+		// Compare path frame (presence, entity count, selection, ghost count).
+		const af = a.pathFrame;
+		const bf = b.pathFrame;
+		if ((af?.paths.length ?? 0) !== (bf?.paths.length ?? 0)) return true;
+		if ((af?.prevPaths?.length ?? 0) !== (bf?.prevPaths?.length ?? 0)) return true;
+		if ((af?.nextPaths?.length ?? 0) !== (bf?.nextPaths?.length ?? 0)) return true;
+		if (af?.selectedEntityId !== bf?.selectedEntityId) return true;
+		if (af && bf) {
+			for (let i = 0; i < af.paths.length; i++) {
+				if (af.paths[i].entityId !== bf.paths[i].entityId) return true;
+				if (af.paths[i].points.length !== bf.paths[i].points.length) return true;
+			}
+		}
+
 		// Compare team players by id.
 		if (a.teamPlayers.length !== b.teamPlayers.length) return true;
 		const bById = new Map(b.teamPlayers.map((p) => [p.id, p]));

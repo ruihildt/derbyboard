@@ -87,6 +87,7 @@ export function interpolateSample(project: TimelineProject, t: number): Timeline
 		t,
 		teamPlayers: lerpRoster(a.teamPlayers, b.teamPlayers, f),
 		skatingOfficials: lerpRoster(a.skatingOfficials, b.skatingOfficials, f),
-		view
+		view,
+		pathFrame: f < 0.5 ? a.pathFrame : b.pathFrame
 	};
 }

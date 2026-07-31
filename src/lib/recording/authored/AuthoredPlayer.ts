@@ -1,9 +1,15 @@
 import type { KonvaGame } from '$lib/konva/KonvaGame';
 import type { AuthoredClip } from '$lib/doc/types';
-import { buildTimeline, sampleAuthoredAt, type AuthoredTimeline } from '$lib/track/tween';
+import {
+	buildTimeline,
+	sampleAuthoredAt,
+	resolveStepPaths,
+	type AuthoredTimeline
+} from '$lib/track/tween';
 import { resolveHeadings } from '$lib/track/heading';
 import { boardSettings } from '$lib/stores/boardSettings';
 import { get } from 'svelte/store';
+import type { ArcLengthPath } from '$lib/track/pathMath';
 
 export interface AuthoredPlayerOptions {
 	game: KonvaGame;
@@ -163,9 +169,21 @@ export class AuthoredPlayer {
 	private applyAt(t: number): void {
 		const clamped = Math.max(0, Math.min(t, this.getDuration()));
 		this.currentTime = clamped;
-		const poses = sampleAuthoredAt(this.timeline, this.stepPoseArrays(), clamped);
+		const autoFace = get(boardSettings).autoFace ?? true;
+		const stepMaps = this.stepPathMaps();
+		const poses = sampleAuthoredAt(
+			this.timeline,
+			this.stepPoseArrays(),
+			clamped,
+			stepMaps,
+			autoFace
+		);
 		this.game.applyAuthoredPoses(poses);
 		this.onTick?.(clamped);
+	}
+
+	private stepPathMaps(): Map<string, ArcLengthPath>[] {
+		return this.clip.steps.map((s, i) => resolveStepPaths(s, this.clip.steps[i + 1]));
 	}
 
 	private stepPoseArrays(): Array<{ id: string; S: number; u: number; heading: number }[]> {

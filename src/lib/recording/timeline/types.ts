@@ -1,11 +1,34 @@
 import type { CaptureZone } from '$lib/utils/capture';
 import type { TeamPlayerPosition, SkatingOfficialPosition } from '$lib/stores/konvaBoardState';
+import type { TrackPoint } from '$lib/doc/types';
 
 /** Board view (zoom + pan), stored relative to the stage center. */
 export interface TimelineView {
 	zoom: number;
 	relativeX: number;
 	relativeY: number;
+}
+
+/** A compact path definition stored in a PathFrame. */
+export interface PathEntry {
+	id: string;
+	entityId: string;
+	points: TrackPoint[];
+}
+
+/**
+ * Path overlay state captured per frame. Optional — absent means no path
+ * overlay (e.g. not in authoring mode, or paths hidden).
+ */
+export interface PathFrame {
+	/** Movement paths for the active step. */
+	paths: PathEntry[];
+	/** Entity ID of the selected skater (controls which paths are visible). */
+	selectedEntityId: string | null;
+	/** Ghost paths from the previous step (light-grey context lines). */
+	prevPaths?: PathEntry[];
+	/** Ghost paths from the next step (light-grey context lines). */
+	nextPaths?: PathEntry[];
 }
 
 /**
@@ -18,6 +41,8 @@ export interface TimelineSample {
 	teamPlayers: TeamPlayerPosition[];
 	skatingOfficials: SkatingOfficialPosition[];
 	view: TimelineView;
+	/** Path overlay state; present only when recording during authoring with visible paths. */
+	pathFrame?: PathFrame;
 }
 
 /** A snapshot without a timestamp; the caller stamps `t` on capture. */

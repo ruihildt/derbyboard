@@ -26,6 +26,30 @@ export interface WorldPoint {
 	y: number;
 }
 
+/** A point in canonical track space. `S` is wrapped to [0, LAP_LENGTH). */
+export interface TrackPoint {
+	S: number;
+	u: number;
+}
+
+/** Minimal flat style token. `color` is a CSS string; `width` in world metres (render-scaled). */
+export interface AnnotationStyle {
+	color: string;
+	width?: number;
+}
+
+/**
+ * Flat annotation union. Every kind carries `id`, a `style`, and its geometry entirely in
+ * track space (S,u). No nesting, no grouping (parent-plan task 6). Captured clips do not
+ * carry annotations — only authored-clip steps do.
+ */
+export type Annotation =
+	| { id: string; kind: 'pen'; points: TrackPoint[]; style: AnnotationStyle }
+	| { id: string; kind: 'arrow'; from: TrackPoint; to: TrackPoint; style: AnnotationStyle }
+	| { id: string; kind: 'zone'; points: TrackPoint[]; style: AnnotationStyle }
+	| { id: string; kind: 'label'; at: TrackPoint; text: string; style: AnnotationStyle }
+	| { id: string; kind: 'gap'; from: TrackPoint; to: TrackPoint; style: AnnotationStyle };
+
 export interface Entity {
 	id: string;
 	kind: EntityKind;
@@ -51,12 +75,24 @@ export interface EntityPose {
 	lookAt?: WorldPoint;
 }
 
+/** A per-entity movement path attached to a step. See locked decisions for ownership. */
+export interface EntityPath {
+	id: string;
+	entityId: string;
+	/** Ordered points (wrapped S). First ≈ entity's pose on this step; last ≈ next step's pose. */
+	points: TrackPoint[];
+}
+
 export interface Step {
 	id: string;
 	title?: string;
 	entities: EntityPose[];
+	/** @deprecated Under the fixed-duration model every step is exactly 1 s. Kept for backward-compat. */
 	holdMs?: number;
-	annotations?: [];
+	/** Freehand/marker annotations belonging to this step; appear/disappear with it. */
+	annotations?: Annotation[];
+	/** Per-entity movement paths; a path on step i describes motion during step i's second. */
+	paths?: EntityPath[];
 	/**
 	 * Whether the pack / engagement-zone overlay is shown while this step is
 	 * active. Per-step so a coach can author "show the pack here, hide it
@@ -65,6 +101,9 @@ export interface Step {
 	 */
 	showPackZone?: boolean;
 }
+
+/** Hard cap on the number of steps per authored clip (each step = 1 second). */
+export const MAX_STEPS_PER_CLIP = 8;
 
 export interface AuthoredClip {
 	kind: 'authored';
@@ -133,7 +172,7 @@ export interface BoardDoc {
 	activeClipId: string | null;
 }
 
-export const CURRENT_VERSION = 5;
+export const CURRENT_VERSION = 6;
 
 export function createEmptyDoc(): BoardDoc {
 	return {

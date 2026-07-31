@@ -11,11 +11,21 @@ export interface BoardSettings {
 	autoFace?: boolean;
 	entityHudVisible?: boolean;
 	directionMarkerVisible?: boolean;
+	annotationsVisible?: boolean;
+	pathsVisible?: boolean;
+	pathOverlay?: 'off' | 'all' | 'selected';
+	onionSkin?: boolean;
+	onionSkinDepth?: 1 | 2;
 }
 
 export const boardSettings = persisted<BoardSettings>('derbyboard-board-settings', {
 	packMethod: 'sector',
 	autoFace: true,
 	entityHudVisible: false,
-	directionMarkerVisible: true
+	directionMarkerVisible: true,
+	annotationsVisible: true,
+	pathsVisible: true,
+	pathOverlay: 'off',
+	onionSkin: false,
+	onionSkinDepth: 1
 });

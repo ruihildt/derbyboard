@@ -1,5 +1,6 @@
-import type { EntityPose } from '$lib/doc/types';
-import { LAP_LENGTH, unwrap, shortestDelta } from '$lib/track/trackFrame';
+import type { EntityPose, Step } from '$lib/doc/types';
+import { unwrap, shortestDelta, LAP_LENGTH } from '$lib/track/trackFrame';
+import { buildArcLength, sampleAtArcLength, pathTangentAt, type ArcLengthPath } from './pathMath';
 
 /** Smooth ease-in/out so tweens read as acceleration/deceleration, not linear drift. */
 export function easeInOutCubic(f: number): number {
@@ -30,6 +31,51 @@ export interface TweenOptions {
 }
 
 /**
+ * Precompute arc-length-parametrised paths for one step, keyed by entityId.
+ *
+ * **Endpoint injection:** the path's first point is replaced with the entity's
+ * pose on `step` (the FROM step), and the last point is replaced with the
+ * entity's pose on `nextStep` (the TO step). This guarantees the path always
+ * connects the two step poses — no matter where the coach started/ended the
+ * freehand stroke — and stays in sync when either step's pose is edited.
+ * The drawn interior points define the curve shape between those anchors.
+ */
+export function resolveStepPaths(
+	step: Step | undefined,
+	nextStep?: Step | undefined
+): Map<string, ArcLengthPath> {
+	const map = new Map<string, ArcLengthPath>();
+	if (!step?.paths) return map;
+
+	for (const path of step.paths) {
+		// Look up the entity's actual poses to inject as path endpoints.
+		const startPose = step.entities.find((e) => e.id === path.entityId);
+		const endPose = nextStep?.entities.find((e) => e.id === path.entityId);
+
+		const points = path.points.map((p) => ({ ...p }));
+
+		// Replace first point with the FROM-step pose so the path starts
+		// exactly where the skater is on step i.
+		if (startPose && points.length > 0) {
+			points[0] = { S: startPose.S, u: startPose.u };
+		}
+
+		// Replace last point with the TO-step pose so the path ends exactly
+		// where the skater arrives on step i+1.
+		if (endPose && points.length >= 2) {
+			points[points.length - 1] = { S: endPose.S, u: endPose.u };
+		}
+
+		const arcPath = buildArcLength(points);
+		if (arcPath.total > 0) {
+			map.set(path.entityId, arcPath);
+		}
+	}
+
+	return map;
+}
+
+/**
  * Track-aware interpolation between two entity poses.
  *
  * `S` is interpolated through the covering space using `unwrap` (nearest
@@ -54,6 +100,48 @@ export function tweenPose(
 }
 
 /**
+ * Track-aware interpolation between two entity poses. If `path` is provided, samples the entity's
+ * position along the arc-length-parametrised path at fraction `f` (uniform speed) instead of a
+ * direct (S,u) lerp. Endpoints are CLAMPED to the exact `a`/`b` poses (locked decision). Heading:
+ * if `path` is provided and `pathHeading` is true, derive from the path tangent; otherwise lerp
+ * via lerpAngle as before.
+ */
+export function tweenPoseAlong(
+	a: EntityPose,
+	b: EntityPose,
+	f: number,
+	path: ArcLengthPath | undefined,
+	pathHeading: boolean,
+	opts?: TweenOptions
+): EntityPose {
+	const eased = opts?.ease ? opts.ease(f) : f;
+
+	if (f <= 0) return { ...a };
+	if (f >= 1) return { ...b };
+
+	if (!path || path.total === 0) {
+		return tweenPose(a, b, f, opts);
+	}
+
+	const sp = sampleAtArcLength(path, eased * path.total);
+	let heading: number;
+
+	if (pathHeading) {
+		const t = pathTangentAt(path, eased);
+		heading = Math.atan2(t.y, t.x);
+	} else {
+		heading = lerpAngle(a.heading, b.heading, eased);
+	}
+
+	return {
+		id: a.id,
+		S: sp.S,
+		u: sp.u,
+		heading
+	};
+}
+
+/**
  * Interpolates a whole step's roster by id. Entities present in both are
  * tweened; entities present in only one are snapped (no invented motion).
  * This mirrors the captured-clip `lerpRoster` contract so a tween never
@@ -63,7 +151,10 @@ export function tweenSteps(
 	from: EntityPose[],
 	to: EntityPose[],
 	f: number,
-	opts?: TweenOptions
+	opts?: TweenOptions,
+	/** Path map keyed by entityId, governing the from→to transition (paths live on the FROM step). */
+	fromPaths?: Map<string, ArcLengthPath>,
+	pathHeading?: boolean
 ): EntityPose[] {
 	const byIdTo = new Map<string, EntityPose>();
 	for (const p of to) byIdTo.set(p.id, p);
@@ -74,7 +165,12 @@ export function tweenSteps(
 	for (const a of from) {
 		seen.add(a.id);
 		const b = byIdTo.get(a.id);
-		result.push(b ? tweenPose(a, b, f, opts) : { ...a });
+		const path = fromPaths?.get(a.id);
+		if (b) {
+			result.push(tweenPoseAlong(a, b, f, path, pathHeading ?? false, opts));
+		} else {
+			result.push({ ...a });
+		}
 	}
 	for (const b of to) {
 		if (!seen.has(b.id)) result.push({ ...b });
@@ -104,30 +200,27 @@ export function transitionDistanceMeters(from: EntityPose[], to: EntityPose[]): 
 	return max;
 }
 
-const DURATION_MIN_MS = 500;
-const DURATION_MAX_MS = 3200;
-const METRES_PER_SECOND = 6.5; // brisk skating pace; drives the "feel" of a transition
+// ── Fixed-duration step model ──────────────────────────────────────────────
+// A step represents exactly one second of action. The coach authors in
+// 1-second beats; path length (capped below) governs speed within that second.
+
+/** Fixed duration of each step. Every step is exactly one second. */
+export const STEP_DURATION_MS = 1000;
+
+/** Maximum path arc-length in metres (~8 m/s sprint × 1 s). */
+export const MAX_PATH_LENGTH_M = 8;
+
+/** Maximum number of control points in an authored movement path. */
+export const MAX_PATH_POINTS = 5;
 
 /**
- * Per-transition duration derived from the furthest-travelling entity, clamped
- * to a sensible band so tiny nudges still read and full-straight moves don't
- * drag. Coarse speed presets (0.25/0.5/1) scale this at playback time; the
- * duration itself is never exposed as a numeric authoring field (standing rule).
- */
-export function transitionDurationMs(from: EntityPose[], to: EntityPose[]): number {
-	const d = transitionDistanceMeters(from, to);
-	const ms = (d / METRES_PER_SECOND) * 1000;
-	return Math.min(DURATION_MAX_MS, Math.max(d > 0.05 ? DURATION_MIN_MS : 0, ms));
-}
-
-/**
- * Precomputes the authored-clip timeline: for N steps there are N−1
- * transitions, each placed back-to-back. Returns cumulative start times (ms)
- * so a player can binary-search a wall-clock `t` into a transition + fraction.
- * `holdMs` adds a dwell at each step before its outgoing transition.
+ * One step's time slot in the timeline. Under the fixed-duration model each
+ * segment is exactly {@link STEP_DURATION_MS} long; `fromStep` is the step
+ * whose second this is. The entity follows the path on step `fromStep` toward
+ * step `fromStep + 1`'s pose (or the path's own endpoint if it's the last step).
  */
 export interface TimelineSegment {
-	/** Index of the "from" step; the transition ends at `from + 1`. */
+	/** Index of the step that owns this time slot. */
 	fromStep: number;
 	startMs: number;
 	durationMs: number;
@@ -139,83 +232,107 @@ export interface AuthoredTimeline {
 	stepCount: number;
 }
 
+/**
+ * Precomputes the authored-clip timeline. Under the fixed-duration model each
+ * step occupies exactly {@link STEP_DURATION_MS} (1 second). For N steps there
+ * are N segments, laid back-to-back starting at t=0. During step i's second
+ * the entity either follows its path (if one exists) toward step i+1's pose,
+ * or dwells at step i's pose. Even a single step has 1 s of duration so
+ * playback always works.
+ */
 export function buildTimeline(
 	steps: { entities: EntityPose[]; holdMs?: number }[]
 ): AuthoredTimeline {
+	const stepCount = steps.length;
 	const segments: TimelineSegment[] = [];
-	let t = 0;
-	for (let i = 0; i < steps.length - 1; i++) {
-		const hold = steps[i].holdMs ?? 0;
-		t += hold;
-		const dur = transitionDurationMs(steps[i].entities, steps[i + 1].entities);
-		segments.push({ fromStep: i, startMs: t, durationMs: dur });
-		t += dur;
+	for (let i = 0; i < stepCount; i++) {
+		segments.push({
+			fromStep: i,
+			startMs: i * STEP_DURATION_MS,
+			durationMs: STEP_DURATION_MS
+		});
 	}
-	// Account for the final step's hold (dwell at the end).
-	if (steps.length > 0) {
-		t += steps[steps.length - 1].holdMs ?? 0;
-	}
-	return { segments, totalMs: t, stepCount: steps.length };
+	return { segments, totalMs: stepCount * STEP_DURATION_MS, stepCount };
 }
 
 export { LAP_LENGTH };
 
 /**
  * Samples the authored-clip timeline at wall-clock time `t` (ms) and returns
- * the interpolated `EntityPose[]` for that instant. Pure (no rendering) so it
- * can be unit-tested and reused by both the live player and any future
- * exporter. Holds dwell on the arrival step; the seam between a transition and
- * its following hold is exact (arrival pose at f=1).
+ * the interpolated `EntityPose[]` for that instant. Pure (no rendering).
+ *
+ * Under the fixed-duration model, `t` falls within step i's 1-second slot.
+ * If step i has a path, the entity follows it from step i's pose toward step
+ * i+1's pose (or the path's own endpoint on the last step). If no path, the
+ * entity dwells at step i's pose for the full second.
  */
 export function sampleAuthoredAt(
 	tl: AuthoredTimeline,
 	steps: EntityPose[][],
-	t: number
+	t: number,
+	/** Optional per-step resolved path maps; stepMaps[i] governs step i's motion. */
+	stepMaps?: Map<string, ArcLengthPath>[],
+	pathHeading?: boolean
 ): EntityPose[] {
 	const n = steps.length;
 	if (n === 0) return [];
-	if (n === 1 || t <= 0) return steps[0];
-	if (t >= tl.totalMs) return steps[n - 1];
+	if (t <= 0) return steps[0];
 
-	// Find the last segment whose start is <= t (segments are ordered).
+	const clampedT = Math.min(t, tl.totalMs);
+
+	// Find the segment whose time slot contains t (last segment with startMs ≤ t).
 	let seg: TimelineSegment | undefined;
 	for (const s of tl.segments) {
-		if (s.startMs <= t) seg = s;
+		if (s.startMs <= clampedT) seg = s;
 		else break;
 	}
 	if (!seg) return steps[0];
 
-	const transitionEnd = seg.startMs + seg.durationMs;
-	if (t < transitionEnd) {
-		const f = seg.durationMs > 0 ? (t - seg.startMs) / seg.durationMs : 1;
-		return tweenSteps(steps[seg.fromStep], steps[seg.fromStep + 1], f, {
-			ease: easeInOutCubic
+	const i = seg.fromStep;
+	const f = seg.durationMs > 0 ? (clampedT - seg.startMs) / seg.durationMs : 0;
+	const from = steps[i];
+	const pathMap = stepMaps?.[i];
+
+	// Destination poses: next step's poses, or synthesised from the path's own
+	// endpoint when this is the last step (self-contained path playback).
+	let to: EntityPose[];
+	if (i < n - 1) {
+		to = steps[i + 1];
+	} else {
+		to = from.map((p) => {
+			const ap = pathMap?.get(p.id);
+			if (ap && ap.points.length > 0) {
+				const end = ap.points[ap.points.length - 1];
+				return { ...p, S: end.S, u: end.u };
+			}
+			return p; // no path → stays put
 		});
 	}
-	// Past this transition but before the next: dwelling on the arrival step.
-	return steps[seg.fromStep + 1];
+
+	return tweenSteps(from, to, f, { ease: easeInOutCubic }, pathMap, pathHeading);
 }
 
 /**
  * The step index nearest to wall-clock time `t` — used to highlight the
  * StepStrip chip that playback is currently heading toward. At the halfway
- * point of a transition it tips to the arrival step.
+ * point of a step's second it tips to the arrival step.
  */
 export function nearestStepAt(tl: AuthoredTimeline, t: number): number {
 	const n = tl.stepCount;
 	if (n === 0) return -1;
-	if (n === 1 || t <= 0) return 0;
+	if (t <= 0) return 0;
 	if (t >= tl.totalMs) return n - 1;
+
 	let seg: TimelineSegment | undefined;
 	for (const s of tl.segments) {
 		if (s.startMs <= t) seg = s;
 		else break;
 	}
 	if (!seg) return 0;
-	const transitionEnd = seg.startMs + seg.durationMs;
-	if (t < transitionEnd) {
-		const f = seg.durationMs > 0 ? (t - seg.startMs) / seg.durationMs : 1;
-		return f < 0.5 ? seg.fromStep : seg.fromStep + 1;
-	}
-	return seg.fromStep + 1;
+
+	// The last step is always "current" during its own second.
+	if (seg.fromStep >= n - 1) return n - 1;
+
+	const f = seg.durationMs > 0 ? (t - seg.startMs) / seg.durationMs : 0;
+	return f < 0.5 ? seg.fromStep : seg.fromStep + 1;
 }

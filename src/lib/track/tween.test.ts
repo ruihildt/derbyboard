@@ -3,14 +3,16 @@ import { LAP_LENGTH } from '$lib/track/trackFrame';
 import {
 	tweenPose,
 	tweenSteps,
+	tweenPoseAlong,
+	resolveStepPaths,
 	transitionDistanceMeters,
-	transitionDurationMs,
 	buildTimeline,
 	sampleAuthoredAt,
 	nearestStepAt,
-	easeInOutCubic
+	easeInOutCubic,
+	STEP_DURATION_MS
 } from './tween';
-import type { EntityPose } from '$lib/doc/types';
+import type { EntityPose, Step } from '$lib/doc/types';
 
 function pose(id: string, S: number, u = 0.5, heading = 0): EntityPose {
 	return { id, S, u, heading };
@@ -113,28 +115,8 @@ describe('transitionDistanceMeters', () => {
 	});
 });
 
-describe('transitionDurationMs', () => {
-	it('is zero when nothing moves', () => {
-		expect(transitionDurationMs([pose('a', 5, 0.5)], [pose('a', 5, 0.5)])).toBe(0);
-	});
-
-	it('grows with distance (monotonic) within the clamp band', () => {
-		const base = [pose('a', 0)];
-		const small = transitionDurationMs(base, [pose('a', 2)]);
-		const big = transitionDurationMs(base, [pose('a', 20)]);
-		expect(big).toBeGreaterThan(small);
-	});
-
-	it('respects the minimum and maximum clamp bounds', () => {
-		const tiny = transitionDurationMs([pose('a', 0)], [pose('a', 0.5)]);
-		expect(tiny).toBeGreaterThanOrEqual(500);
-		const huge = transitionDurationMs([pose('a', 0)], [pose('a', 1000)]);
-		expect(huge).toBeLessThanOrEqual(3200);
-	});
-});
-
 describe('buildTimeline', () => {
-	it('produces N-1 segments for N steps', () => {
+	it('produces N segments for N steps (one per step)', () => {
 		const steps = [
 			{ entities: [pose('a', 0)] },
 			{ entities: [pose('a', 5)] },
@@ -142,38 +124,38 @@ describe('buildTimeline', () => {
 		];
 		const tl = buildTimeline(steps);
 		expect(tl.stepCount).toBe(3);
-		expect(tl.segments).toHaveLength(2);
+		expect(tl.segments).toHaveLength(3);
 		expect(tl.segments[0].fromStep).toBe(0);
 		expect(tl.segments[1].fromStep).toBe(1);
+		expect(tl.segments[2].fromStep).toBe(2);
 	});
 
-	it('places segments back-to-back with cumulative start times', () => {
+	it('places segments back-to-back with fixed 1-second durations', () => {
 		const steps = [
 			{ entities: [pose('a', 0)] },
 			{ entities: [pose('a', 5)] },
 			{ entities: [pose('a', 15)] }
 		];
 		const tl = buildTimeline(steps);
-		expect(tl.segments[1].startMs).toBe(tl.segments[0].durationMs);
-		expect(tl.totalMs).toBe(tl.segments[0].durationMs + tl.segments[1].durationMs);
+		expect(tl.segments[0].durationMs).toBe(STEP_DURATION_MS);
+		expect(tl.segments[1].startMs).toBe(STEP_DURATION_MS);
+		expect(tl.totalMs).toBe(3 * STEP_DURATION_MS);
 	});
 
-	it('handles a single step (no transitions)', () => {
+	it('gives a single step 1 second of duration (so playback works)', () => {
 		const tl = buildTimeline([{ entities: [pose('a', 0)] }]);
-		expect(tl.segments).toHaveLength(0);
-		expect(tl.totalMs).toBe(0);
+		expect(tl.segments).toHaveLength(1);
+		expect(tl.totalMs).toBe(STEP_DURATION_MS);
 	});
 
-	it('adds hold dwell before each outgoing transition and at the end', () => {
+	it('ignores holdMs under the fixed-duration model', () => {
 		const steps = [
 			{ entities: [pose('a', 0)], holdMs: 100 },
 			{ entities: [pose('a', 5)], holdMs: 200 }
 		];
 		const tl = buildTimeline(steps);
-		// First transition starts after step 0's hold.
-		expect(tl.segments[0].startMs).toBe(100);
-		// Total includes step 0 hold + transition + step 1 hold.
-		expect(tl.totalMs).toBe(100 + tl.segments[0].durationMs + 200);
+		expect(tl.segments[0].startMs).toBe(0);
+		expect(tl.totalMs).toBe(2 * STEP_DURATION_MS);
 	});
 });
 
@@ -185,30 +167,63 @@ describe('sampleAuthoredAt', () => {
 		expect(sampleAuthoredAt(tl, steps, -5)[0].S).toBe(0);
 	});
 
-	it('returns the last step at/after the end', () => {
+	it('returns the last step pose at/after the end', () => {
 		const steps = [[pose('a', 0)], [pose('a', 10)]];
 		const tl = buildTimeline(steps.map((e) => ({ entities: e })));
 		expect(sampleAuthoredAt(tl, steps, tl.totalMs)[0].S).toBe(10);
 		expect(sampleAuthoredAt(tl, steps, tl.totalMs + 999)[0].S).toBe(10);
 	});
 
-	it('interpolates midway through a transition', () => {
+	it('interpolates midway through a step', () => {
 		const steps = [[pose('a', 0)], [pose('a', 10)]];
 		const tl = buildTimeline(steps.map((e) => ({ entities: e })));
-		const mid = sampleAuthoredAt(tl, steps, tl.segments[0].startMs + tl.segments[0].durationMs / 2);
+		const mid = sampleAuthoredAt(tl, steps, STEP_DURATION_MS / 2);
 		// Eased midpoint is not exactly 5, but lies strictly between 0 and 10.
 		expect(mid[0].S).toBeGreaterThan(0);
 		expect(mid[0].S).toBeLessThan(10);
 	});
 
-	it('dwells on the arrival step during a hold', () => {
-		const steps = [[pose('a', 0)], [pose('a', 10)], [pose('a', 20)]];
-		const stepObjs = steps.map((e, i) => ({ entities: e, holdMs: i === 1 ? 500 : 0 }));
-		const tl = buildTimeline(stepObjs);
-		// Just after transition 0->1 ends, before transition 1->2 starts: step 1.
-		const dwellT = tl.segments[0].startMs + tl.segments[0].durationMs + 10;
-		const sampled = sampleAuthoredAt(tl, steps, dwellT);
-		expect(sampled[0].S).toBe(10);
+	it('dwells on the last step when it has no path', () => {
+		// A single step with no path: the entity stays at its pose for the
+		// full second (from === to, so f doesn't matter).
+		const steps = [[pose('a', 7)]];
+		const tl = buildTimeline(steps.map((e) => ({ entities: e })));
+		const atMid = sampleAuthoredAt(tl, steps, STEP_DURATION_MS / 2);
+		expect(atMid[0].S).toBe(7);
+		const atEnd = sampleAuthoredAt(tl, steps, tl.totalMs);
+		expect(atEnd[0].S).toBe(7);
+	});
+
+	it('follows a path on the last step toward the path endpoint (single-step playback)', () => {
+		// Single step with a path: entity should move from its pose toward
+		// the path's last point during the 1-second playback.
+		const a = pose('a', 0, 0.5);
+		const pathPoints = [
+			{ S: 0, u: 0.5 },
+			{ S: 3, u: 0.5 },
+			{ S: 6, u: 0.5 }
+		];
+		const step: Step = {
+			id: 's0',
+			entities: [a],
+			paths: [{ id: 'p', entityId: 'a', points: pathPoints }]
+		};
+		const steps = [step.entities];
+		const tl = buildTimeline([{ entities: step.entities }]);
+		const stepMaps = [resolveStepPaths(step, undefined)];
+
+		// At t=0, entity is at its pose (S=0).
+		const start = sampleAuthoredAt(tl, steps, 0, stepMaps);
+		expect(start[0].S).toBe(0);
+
+		// At the midpoint, entity should be moving along the path.
+		const mid = sampleAuthoredAt(tl, steps, STEP_DURATION_MS / 2, stepMaps);
+		expect(mid[0].S).toBeGreaterThan(0);
+		expect(mid[0].S).toBeLessThan(6);
+
+		// At the end, entity is at the path's last point (S=6).
+		const end = sampleAuthoredAt(tl, steps, tl.totalMs, stepMaps);
+		expect(end[0].S).toBeCloseTo(6, 4);
 	});
 });
 
@@ -226,5 +241,149 @@ describe('nearestStepAt', () => {
 		const mid = tl.segments[0].startMs + tl.segments[0].durationMs / 2;
 		expect(nearestStepAt(tl, mid - 1)).toBe(0);
 		expect(nearestStepAt(tl, mid + 1)).toBe(1);
+	});
+});
+
+describe('resolveStepPaths — endpoint injection', () => {
+	function stepWithPath(
+		entityId: string,
+		fromS: number,
+		fromU: number,
+		toS: number,
+		toU: number,
+		pathPoints: { S: number; u: number }[]
+	): Step {
+		return {
+			id: 's1',
+			entities: [{ id: entityId, S: fromS, u: fromU, heading: 0 }],
+			paths: [{ id: 'p1', entityId, points: pathPoints }]
+		};
+	}
+
+	it('injects the FROM-step pose as the path start point', () => {
+		const step = stepWithPath('a', 10, 0.5, 20, 0.5, [
+			{ S: 0, u: 0.5 },
+			{ S: 5, u: 0.5 },
+			{ S: 15, u: 0.5 }
+		]);
+		const nextStep: Step = {
+			id: 's2',
+			entities: [{ id: 'a', S: 20, u: 0.5, heading: 0 }]
+		};
+		const maps = resolveStepPaths(step, nextStep);
+		const arcPath = maps.get('a');
+		expect(arcPath).toBeDefined();
+		// First point should be the FROM-step pose (S=10), not the drawn S=0
+		expect(arcPath!.points[0].S).toBe(10);
+	});
+
+	it('injects the TO-step pose as the path end point', () => {
+		const step = stepWithPath('a', 10, 0.5, 20, 0.5, [
+			{ S: 10, u: 0.5 },
+			{ S: 15, u: 0.5 },
+			{ S: 99, u: 0.9 } // garbage endpoint
+		]);
+		const nextStep: Step = {
+			id: 's2',
+			entities: [{ id: 'a', S: 20, u: 0.5, heading: 0 }]
+		};
+		const maps = resolveStepPaths(step, nextStep);
+		const arcPath = maps.get('a');
+		expect(arcPath).toBeDefined();
+		// Last point should be the TO-step pose (S=20), not the drawn S=99
+		const last = arcPath!.points[arcPath!.points.length - 1];
+		expect(last.S).toBe(20);
+		expect(last.u).toBe(0.5);
+	});
+
+	it('updates endpoints when step poses change (always in sync)', () => {
+		const step = stepWithPath('a', 10, 0.5, 20, 0.5, [
+			{ S: 10, u: 0.5 },
+			{ S: 15, u: 0.5 },
+			{ S: 20, u: 0.5 }
+		]);
+		const nextStep: Step = {
+			id: 's2',
+			entities: [{ id: 'a', S: 20, u: 0.5, heading: 0 }]
+		};
+
+		// Modify the TO-step pose
+		nextStep.entities[0].S = 25;
+		nextStep.entities[0].u = 0.8;
+
+		const maps = resolveStepPaths(step, nextStep);
+		const arcPath = maps.get('a')!;
+		const last = arcPath.points[arcPath.points.length - 1];
+		expect(last.S).toBe(25);
+		expect(last.u).toBe(0.8);
+	});
+});
+
+describe('tweenPoseAlong — path-following playback', () => {
+	it('follows the path at intermediate fractions (not a straight lerp)', () => {
+		// Step 0: a@S=0,u=0.9 (outside lane). Step 1: a@S=10,u=0.1 (inside lane).
+		// Path dips to u=0.5 in the middle — a straight lerp would be at u=0.5
+		// at f=0.5 too, but the path's shape makes the MIDPOINT different.
+		const a = pose('a', 0, 0.9);
+		const b = pose('a', 10, 0.1);
+
+		// Build a path with a curve that deviates from the straight line
+		const pathPoints = [
+			{ S: 0, u: 0.9 },
+			{ S: 2, u: 0.3 }, // dips inside early
+			{ S: 5, u: 0.2 },
+			{ S: 8, u: 0.15 },
+			{ S: 10, u: 0.1 }
+		];
+
+		const step: Step = {
+			id: 's0',
+			entities: [a],
+			paths: [{ id: 'p', entityId: 'a', points: pathPoints }]
+		};
+		const nextStep: Step = { id: 's1', entities: [b] };
+
+		const maps = resolveStepPaths(step, nextStep);
+		const arcPath = maps.get('a')!;
+
+		// At f=0.5, the path sample should differ from the straight lerp
+		const alongResult = tweenPoseAlong(a, b, 0.5, arcPath, false);
+		const straightResult = tweenPose(a, b, 0.5);
+
+		// The u values should differ because the path curves differently
+		// than the straight lerp at that point.
+		expect(Math.abs(alongResult.u - straightResult.u)).toBeGreaterThan(0.01);
+	});
+
+	it('clamps endpoints exactly to step poses', () => {
+		const a = pose('a', 5, 0.5);
+		const b = pose('a', 15, 0.5);
+		const pathPoints = [
+			{ S: 0, u: 0.5 },
+			{ S: 10, u: 0.5 },
+			{ S: 20, u: 0.5 }
+		];
+		const step: Step = {
+			id: 's0',
+			entities: [a],
+			paths: [{ id: 'p', entityId: 'a', points: pathPoints }]
+		};
+		const nextStep: Step = { id: 's1', entities: [b] };
+		const maps = resolveStepPaths(step, nextStep);
+		const arcPath = maps.get('a')!;
+
+		const atStart = tweenPoseAlong(a, b, 0, arcPath, false);
+		const atEnd = tweenPoseAlong(a, b, 1, arcPath, false);
+		expect(atStart.S).toBe(5);
+		expect(atEnd.S).toBe(15);
+	});
+
+	it('falls back to straight tween when no path exists', () => {
+		const a = pose('a', 0, 0.5);
+		const b = pose('a', 10, 0.5);
+		const alongResult = tweenPoseAlong(a, b, 0.5, undefined, false);
+		const straightResult = tweenPose(a, b, 0.5);
+		expect(alongResult.S).toBeCloseTo(straightResult.S, 6);
+		expect(alongResult.u).toBeCloseTo(straightResult.u, 6);
 	});
 });

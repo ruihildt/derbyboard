@@ -115,6 +115,8 @@ export function entityToPixelRelative(entity: Entity): { x: number; y: number } 
  *  - v4 → v5: the look-at mode was renamed `'locked'` → `'pinned'`, and a new
  *    `'fixed'` (absolute-heading) mode was added. Existing `'locked'` values
  *    are relabelled to `'pinned'` (behaviour unchanged).
+ *  - v5 → v6: added optional `annotations: Annotation[]` and `paths: EntityPath[]` to `Step`
+ *    (geometry in track space). Absent means none, matching pre-v6 behaviour.
  */
 export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 	let next = doc;
@@ -207,6 +209,20 @@ export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 			)
 		};
 		next.version = 5;
+	}
+
+	if (next.version < 6) {
+		// Defensive copy so we never mutate the caller's object. The new `annotations`
+		// and `paths` fields stay undefined (absent = none), so no data is synthesised.
+		next = {
+			...next,
+			clips: next.clips.map((clip) =>
+				clip.kind === 'authored'
+					? { ...clip, steps: clip.steps.map((step) => ({ ...step })) }
+					: clip
+			)
+		};
+		next.version = 6;
 	}
 
 	next.version = CURRENT_VERSION;
