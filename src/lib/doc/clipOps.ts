@@ -519,17 +519,6 @@ export function exitAuthoring(): void {
 }
 
 /**
- * Nudges an entity by ±1 lap. Under the planar-coordinate model the lap index
- * is not stored (a full lap maps to the same world point), so this is a no-op
- * for the board/step pose. It is retained for the future lap-readout UI, which
- * will carry an explicit lap counter; until then nothing user-facing calls it.
- */
-export function nudgeLap(_id: string, delta: number): void {
-	if (delta !== 1 && delta !== -1) return;
-	// No-op in the planar model (see docstring).
-}
-
-/**
  * Loads a lineup preset onto the board as an undoable edit (so a misclick is
  * reversible), replacing the roster. Exits authoring first so the new roster
  * isn't written onto a stale clip's active step.

@@ -10,8 +10,8 @@ export type SkatingOfficialRole =
  * A point in the planar world plane, in metres. This is the **canonical** stored
  * coordinate system: entities, poses, paths and annotation geometry all live here.
  * Track space `(S, u)` is a derived view computed on demand by the track layer
- * (`$lib/track/trackLayer`) — only track-dependent features (auto-face, in-bounds,
- * lap counting) ask the layer to convert.
+ * (`$lib/track/trackLayer`) — only track-dependent features (auto-face, in-bounds)
+ * ask the layer to convert.
  */
 export interface PlanarPoint {
 	x: number;

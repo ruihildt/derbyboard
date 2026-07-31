@@ -209,8 +209,8 @@ export class KonvaPlayerManager {
 	 * reflection of what is on screen without touching the document.
 	 *
 	 * The canonical coordinate system is planar, so this is a direct pixel →
-	 * metre conversion. Lap accounting is a track-layer concern (the lap index
-	 * is no longer embedded in a stored `S`); nothing here preserves it.
+	 * metre conversion. There is no lap index to preserve: a full lap maps to
+	 * the same world point, so the position is fully captured by `(x, y)`.
 	 */
 	private captureLivePose(player: KonvaPlayer & { id: string }): void {
 		const center = this.center();
