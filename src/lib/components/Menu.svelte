@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { exportBoardToFile, loadBoardFromFile } from '$lib/utils/boardStateService';
-	import { isMobile } from '$lib/stores/viewport';
 
 	import { Dropdown, DropdownItem, Modal, Button } from 'flowbite-svelte';
 	import {
@@ -91,7 +90,7 @@
 </script>
 
 <Button
-	class="min-h-11 min-w-11 rounded-lg bg-white !p-1 hover:bg-primary-200"
+	class="min-h-11 min-w-11 rounded-lg bg-white !p-1 shadow-lg shadow-black/5 hover:bg-primary-200"
 	onclick={() => toggleMenu}
 >
 	<BarsOutline class="h-6 w-6" color="gray" />
@@ -142,15 +141,13 @@
 			<span>Fullscreen</span>
 		{/if}
 	</DropdownItem>
-	{#if $isMobile}
-		<DropdownItem
-			class="flex items-center text-gray-700 hover:bg-primary-200"
-			onclick={handleOpenNews}
-		>
-			<NewspaperOutline class="mr-2 h-4 w-4" />
-			<span>News</span>
-		</DropdownItem>
-	{/if}
+	<DropdownItem
+		class="flex items-center text-gray-700 hover:bg-primary-200"
+		onclick={handleOpenNews}
+	>
+		<NewspaperOutline class="mr-2 h-4 w-4" />
+		<span>News</span>
+	</DropdownItem>
 	<DropdownItem
 		class="flex items-center text-gray-700 hover:bg-primary-200"
 		href="https://github.com/ruihildt/derbyboard"

@@ -30,8 +30,17 @@
 		onchange: (zone: CaptureZone) => void;
 	} = $props();
 
+	let rootEl = $state<HTMLDivElement | undefined>();
+	// Reference frame for fraction→pixel math: the overlay's own box (= <main>,
+	// the canvas frame), not the viewport. A docked sidebar shrinks <main>, so
+	// the region rescales with the canvas rather than spilling under the sidebar.
 	let vw = $state(typeof window !== 'undefined' ? window.innerWidth : 1280);
 	let vh = $state(typeof window !== 'undefined' ? window.innerHeight : 720);
+
+	function measure() {
+		vw = rootEl?.clientWidth ?? window.innerWidth;
+		vh = rootEl?.clientHeight ?? window.innerHeight;
+	}
 
 	const MIN_SIZE = 80;
 	// Minimum gap between the zone and every viewport edge so handles stay reachable.
@@ -238,14 +247,24 @@
 	});
 
 	function onResize() {
-		vw = window.innerWidth;
-		vh = window.innerHeight;
+		measure();
 	}
+
+	// Track the canvas-frame size. A ResizeObserver catches dock/undock (which
+	// resizes <main> without firing a window resize) as well as window resizes.
+	$effect(() => {
+		const el = rootEl;
+		if (!el) return;
+		measure();
+		const ro = new ResizeObserver(() => measure());
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
 </script>
 
 <svelte:window onresize={onResize} />
 
-<div class="pointer-events-none absolute inset-0 z-20">
+<div bind:this={rootEl} class="pointer-events-none absolute inset-0 z-20">
 	<div
 		class="absolute shadow-[0_0_0_100vmax_rgba(0,0,0,0.55)]"
 		style="left: {box.x}px; top: {box.y}px; width: {box.w}px; height: {box.h}px; pointer-events: none; outline: {mode ===

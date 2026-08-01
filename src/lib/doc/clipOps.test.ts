@@ -17,6 +17,7 @@ import {
 	getActiveClip,
 	getActiveStep,
 	exitAuthoring,
+	exitToFree,
 	snapshotPoses,
 	findAuthoredClip,
 	setEntityPath,
@@ -535,6 +536,36 @@ describe('clipOps — exitAuthoring', () => {
 		poseStore.setLive('a', { x: 99, y: 0.9 });
 		poseStore.commitGesture('move');
 		expect(boardDoc.current.entities.find((e) => e.id === 'a')?.x).toBe(99);
+	});
+});
+
+describe('clipOps — experience transitions (promote / exit)', () => {
+	beforeEach(() => resetBoard([entity('a', 10), entity('b', 20)]));
+
+	it('promotes Free → Drill with step 0 = board snapshot', () => {
+		const id = createAuthoredClipFromBoard();
+		const clip = findAuthoredClip(boardDoc.current, id)!;
+		expect(clip.steps).toHaveLength(1);
+		// Non-destructive: the free board entities survive (step 0 mirrors them).
+		expect(clip.steps[0].entities).toEqual(snapshotPoses(boardDoc.current.entities));
+	});
+
+	it('exitToFree exits authoring and restores the free board (entities intact)', () => {
+		createAuthoredClipFromBoard();
+		expect(getActiveClip()).toBeDefined();
+		// Edit the board inside authoring (commit hook mirrors onto the step).
+		poseStore.setLive('a', { x: 33, y: 0.3 });
+		poseStore.commitGesture('move');
+
+		exitToFree();
+		expect(getActiveClip()).toBeUndefined();
+		// The free board entities remain on the document (non-destructive exit).
+		expect(boardDoc.current.entities.find((e) => e.id === 'a')?.x).toBe(33);
+		expect(boardDoc.current.entities.find((e) => e.id === 'b')?.x).toBe(20);
+	});
+
+	it('exitToFree and exitAuthoring are the same operation', () => {
+		expect(exitToFree).toBe(exitAuthoring);
 	});
 });
 

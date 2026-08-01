@@ -4,7 +4,6 @@
 	import {
 		PlayOutline,
 		PauseOutline,
-		CloseOutline,
 		PlusOutline,
 		TrashBinOutline,
 		BackwardStepOutline,
@@ -23,26 +22,14 @@
 		addStepFromBoard,
 		deleteStep,
 		moveStep,
-		exitAuthoring,
 		loadStepArrivalOntoBoard
 	} from '$lib/doc/clipOps';
 	import { AuthoredPlayer } from '$lib/recording/authored/AuthoredPlayer';
 	import { nearestStepAt, buildTimeline, STEP_DURATION_MS } from '$lib/track/tween';
-	import { isMobile } from '$lib/stores/viewport';
 	import { authoringSession } from '$lib/stores/session';
-	import { toolMode, type DrawTool } from '$lib/stores/toolMode';
+	import { toolMode } from '$lib/stores/toolMode';
 	import { selectedEntityId } from '$lib/stores/selection';
 	import { MAX_STEPS_PER_CLIP } from '$lib/doc/types';
-
-	const tools: { id: DrawTool; label: string; icon: string }[] = [
-		{ id: 'select', label: 'Select / pan', icon: '✋' },
-		{ id: 'drawPath', label: 'Draw movement path', icon: '↗' },
-		{ id: 'pen', label: 'Freehand pen', icon: '✏' },
-		{ id: 'arrow', label: 'Arrow', icon: '→' },
-		{ id: 'zone', label: 'Zone', icon: '◯' },
-		{ id: 'label', label: 'Label', icon: 'A' },
-		{ id: 'gap', label: 'Gap', icon: '⫶' }
-	];
 
 	let { game }: { game: KonvaGame } = $props();
 
@@ -357,12 +344,6 @@
 		}
 	}
 
-	// ---- Direction / facing view toggles -----------------------------------
-	function exit() {
-		stopPlayback(false);
-		exitAuthoring();
-	}
-
 	// ---- Scrub --------------------------------------------------------------
 	function seekFromClientX(clientX: number) {
 		if (!trackEl || duration <= 0) return;
@@ -420,14 +401,10 @@
 </script>
 
 {#if clip}
-	<div
-		class="fixed top-[max(0.5rem,env(safe-area-inset-top))] left-1/2 z-40 flex -translate-x-1/2 flex-col gap-2 {$isMobile
-			? 'max-w-[calc(100vw-1rem)]'
-			: 'max-w-[calc(100vw-2rem)]'}"
-	>
-		<!-- Controls bar -->
+	<div class="pointer-events-auto flex w-full flex-col gap-2">
+		<!-- Transport row -->
 		<div
-			class="flex items-center gap-1 overflow-hidden rounded-lg bg-white px-2 py-1.5 shadow-lg shadow-black/10"
+			class="flex items-center gap-1 overflow-x-auto rounded-lg bg-white px-2 py-1.5 shadow-lg shadow-black/10"
 		>
 			<ToolbarButton
 				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg bg-primary-100 text-primary-700 hover:bg-primary-200"
@@ -518,17 +495,9 @@
 			>
 				<StroopwafelOutline class="h-4 w-4" />
 			</ToolbarButton>
-
-			<ToolbarButton
-				class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
-				onclick={exit}
-				aria-label="Exit drill"
-			>
-				<CloseOutline class="h-5 w-5" />
-			</ToolbarButton>
 		</div>
 
-		<!-- Step chips bar -->
+		<!-- Step chips row -->
 		<div
 			class="chip-scroll flex items-center gap-1.5 overflow-x-auto rounded-lg bg-white px-2 py-1.5 shadow-lg shadow-black/10 touch-none"
 		>
@@ -593,26 +562,6 @@
 					<PlusOutline class="h-5 w-5" />
 				</button>
 			{/if}
-		</div>
-
-		<!-- Tool palette -->
-		<div
-			class="flex items-center gap-1 overflow-x-auto rounded-lg bg-white px-2 py-1.5 shadow-lg shadow-black/10 touch-none"
-		>
-			{#each tools as tool (tool.id)}
-				<button
-					type="button"
-					class="flex min-h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-medium transition-colors {$toolMode ===
-					tool.id
-						? 'bg-primary-100 text-primary-700'
-						: 'text-gray-600 hover:bg-primary-50'}"
-					onclick={() => toolMode.set(tool.id)}
-					aria-label={tool.label}
-					title={tool.label}
-				>
-					{tool.icon}
-				</button>
-			{/each}
 		</div>
 	</div>
 {/if}

@@ -233,5 +233,3 @@ export function offsetToLane(s: number, v: number): number {
 	const bounds = laneBounds(s);
 	return (v - bounds.inner) / (bounds.outer - bounds.inner);
 }
-
-

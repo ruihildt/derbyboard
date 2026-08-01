@@ -64,7 +64,7 @@
 	</button>
 
 	{#if open}
-		<div class="absolute bottom-full left-0 z-40 mb-1 rounded-lg bg-white p-1 shadow-xl">
+		<div class="absolute left-0 top-full z-40 mt-1 rounded-lg bg-white p-1 shadow-xl">
 			{#each MODES as m (m.value)}
 				<button class={menuItem(mode === m.value)} onclick={() => select(m.value)}>
 					{#if m.value === 'screenshot'}

@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { Drawer, Timeline, TimelineItem } from 'flowbite-svelte';
 	import { CloseOutline } from 'flowbite-svelte-icons';
-	import { isMobile } from '$lib/stores/viewport';
 	let hidden = true;
 
-	// Imperative entry point used by the Menu's "News" item on mobile.
+	// Imperative entry point used by the Menu's "News" item.
 	export function open() {
 		hidden = false;
 	}
@@ -14,22 +13,13 @@
 		const panel = document.querySelector('.news-drawer');
 		if (!panel) return;
 		const target = e.target;
-		if (target instanceof Element && !panel.contains(target) && !target.closest('.news-trigger')) {
+		if (target instanceof Element && !panel.contains(target)) {
 			hidden = true;
 		}
 	}
 </script>
 
 <svelte:window onpointerdown={onWindowPointerDown} />
-
-{#if !$isMobile}
-	<button
-		on:click={() => (hidden = !hidden)}
-		class="news-trigger inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-3 py-1 text-sm text-gray-700 hover:bg-primary-200"
-	>
-		News
-	</button>
-{/if}
 
 <Drawer
 	bind:hidden

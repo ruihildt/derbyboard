@@ -51,7 +51,7 @@
 	</button>
 
 	{#if open}
-		<div class="absolute bottom-full left-0 z-40 mb-1 w-[84px] rounded-lg bg-white p-1 shadow-xl">
+		<div class="absolute left-0 top-full z-40 mt-1 w-[84px] rounded-lg bg-white p-1 shadow-xl">
 			{#each CAPTURE_FORMATS as f (f)}
 				<button class={menuItem(format === f)} onclick={() => select(f)}>
 					{FORMAT_LABELS_SHORT[f]}

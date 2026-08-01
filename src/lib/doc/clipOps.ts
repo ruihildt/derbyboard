@@ -82,7 +82,9 @@ export function getActiveStep(doc: BoardDoc = boardDoc.current): Step | undefine
 /**
  * Creates a new authored clip whose first step is a snapshot of the current
  * board, makes it the active clip, and navigates to step 0. Returns the new
- * clip id. This is the entry point into authoring mode.
+ * clip id. This is the entry point into structured editing — i.e. the
+ * **Free → Drill promotion** (non-destructive: the free `entities` survive on
+ * the board so exit restores them, exactly as before).
  */
 export function createAuthoredClipFromBoard(title?: string): string {
 	const clipId = newId();
@@ -517,6 +519,13 @@ export function exitAuthoring(): void {
 	removeAuthoringCommitHook();
 	authoringSession.set({ activeClipId: null, activeStepIndex: -1 });
 }
+
+/**
+ * Alias of {@link exitAuthoring} for the experience switcher's "→ Free Play"
+ * action. Identical behaviour — kept as a separate name so call sites read as
+ * the experience transition they perform, not the internal teardown.
+ */
+export const exitToFree = exitAuthoring;
 
 /**
  * Loads a lineup preset onto the board as an undoable edit (so a misclick is

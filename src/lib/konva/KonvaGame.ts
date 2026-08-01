@@ -736,6 +736,16 @@ export class KonvaGame {
 		this.handleResize();
 	};
 
+	/**
+	 * Public resize hook for layout-driven container changes the window
+	 * `resize` listener can't see (e.g. a docked sidebar shrinking the canvas
+	 * via CSS). Routes through the same debounced `handleResize` so the stage
+	 * re-measures its container and the track re-fits.
+	 */
+	resize(): void {
+		this.handleResize();
+	}
+
 	private applyResize() {
 		const el = this.stage.container();
 		const newW = el?.clientWidth ?? window.innerWidth;
@@ -2143,7 +2153,7 @@ export class KonvaGame {
 		nextStep?: Step | undefined
 	): void {
 		// During replay, the path layer is managed by renderPathFrame (called
-		// from renderSampleTransform). Bail out so the AuthoringPanel Svelte
+		// from renderSampleTransform). Bail out so the StepStrip Svelte
 		// $effect (which fires when selectedEntityId is cleared on replay
 		// start) can't destroyChildren and wipe the paths just drawn.
 		if (this.replayMode) return;
