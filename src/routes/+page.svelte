@@ -12,6 +12,7 @@
 		syncAuthoringStateFromSession
 	} from '$lib/doc/clipOps';
 	import { getCapabilities } from '$lib/experiences/capabilities';
+	import { toolMode } from '$lib/stores/toolMode';
 	import { authoringSession } from '$lib/stores/session';
 
 	import TopBar from '$lib/components/TopBar.svelte';
@@ -164,7 +165,12 @@
 <main
 	class="relative h-[100dvh] {docked ? 'w-[calc(100dvw-24rem)]' : 'w-[100dvw]'} overflow-hidden"
 >
-	<div id="container" class="absolute left-0 top-0 h-full w-full"></div>
+	<div
+		id="container"
+		class="absolute left-0 top-0 h-full w-full {$toolMode === 'hand'
+			? 'cursor-grab active:cursor-grabbing'
+			: ''}"
+	></div>
 	{#if replayZone}
 		<ZoneOverlay
 			zone={replayZone}

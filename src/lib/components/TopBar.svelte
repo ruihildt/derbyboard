@@ -4,7 +4,7 @@
 	import { authoringSession } from '$lib/stores/session';
 	import { getCapabilities } from '$lib/experiences/capabilities';
 	import { toolMode, type DrawTool } from '$lib/stores/toolMode';
-	import { BookOpenOutline } from 'flowbite-svelte-icons';
+	import { BookOpenOutline, DrawSquareOutline } from 'flowbite-svelte-icons';
 
 	import Menu from './Menu.svelte';
 	import ExperienceSwitcher from './ExperienceSwitcher.svelte';
@@ -37,8 +37,9 @@
 	});
 
 	const tools: { id: DrawTool; label: string; icon: string }[] = [
-		{ id: 'select', label: 'Select / pan', icon: '✋' },
-		{ id: 'drawPath', label: 'Draw movement path', icon: '↗' },
+		{ id: 'select', label: 'Select', icon: '' },
+		{ id: 'hand', label: 'Pan (hand)', icon: '' },
+		{ id: 'drawPath', label: 'Draw movement path', icon: '' },
 		{ id: 'pen', label: 'Freehand pen', icon: '✏' },
 		{ id: 'arrow', label: 'Arrow', icon: '→' },
 		{ id: 'zone', label: 'Zone', icon: '◯' },
@@ -46,10 +47,13 @@
 		{ id: 'gap', label: 'Gap', icon: '⫶' }
 	];
 
-	// When the experience no longer admits tools (Free), reset to the default
-	// tool so a stale draw tool isn't left armed against an uneditable board.
+	// Reset to the neutral tool whenever the current tool isn't admitted by the
+	// active experience (e.g. a drawing tool armed in Drill, then the board
+	// drops back to Free; or the `hand` tool armed in Free, then a clip turns
+	// the board into Drill). Keeps a stale tool from acting on an uneditable
+	// board.
 	$effect(() => {
-		if (caps.admittedTools.length === 0 && $toolMode !== 'select') {
+		if (!caps.admittedTools.includes($toolMode)) {
 			toolMode.set('select');
 		}
 	});
@@ -91,7 +95,40 @@
 								aria-label={tool.label}
 								title={tool.label}
 							>
-								{tool.icon}
+								{#if tool.id === 'select'}
+									<!-- Mouse-cursor glyph: the Select tool. -->
+									<svg
+										class="h-[18px] w-[18px]"
+										viewBox="0 0 24 24"
+										fill="currentColor"
+										aria-hidden="true"
+									>
+										<path d="M5.5 2.5v15l3.2-3 2.3 5 1.8-.8-2.3-5 4.5 0z" />
+									</svg>
+								{:else if tool.id === 'hand'}
+									<!-- Open-hand glyph: the dedicated Pan tool. -->
+									<svg
+										class="h-[18px] w-[18px]"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path d="M18 11V6a2 2 0 0 0-4 0" />
+										<path d="M14 10V4a2 2 0 0 0-4 0v2" />
+										<path d="M10 10.5V6a2 2 0 0 0-4 0v8" />
+										<path
+											d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"
+										/>
+									</svg>
+								{:else if tool.id === 'drawPath'}
+									<DrawSquareOutline class="h-[18px] w-[18px]" aria-hidden="true" />
+								{:else}
+									{tool.icon}
+								{/if}
 							</button>
 						{/if}
 					{/each}

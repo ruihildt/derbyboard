@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { boardDoc } from '$lib/doc/store';
 import { createEmptyDoc, type Entity, type AuthoredClip } from '$lib/doc/types';
 import { authoringSession } from '$lib/stores/session';
-import { getExperience, getCapabilities, ALL_TOOLS } from './capabilities';
+import { getExperience, getCapabilities, ALL_TOOLS, FREE_TOOLS } from './capabilities';
 
 function entity(id: string, x = 0): Entity {
 	return { id, kind: 'skater', team: 'A', role: 'blocker', x, y: 0.5, heading: 0 };
@@ -48,12 +48,12 @@ describe('capabilities — getExperience', () => {
 describe('capabilities — getCapabilities', () => {
 	beforeEach(() => resetBoard([entity('a')]));
 
-	it('free: no timeline, no tools, skater/official admitted', () => {
+	it('free: no timeline, view + annotation tools, skater/official admitted', () => {
 		const caps = getCapabilities(boardDoc.current);
 		expect(caps.experience).toBe('free');
 		expect(caps.label).toBe('Free Play');
 		expect(caps.timeline).toBe(false);
-		expect(caps.admittedTools).toEqual([]);
+		expect(caps.admittedTools).toEqual(FREE_TOOLS);
 		expect(caps.admittedEntityKinds).toEqual(['skater', 'official']);
 	});
 

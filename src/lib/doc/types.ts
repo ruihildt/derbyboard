@@ -44,7 +44,9 @@ export interface AnnotationStyle {
 /**
  * Flat annotation union. Every kind carries `id`, a `style`, and its geometry
  * entirely in planar world metres. No nesting, no grouping. Captured clips do
- * not carry annotations — only authored-clip steps do.
+ * not carry annotations. Authored-clip steps carry per-step annotations
+ * (appear/disappear with the step); the board carries free-play annotations,
+ * shown whenever no clip is active.
  */
 export type Annotation =
 	| { id: string; kind: 'pen'; points: PlanarPoint[]; style: AnnotationStyle }
@@ -173,9 +175,12 @@ export interface BoardDoc {
 	entities: Entity[];
 	clips: Clip[];
 	activeClipId: string | null;
+	/** Free-play annotations drawn directly on the board (no clip/step). Shown
+	 * whenever no authored clip is active; absent means none. */
+	annotations?: Annotation[];
 }
 
-export const CURRENT_VERSION = 7;
+export const CURRENT_VERSION = 8;
 
 export function createEmptyDoc(): BoardDoc {
 	return {

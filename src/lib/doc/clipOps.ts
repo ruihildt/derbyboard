@@ -365,6 +365,42 @@ export function clearAnnotations(stepId: string): void {
 }
 
 /**
+ * Free-play annotation ops: target the board-level `annotations` array shown
+ * whenever no authored clip is active. Mirror of the step-scoped ops above.
+ */
+
+/** Appends a free-play annotation to the board. Returns the id (caller may pass its own). */
+export function addFreeAnnotation(ann: Omit<Annotation, 'id'> & { id?: string }): string {
+	const id = ann.id ?? newId();
+	boardDoc.applyEdit((draft) => {
+		if (!draft.annotations) draft.annotations = [];
+		const filtered: Annotation = { ...ann, id } as Annotation;
+		if ('points' in filtered && Array.isArray(filtered.points)) {
+			(filtered as Extract<Annotation, { kind: 'pen' | 'zone' }>).points = filtered.points.filter(
+				(p) => Number.isFinite(p.x) && Number.isFinite(p.y)
+			);
+		}
+		draft.annotations.push(filtered);
+	}, 'Add annotation');
+	return id;
+}
+
+/** Deletes a free-play annotation by id. No-op if absent. */
+export function deleteFreeAnnotation(annId: string): void {
+	boardDoc.applyEdit((draft) => {
+		if (!draft.annotations) return;
+		draft.annotations = draft.annotations.filter((a) => a.id !== annId);
+	}, 'Delete annotation');
+}
+
+/** Removes every free-play annotation from the board. */
+export function clearFreeAnnotations(): void {
+	boardDoc.applyEdit((draft) => {
+		draft.annotations = undefined;
+	}, 'Clear annotations');
+}
+
+/**
  * Writes the current board poses onto the active step within ONE undo entry
  * that also writes the live poses to the document — so undo reverts the board
  * move and the step snapshot together. Registered as the PoseStore commit

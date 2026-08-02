@@ -2,6 +2,7 @@ import { writable } from 'svelte/store';
 
 export type DrawTool =
 	| 'select'
+	| 'hand' // dedicated canvas panning tool
 	| 'drawPath' // freehand movement path for the selected entity
 	| 'pen' // freehand stroke annotation
 	| 'arrow' // straight arrow (two taps / drag)
@@ -11,4 +12,6 @@ export type DrawTool =
 
 export const toolMode = writable<DrawTool>('select');
 
-export const isDrawingTool = (t: DrawTool): boolean => t !== 'select';
+/** Whether `t` lays down an annotation/shape on the canvas. Both `select` and
+ * `hand` are view tools — neither draws. */
+export const isDrawingTool = (t: DrawTool): boolean => t !== 'select' && t !== 'hand';

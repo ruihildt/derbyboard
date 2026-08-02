@@ -7,6 +7,7 @@ import { selectedEntityId, directionControlActive } from '$lib/stores/selection'
 import { boardSettings } from '$lib/stores/boardSettings';
 import { authoringSession } from '$lib/stores/session';
 import { toolMode, isDrawingTool } from '$lib/stores/toolMode';
+import { interaction } from '$lib/stores/interaction';
 import {
 	BASE_ZOOM,
 	CENTER_POINT_OFFSET,
@@ -47,7 +48,7 @@ import type {
 	PlanarPoint
 } from '$lib/doc/types';
 import type { PathFrame } from '$lib/recording/timeline/types';
-import { setEntityPath, addAnnotation, deletePath } from '$lib/doc/clipOps';
+import { setEntityPath, addAnnotation, addFreeAnnotation, deletePath } from '$lib/doc/clipOps';
 import type { TeamPlayerRole, TeamPlayerTeam } from './KonvaTeamPlayer';
 import type { SkatingOfficialRole } from './KonvaSkatingOfficial';
 
@@ -134,7 +135,7 @@ export class KonvaGame {
 	private knobLockMark: Konva.Group | null = null;
 
 	/** Drawing handler for annotation/path gestures */
-	private drawingHandlerUnsubscribe: (() => void) | null = null;
+	private interactionUnsubscribe: (() => void) | null = null;
 
 	/**
 	 * Cached last sample heading map for captured-clip motion-derived heading (P4.5).
@@ -268,12 +269,12 @@ export class KonvaGame {
 			this.updateRotationHandle();
 		});
 
-		// Control stage drag based on tool mode
-		this.drawingHandlerUnsubscribe = toolMode.subscribe((t) => {
-			const canDrag = t === 'select' && !this.replayMode && !this.authoredPlayback;
-			this.stage.draggable(canDrag);
-			// Player drag only works in select mode (and never during playback)
-			this.playersLayer.draggable(canDrag);
+		// Control stage/player dragging from the resolved interaction flags
+		// (tool only): `hand` pans, `select` edits, drawing tools do neither.
+		this.interactionUnsubscribe = interaction.subscribe(({ panEnabled, entitiesEnabled }) => {
+			const ok = !this.replayMode && !this.authoredPlayback;
+			this.stage.draggable(panEnabled && ok);
+			this.playersLayer.draggable(entitiesEnabled && ok);
 		});
 
 		// Apply the persisted direction-marker visibility on first paint.
@@ -300,8 +301,17 @@ export class KonvaGame {
 				const target = e.target as Konva.Node;
 				if (target.hasName('playerGroup')) {
 					const player = target.getAttr('player') as { id?: string } | undefined;
-					if (player?.id && player.id === get(selectedEntityId)) {
-						this.updateRotationHandle();
+					if (player?.id) {
+						if (player.id === get(selectedEntityId)) {
+							this.updateRotationHandle();
+						}
+						// Path lines are anchored to the skater (current step's start,
+						// previous step's endpoint) — keep them glued during the drag.
+						const center = this.getStageCenter();
+						this.updatePathsForEntityPose(player.id, {
+							x: (target.x() - center.x) / TRACK_SCALE,
+							y: (target.y() - center.y) / TRACK_SCALE
+						});
 					}
 				}
 			}
@@ -490,10 +500,11 @@ export class KonvaGame {
 			}
 
 			const step = this.getActiveStep();
-			if (!step) return;
 
-			// Commit the gesture
-			if (tool === 'drawPath') {
+			// Commit the gesture. `drawPath` is step-scoped (Free Play never arms
+			// it, and it needs a step to attach the path to); the annotation tools
+			// commit to the active step in Drill or to the board in Free Play.
+			if (tool === 'drawPath' && step) {
 				const selectedId = get(selectedEntityId);
 				if (selectedId && drawingPoints.length >= 2) {
 					// Simplify and cap to MAX_PATH_POINTS (most significant points kept).
@@ -542,8 +553,9 @@ export class KonvaGame {
 			firstAnchor = null;
 			pathLengthAccum = 0;
 
-			// Auto-return to select after discrete/gesture tools so control
-			// points appear immediately on the just-drawn path.
+			// Auto-return to select after gesture tools so the path's editing
+			// nodes appear immediately — in Select the previous/current/next
+			// paths for the selected entity all show their draggable handles.
 			if (tool === 'arrow' || tool === 'gap' || tool === 'label' || tool === 'drawPath') {
 				toolMode.set('select');
 			}
@@ -580,6 +592,8 @@ export class KonvaGame {
 
 		this.stage.on('click tap', (e) => {
 			if (this.replayMode) return;
+			// In hand mode the canvas is a pan surface — taps must not select.
+			if (get(toolMode) === 'hand') return;
 
 			const id = playerIdFromEvent(e);
 			if (id) {
@@ -591,6 +605,15 @@ export class KonvaGame {
 				// Single-select: select the entity, direction control inactive.
 				selectedEntityId.set(id);
 				directionControlActive.set(false);
+
+				// In the path tool, selecting a player that already has a path in
+				// the current step drops into Select so its editing nodes appear.
+				// A player with no path stays the tool armed so the user can draw one.
+				if (get(toolMode) === 'drawPath') {
+					const step = this.getActiveStep();
+					const hasPath = step?.paths?.some((p) => p.entityId === id) ?? false;
+					if (hasPath) toolMode.set('select');
+				}
 			} else {
 				// Any non-skater click (empty canvas, track lines, …) deselects
 				// entirely and exits direction mode.
@@ -602,6 +625,7 @@ export class KonvaGame {
 		this.stage.on('dblclick dbltap', (e) => {
 			if (this.replayMode) return;
 			if (this.focusTapEnabled) return; // don't interfere with focus mode
+			if (get(toolMode) === 'hand') return; // hand is a pan surface only
 			const id = playerIdFromEvent(e);
 			if (id) {
 				selectedEntityId.set(id);
@@ -789,12 +813,9 @@ export class KonvaGame {
 		// were just rebuilt around the new center, so re-project these overlays too
 		// — otherwise paths stay floating at their old pixel positions instead of
 		// following the player. (Replay is handled by renderSampleTransform above.)
-		if (boardDoc.current.activeClipId) {
-			const step = this.getActiveStep();
-			if (step) {
-				this.renderStepOverlays(step, get(selectedEntityId));
-			}
-		}
+		// In Free Play the step is undefined but board-level annotations still need
+		// re-projecting, so this runs in both experiences.
+		this.renderStepOverlays(this.getActiveStep(), get(selectedEntityId));
 	}
 
 	private recalculateDimensions() {
@@ -1220,8 +1241,9 @@ export class KonvaGame {
 	 */
 	setReplayMode(enabled: boolean, source?: { w: number; h: number }): void {
 		this.replayMode = enabled;
-		this.stage.draggable(!enabled);
-		this.playersLayer.draggable(!enabled && get(toolMode) === 'select');
+		const { panEnabled, entitiesEnabled } = get(interaction);
+		this.stage.draggable(!enabled && panEnabled);
+		this.playersLayer.draggable(!enabled && entitiesEnabled);
 		this.playerManager.setPlayersDraggable(!enabled);
 		if (enabled) {
 			// Belt-and-braces: tear down any authoring residue (focus/dim,
@@ -1445,7 +1467,7 @@ export class KonvaGame {
 		this.authoredPlayback = false;
 		poseStore.abortGesture();
 		this.playerManager.setPlayersDraggable(true);
-		this.playersLayer.draggable(get(toolMode) === 'select');
+		this.playersLayer.draggable(get(interaction).entitiesEnabled);
 		this.clearTrails();
 		this.updateRotationHandle();
 	}
@@ -2108,43 +2130,234 @@ export class KonvaGame {
 	}
 
 	/**
-	 * Renders a single path from an adjacent step as a non-interactive
-	 * light-grey dashed line (context only — no handles, no nodes).
+	 * Renders the selected entity's path from an adjacent step as a dashed
+	 * ghost line, drawn behind the active step. In Select the path's editing
+	 * nodes are added too; the line keeps its distinct muted colour.
 	 */
-	private renderGhostPath(step: Step | undefined, entityId: string): void {
+	private renderGhostPath(
+		step: Step | undefined,
+		entityId: string,
+		editable: boolean,
+		adjacency: 'prev' | 'next'
+	): void {
 		const path = step?.paths?.find((p) => p.entityId === entityId);
-		if (!path) return;
+		if (!path || !step) return;
+		this.renderPathGeometry(step, path, '#dc2626', adjacency, editable);
+	}
 
+	/**
+	 * Renders a single path: its line plus, when editable, control handles.
+	 * `mode` is 'current' (active step), 'prev' or 'next' (adjacent ghosts);
+	 * ghosts use the muted dashed line. Lines and handles are tagged with
+	 * (stepId, pathId) so the drag handlers target the exact path on screen.
+	 */
+	private renderPathGeometry(
+		step: Step,
+		path: EntityPath,
+		color: string,
+		mode: 'current' | 'prev' | 'next',
+		editable: boolean
+	): void {
+		const ghost = mode !== 'current';
 		const renderPoints = path.points.map((p) => ({ ...p }));
-		const startPose = step!.entities.find((e) => e.id === entityId);
-		if (startPose && renderPoints.length > 0) {
-			renderPoints[0] = { x: startPose.x, y: startPose.y };
+		// Inject the entity's pose in this step as point 0 so the line always
+		// starts at the skater — except for the previous-step ghost, whose first
+		// node is a freely draggable control point (injecting would reset it to
+		// the entity pose on every re-render).
+		if (mode !== 'prev') {
+			const startPose = step.entities.find((e) => e.id === path.entityId);
+			if (startPose && renderPoints.length > 0) {
+				renderPoints[0] = { x: startPose.x, y: startPose.y };
+			}
 		}
 
-		const projected = this.smoothProject(renderPoints);
-		if (!projected) return;
+		const projectedPoints = this.smoothProject(renderPoints);
+		if (!projectedPoints) return;
 
-		this.pathLayer.add(
-			new Konva.Line({
-				points: projected.flatMap((p) => [p.x, p.y]),
-				stroke: '#dc2626',
-				strokeWidth: Math.max(1.5, (PLAYER_RADIUS * 0.3) / this.stage.scaleX()),
-				dash: [6, 4],
-				lineCap: 'round',
-				lineJoin: 'round',
-				opacity: 0.5,
-				listening: false
-			})
+		const strokeWidth = ghost
+			? Math.max(1.5, (PLAYER_RADIUS * 0.3) / this.stage.scaleX())
+			: Math.max(2, (PLAYER_RADIUS * 0.4) / this.stage.scaleX());
+
+		const line = new Konva.Line({
+			name: 'lineShape',
+			points: projectedPoints.flatMap((p) => [p.x, p.y]),
+			stroke: color,
+			strokeWidth,
+			dash: ghost ? [6, 4] : undefined,
+			lineCap: 'round',
+			lineJoin: 'round',
+			tension: 0,
+			opacity: ghost ? 0.5 : 0.85,
+			listening: false
+		});
+		line.setAttr('stepId', step.id);
+		line.setAttr('pathId', path.id);
+		this.pathLayer.add(line);
+
+		if (editable) {
+			this.renderPathHandles(step, path, renderPoints, color, mode === 'current', mode);
+		}
+	}
+
+	/**
+	 * Adds control handles for one path. Each draggable handle clamps its drag
+	 * to the path's remaining length budget so a node can't push it past
+	 * MAX_PATH_LENGTH_M; the active step also gets a delete affordance.
+	 *
+	 * `mode` shapes which nodes appear:
+	 *  - current/next skip index 0 (anchored to a live position — the player,
+	 *    or, for next, the current path's endpoint).
+	 *  - prev instead skips its LAST index: that endpoint chains to the current
+	 *    player, so a handle there would sit on (and hijack) the skater. Its
+	 *    first node (index 0) has no live anchor, so it gets a regular draggable
+	 *    handle (clamped only by its single segment to the next node).
+	 */
+	private renderPathHandles(
+		step: Step,
+		path: EntityPath,
+		renderPoints: PlanarPoint[],
+		color: string,
+		withDelete: boolean,
+		mode: 'current' | 'prev' | 'next'
+	): void {
+		// Precompute metre-space positions and total length so each handle's
+		// budget is cheap to derive. Only the dragged node's incident segment(s)
+		// change during a drag.
+		const metrePts = renderPoints.map((p) => ({ x: p.x, y: p.y }));
+		let totalLen = 0;
+		for (let k = 0; k < metrePts.length - 1; k++) {
+			totalLen += Math.hypot(metrePts[k + 1].x - metrePts[k].x, metrePts[k + 1].y - metrePts[k].y);
+		}
+
+		// Previous step: draw a draggable handle at index 0 too (its start has
+		// no live player anchoring it in the current view), but skip the last
+		// index — that endpoint chains to the current player and is edited by
+		// dragging the skater. Current/next skip index 0 (anchored to the
+		// player / the current path's endpoint).
+		const lo = mode === 'prev' ? 0 : 1;
+		const hi = mode === 'prev' ? path.points.length - 1 : path.points.length;
+
+		for (let i = lo; i < hi; i++) {
+			const pt = renderPoints[i];
+			const px = this.projectPoint(pt.x, pt.y);
+			const handleRadius = Math.max(8, 10 / this.stage.scaleX());
+
+			// aM is null for the path's first node (no previous neighbour).
+			const aM = i > 0 ? metrePts[i - 1] : null;
+			const bM = i < metrePts.length - 1 ? metrePts[i + 1] : null;
+			const incidentStatic =
+				(aM ? Math.hypot(metrePts[i].x - aM.x, metrePts[i].y - aM.y) : 0) +
+				(bM ? Math.hypot(bM.x - metrePts[i].x, bM.y - metrePts[i].y) : 0);
+			const budget = MAX_PATH_LENGTH_M - (totalLen - incidentStatic);
+
+			const handle = new Konva.Circle({
+				x: px.x,
+				y: px.y,
+				radius: handleRadius,
+				fill: 'white',
+				stroke: color,
+				strokeWidth: 2,
+				draggable: true,
+				name: 'pathHandle',
+				listening: true
+			});
+			handle.setAttr('pointIndex', i);
+			handle.setAttr('pathId', path.id);
+			handle.setAttr('stepId', step.id);
+
+			// Hard-clamp the drag so the path can't exceed MAX_PATH_LENGTH_M.
+			handle.dragBoundFunc((pos) => {
+				const center = this.getStageCenter();
+				const pM = {
+					x: (pos.x - center.x) / TRACK_SCALE,
+					y: (pos.y - center.y) / TRACK_SCALE
+				};
+				const c = clampNodeToBudget(aM, bM, pM, budget);
+				return { x: center.x + c.x * TRACK_SCALE, y: center.y + c.y * TRACK_SCALE };
+			});
+
+			handle.on('dragmove', () => this.updatePathPreview(step, path));
+			handle.on('dragend', () => this.commitPathChanges(step, path, get(selectedEntityId)));
+
+			// Handles live on the top control layer so they stay grabbable even
+			// where a path passes under a skater (e.g. a previous step's path,
+			// whose endpoint chains to the current player's position).
+			this.controlLayer.add(handle);
+		}
+
+		// Delete affordance — only on the active step's path.
+		if (withDelete && path.points.length > 1) {
+			const lastPt = renderPoints[renderPoints.length - 1];
+			const lastPx = this.projectPoint(lastPt.x, lastPt.y);
+			const deleteSize = 12;
+
+			const deleteBtn = new Konva.Group({ name: 'pathDelete', listening: true });
+			new Konva.Rect({
+				x: lastPx.x - deleteSize / 2,
+				y: lastPx.y - deleteSize / 2,
+				width: deleteSize,
+				height: deleteSize,
+				fill: '#e11d48',
+				radius: 2,
+				parent: deleteBtn
+			});
+			new Konva.Text({
+				x: lastPx.x,
+				y: lastPx.y,
+				text: '✕',
+				fontSize: 10,
+				fontFamily: 'Arial',
+				fill: 'white',
+				textBaseline: 'middle',
+				align: 'center',
+				offsetX: 3,
+				offsetY: 3,
+				parent: deleteBtn
+			});
+			deleteBtn.setAttr('pathId', path.id);
+			deleteBtn.setAttr('stepId', step.id);
+
+			deleteBtn.on('click tap', () => {
+				deletePath(step.id, path.id);
+				const active = this.getActiveStep();
+				const { prevStep, nextStep } = this.getAdjacentSteps();
+				this.renderPaths(active, get(selectedEntityId), prevStep, nextStep);
+			});
+
+			this.controlLayer.add(deleteBtn);
+		}
+	}
+
+	/** Handles belonging to one path, filtered by step + path id. Handles live
+	 * on the top controlLayer (above the players), so the lookup targets it. */
+	private pathHandlesFor(stepId: string, pathId: string): Circle[] {
+		return Array.from(this.controlLayer.find<Circle>('.pathHandle')).filter(
+			(h) => h.getAttr('stepId') === stepId && h.getAttr('pathId') === pathId
+		);
+	}
+
+	/** Removes just the path handles + delete buttons from the top control
+	 * layer (leaving the direction/rotation controls untouched). */
+	private clearPathHandles(): void {
+		this.controlLayer.find('.pathHandle').forEach((h) => h.destroy());
+		this.controlLayer.find('.pathDelete').forEach((g) => g.destroy());
+	}
+
+	/** The line shape for one path, filtered by step + path id. */
+	private pathLineFor(stepId: string, pathId: string): Konva.Line | undefined {
+		return Array.from(this.pathLayer.find<Konva.Line>('.lineShape')).find(
+			(l) => l.getAttr('stepId') === stepId && l.getAttr('pathId') === pathId
 		);
 	}
 
 	/**
 	 * Renders movement paths for a step. If step is undefined, clears the layer.
 	 * Paths are shown for the selected entity or when pathOverlay mode is 'all'.
-	 * When toolMode is 'select', adds draggable control point handles for the selected entity's path.
 	 *
-	 * When an entity is selected, the PREVIOUS step's path and NEXT step's path
-	 * for that entity are also rendered in light grey (context, non-interactive).
+	 * In Select the previous/current/next steps' paths for the selected entity
+	 * are all rendered with their draggable editing nodes — the adjacent-step
+	 * (ghost) lines keep a distinct muted colour and are drawn behind the active
+	 * step. In other tools only the lines are shown (no handles).
 	 */
 	renderPaths(
 		step: Step | undefined,
@@ -2159,22 +2372,25 @@ export class KonvaGame {
 		if (this.replayMode) return;
 
 		this.pathLayer.destroyChildren();
+		this.clearPathHandles();
 
-		// Render adjacent steps' paths for the selected entity as light-grey
-		// context lines (drawn first, behind the current step's paths).
+		const editable = get(toolMode) === 'select';
+
+		// Adjacent-step (ghost) paths for the selected entity, drawn first so
+		// they sit behind the active step. In Select they get editing nodes too.
 		if (selectedEntityId) {
-			this.renderGhostPath(prevStep, selectedEntityId);
-			this.renderGhostPath(nextStep, selectedEntityId);
+			this.renderGhostPath(prevStep, selectedEntityId, editable, 'prev');
+			this.renderGhostPath(nextStep, selectedEntityId, editable, 'next');
 		}
 
 		if (!step?.paths) {
 			this.currentPathFrame = undefined;
 			this.pathLayer.batchDraw();
+			this.controlLayer.batchDraw();
 			return;
 		}
 
 		const overlayMode = get(boardSettings).pathOverlay ?? 'off';
-		const currentTool = get(toolMode);
 
 		for (const path of step.paths) {
 			const shouldRender =
@@ -2184,151 +2400,14 @@ export class KonvaGame {
 
 			if (!shouldRender) continue;
 
-			// Inject only the FIRST point with the entity's current pose so the
-			// visual line always starts at the skater. The last point is NOT
-			// injected — the stored endpoint is the visual end (chain propagation
-			// keeps it synced with the next step's pose).
-			const startPose = step.entities.find((e) => e.id === path.entityId);
-			const renderPoints = path.points.map((p) => ({ ...p }));
-			if (startPose && renderPoints.length > 0) {
-				renderPoints[0] = { x: startPose.x, y: startPose.y };
-			}
-
-			const projectedPoints = this.smoothProject(renderPoints);
-			if (!projectedPoints) continue;
-
-			const color = this.trailColorFor(path.entityId);
-			const strokeWidth = Math.max(2, (PLAYER_RADIUS * 0.4) / this.stage.scaleX());
-
-			// Main path line
-			const line = new Konva.Line({
-				name: 'lineShape',
-				points: projectedPoints.flatMap((p) => [p.x, p.y]),
-				stroke: color,
-				strokeWidth,
-				tension: 0,
-				opacity: 0.85,
-				listening: false
-			});
-			this.pathLayer.add(line);
-
-			// Control point handles for selected entity when in select mode
-			if (path.entityId === selectedEntityId && currentTool === 'select') {
-				// Add draggable handles for INTERIOR points and the endpoint.
-				// Skip index 0 — that's the entity's own position (injected at
-				// render time), not a separate control point.
-				// Precompute metre-space positions and total path length so each
-				// handle's length budget is cheap to derive. Only the dragged node's
-				// incident segment(s) change during a drag, so the budget is
-				// MAX_PATH_LENGTH_M minus the length used by every other segment — a
-				// node can never be dragged past the speed cap.
-				const metrePts = renderPoints.map((p) => ({ x: p.x, y: p.y }));
-				let totalLen = 0;
-				for (let k = 0; k < metrePts.length - 1; k++) {
-					totalLen += Math.hypot(
-						metrePts[k + 1].x - metrePts[k].x,
-						metrePts[k + 1].y - metrePts[k].y
-					);
-				}
-
-				for (let i = 1; i < path.points.length; i++) {
-					const pt = renderPoints[i];
-					const px = this.projectPoint(pt.x, pt.y);
-					const handleRadius = Math.max(8, 10 / this.stage.scaleX());
-
-					// Previous/next node in metres; the endpoint (last point) has no
-					// next node, so only its single incident segment is budgeted.
-					const aM = metrePts[i - 1];
-					const bM = i < metrePts.length - 1 ? metrePts[i + 1] : null;
-					const incidentStatic =
-						Math.hypot(metrePts[i].x - aM.x, metrePts[i].y - aM.y) +
-						(bM ? Math.hypot(bM.x - metrePts[i].x, bM.y - metrePts[i].y) : 0);
-					const budget = MAX_PATH_LENGTH_M - (totalLen - incidentStatic);
-
-					const handle = new Konva.Circle({
-						x: px.x,
-						y: px.y,
-						radius: handleRadius,
-						fill: 'white',
-						stroke: color,
-						strokeWidth: 2,
-						draggable: true,
-						name: 'pathHandle',
-						listening: true
-					});
-					handle.setAttr('pointIndex', i);
-					handle.setAttr('pathId', path.id);
-
-					// Hard-clamp the drag so the path can't exceed MAX_PATH_LENGTH_M.
-					// `pos` is content (stage-local) pixels; convert to metres, clamp
-					// against the incident-segment budget, then convert back.
-					handle.dragBoundFunc((pos) => {
-						const center = this.getStageCenter();
-						const pM = {
-							x: (pos.x - center.x) / TRACK_SCALE,
-							y: (pos.y - center.y) / TRACK_SCALE
-						};
-						const c = clampNodeToBudget(aM, bM, pM, budget);
-						return {
-							x: center.x + c.x * TRACK_SCALE,
-							y: center.y + c.y * TRACK_SCALE
-						};
-					});
-
-					handle.on('dragmove', () => {
-						// Update live preview during drag
-						this.updatePathPreview(step, path);
-					});
-
-					handle.on('dragend', () => {
-						// Commit the path changes
-						this.commitPathChanges(step, path, selectedEntityId);
-					});
-
-					this.pathLayer.add(handle);
-				}
-
-				// Delete affordance (small X button)
-				if (path.points.length > 1) {
-					const lastPt = renderPoints[renderPoints.length - 1];
-					const lastPx = this.projectPoint(lastPt.x, lastPt.y);
-					const deleteSize = 12;
-
-					const deleteBtn = new Konva.Group({ name: 'pathDelete', listening: true });
-					new Konva.Rect({
-						x: lastPx.x - deleteSize / 2,
-						y: lastPx.y - deleteSize / 2,
-						width: deleteSize,
-						height: deleteSize,
-						fill: '#e11d48',
-						radius: 2,
-						parent: deleteBtn
-					});
-					new Konva.Text({
-						x: lastPx.x,
-						y: lastPx.y,
-						text: '✕',
-						fontSize: 10,
-						fontFamily: 'Arial',
-						fill: 'white',
-						textBaseline: 'middle',
-						align: 'center',
-						offsetX: 3,
-						offsetY: 3,
-						parent: deleteBtn
-					});
-					deleteBtn.setAttr('pathId', path.id);
-
-					deleteBtn.on('click tap', () => {
-						if (!step) return;
-						deletePath(step.id, path.id);
-						const { prevStep, nextStep } = this.getAdjacentSteps();
-						this.renderPaths(step, selectedEntityId, prevStep, nextStep);
-					});
-
-					this.pathLayer.add(deleteBtn);
-				}
-			}
+			// Handles only for the selected entity's own path on the active step.
+			this.renderPathGeometry(
+				step,
+				path,
+				this.trailColorFor(path.entityId),
+				'current',
+				editable && path.entityId === selectedEntityId
+			);
 		}
 
 		// Cache the full step path data for getSnapshot() so a recording
@@ -2344,6 +2423,7 @@ export class KonvaGame {
 		};
 
 		this.pathLayer.batchDraw();
+		this.controlLayer.batchDraw();
 	}
 
 	/**
@@ -2353,12 +2433,16 @@ export class KonvaGame {
 	renderAnnotations(step: Step | undefined): void {
 		this.annotationLayer.destroyChildren();
 
-		if (!step?.annotations) {
+		// Step annotations in Drill; board-level annotations in Free Play. Key on
+		// step presence (not annotation presence) so a drill step with no
+		// annotations doesn't fall through to the board set.
+		const anns = step ? step.annotations : boardDoc.current.annotations;
+		if (!anns) {
 			this.annotationLayer.batchDraw();
 			return;
 		}
 
-		for (const ann of step.annotations) {
+		for (const ann of anns) {
 			switch (ann.kind) {
 				case 'pen': {
 					const projected = ann.points.map((pt) => this.projectPoint(pt.x, pt.y));
@@ -2656,13 +2740,16 @@ export class KonvaGame {
 	}
 
 	/**
-	 * Helper to create an annotation on the active step.
+	 * Helper to create an annotation on the active step (Drill) or on the board
+	 * itself (Free Play — no step exists, so it lands in `BoardDoc.annotations`).
 	 */
 	private createAnnotation(ann: Annotation): void {
 		const step = this.getActiveStep();
-		if (!step) return;
-
-		addAnnotation(step.id, ann as Annotation & { id?: string });
+		if (step) {
+			addAnnotation(step.id, ann as Annotation & { id?: string });
+		} else {
+			addFreeAnnotation(ann as Annotation & { id?: string });
+		}
 	}
 
 	/**
@@ -2677,13 +2764,13 @@ export class KonvaGame {
 	 * the layer, preserving index 0 (entity pose, no handle) from stored points.
 	 */
 	private updatePathPreview(step: Step, path: EntityPath): void {
-		const handles = this.pathLayer.find<Circle>('.pathHandle');
-		if (!handles || handles.length === 0) return;
+		const handles = this.pathHandlesFor(step.id, path.id);
+		if (handles.length === 0) return;
 
 		// Start from stored points so index 0 (entity pose) is preserved.
 		const newPoints: PlanarPoint[] = path.points.map((p) => ({ ...p }));
 
-		// Inject the entity's current pose as the first point.
+		// Inject the entity's pose in THIS step as the first point.
 		const entityPose = step.entities.find((e) => e.id === path.entityId);
 		if (entityPose && newPoints.length > 0) {
 			newPoints[0] = { x: entityPose.x, y: entityPose.y };
@@ -2693,19 +2780,71 @@ export class KonvaGame {
 		const center = this.getStageCenter();
 		handles.forEach((handle) => {
 			const pointIndex = handle.getAttr('pointIndex');
-			const mx = (handle.x() - center.x) / TRACK_SCALE;
-			const my = (handle.y() - center.y) / TRACK_SCALE;
-			newPoints[pointIndex] = { x: mx, y: my };
+			newPoints[pointIndex] = {
+				x: (handle.x() - center.x) / TRACK_SCALE,
+				y: (handle.y() - center.y) / TRACK_SCALE
+			};
 		});
 
-		// Re-render the line with updated points
-		const line = this.pathLayer.findOne<Konva.Line>('.lineShape');
-		if (line && newPoints.length >= 2) {
-			const projected = this.smoothProject(newPoints);
-			if (projected) {
-				line.points(projected.flatMap((p) => [p.x, p.y]));
-				this.pathLayer.batchDraw();
+		// Re-render this path's line. Synchronous draw (not batchDraw) so it
+		// tracks the handle every move — the handle lives on the separate
+		// controlLayer, so an rAF redraw of pathLayer can lag behind the drag.
+		this.redrawPathLine(step.id, path.id, newPoints);
+
+		// The active step's endpoint chains to the next step's start (index 0),
+		// so the two share a node. Keep the next step's line in sync live too —
+		// otherwise the shared node only jumps into place on drop.
+		const active = this.getActiveStep();
+		if (active && step.id === active.id && newPoints.length >= 2) {
+			const { nextStep } = this.getAdjacentSteps();
+			const nextPath = nextStep?.paths?.find((p) => p.entityId === path.entityId);
+			if (nextStep && nextPath) {
+				const nextPoints = nextPath.points.map((p) => ({ ...p }));
+				nextPoints[0] = { ...newPoints[newPoints.length - 1] };
+				this.redrawPathLine(nextStep.id, nextPath.id, nextPoints);
 			}
+		}
+	}
+
+	/** Re-projects `points` and synchronously redraws the line for one path. */
+	private redrawPathLine(stepId: string, pathId: string, points: PlanarPoint[]): void {
+		const line = this.pathLineFor(stepId, pathId);
+		if (!line || points.length < 2) return;
+		const projected = this.smoothProject(points);
+		if (projected) {
+			line.points(projected.flatMap((p) => [p.x, p.y]));
+			this.pathLayer.draw();
+		}
+	}
+
+	/**
+	 * Live-updates the path lines anchored to a skater while the skater is
+	 * dragged. The current step's path starts at the skater (index 0), and the
+	 * previous step's path ends at it (the endpoint chains to this pose). Both
+	 * are redrawn with `poseMetres` so they track the drag instead of waiting
+	 * for the drop commit.
+	 */
+	private updatePathsForEntityPose(entityId: string, poseMetres: PlanarPoint): void {
+		const active = this.getActiveStep();
+		if (!active) return;
+
+		// Current step: index 0 (start) is the skater's live pose.
+		const curPath = active.paths?.find((p) => p.entityId === entityId);
+		if (curPath && curPath.points.length >= 2) {
+			const pts = curPath.points.map((p) => ({ ...p }));
+			pts[0] = { ...poseMetres };
+			this.redrawPathLine(active.id, curPath.id, pts);
+		}
+
+		// Previous step: its endpoint chains to this skater. Index 0 is the prev
+		// path's own stored start (not injected — see renderPathGeometry), so we
+		// only override the endpoint to follow the drag.
+		const { prevStep } = this.getAdjacentSteps();
+		const prevPath = prevStep?.paths?.find((p) => p.entityId === entityId);
+		if (prevStep && prevPath && prevPath.points.length >= 2) {
+			const pts = prevPath.points.map((p) => ({ ...p }));
+			pts[pts.length - 1] = { ...poseMetres };
+			this.redrawPathLine(prevStep.id, prevPath.id, pts);
 		}
 	}
 
@@ -2714,12 +2853,12 @@ export class KonvaGame {
 	 * points (entity pose, no handle) and writes handle positions for 1..N.
 	 */
 	private commitPathChanges(step: Step, path: EntityPath, selectedEntityId: string | null): void {
-		const handles = this.pathLayer.find<Circle>('.pathHandle');
-		if (!handles || handles.length === 0) return;
+		const handles = this.pathHandlesFor(step.id, path.id);
+		if (handles.length === 0) return;
 
 		const newPoints: PlanarPoint[] = path.points.map((p) => ({ ...p }));
 
-		// Inject the entity's current pose as the first point.
+		// Inject the entity's pose in THIS step as the first point.
 		const entityPose = step.entities.find((e) => e.id === path.entityId);
 		if (entityPose && newPoints.length > 0) {
 			newPoints[0] = { x: entityPose.x, y: entityPose.y };
@@ -2728,15 +2867,19 @@ export class KonvaGame {
 		const center = this.getStageCenter();
 		handles.forEach((handle) => {
 			const pointIndex = handle.getAttr('pointIndex');
-			const mx = (handle.x() - center.x) / TRACK_SCALE;
-			const my = (handle.y() - center.y) / TRACK_SCALE;
-			newPoints[pointIndex] = { x: mx, y: my };
+			newPoints[pointIndex] = {
+				x: (handle.x() - center.x) / TRACK_SCALE,
+				y: (handle.y() - center.y) / TRACK_SCALE
+			};
 		});
 
-		// Commit via CRUD operation
+		// Commit to the edited step (which may be an adjacent/ghost step).
 		this.setEntityPath(step.id, path.entityId, newPoints);
+
+		// Re-render anchored on the active step so prev/current/next realign.
+		const active = this.getActiveStep();
 		const { prevStep, nextStep } = this.getAdjacentSteps();
-		this.renderPaths(step, selectedEntityId, prevStep, nextStep);
+		this.renderPaths(active, selectedEntityId, prevStep, nextStep);
 	}
 
 	/**

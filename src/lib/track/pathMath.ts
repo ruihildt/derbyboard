@@ -84,9 +84,9 @@ function reduceToN(points: PlanarPoint[], n: number): PlanarPoint[] {
 
 /**
  * Constrains a proposed node position `p` (metres) so the total length of the path segment(s)
- * incident to it stays within `budget` metres. `a` is the previous node; `b` is the next node,
- * or `null` when `p` is the path endpoint (only one incident segment). Used to enforce
- * `MAX_PATH_LENGTH_M` while a path node is dragged.
+ * incident to it stays within `budget` metres. `a` is the previous node (or `null` for the
+ * path's first node); `b` is the next node, or `null` when `p` is the path endpoint (only one
+ * incident segment). Used to enforce `MAX_PATH_LENGTH_M` while a path node is dragged.
  *
  * - If `p` already fits the budget it is returned unchanged.
  * - Otherwise `p` is moved toward the focus midpoint (interior node) or toward `a` (endpoint)
@@ -96,20 +96,24 @@ function reduceToN(points: PlanarPoint[], n: number): PlanarPoint[] {
  *   the focus midpoint / `a`, the position that minimises the incident length.
  */
 export function clampNodeToBudget(
-	a: PlanarPoint,
+	a: PlanarPoint | null,
 	b: PlanarPoint | null,
 	p: PlanarPoint,
 	budget: number
 ): PlanarPoint {
 	const incident = (q: PlanarPoint): number => {
-		const dA = Math.hypot(q.x - a.x, q.y - a.y);
+		const dA = a ? Math.hypot(q.x - a.x, q.y - a.y) : 0;
 		const dB = b ? Math.hypot(q.x - b.x, q.y - b.y) : 0;
 		return dA + dB;
 	};
 
 	if (incident(p) <= budget) return { x: p.x, y: p.y };
 
-	const anchor: PlanarPoint = b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: a.x, y: a.y };
+	// Anchor toward the available neighbour(s): the midpoint of both for an
+	// interior node, the single neighbour for an endpoint/start node, or p
+	// itself if the node has no neighbours (single-point path).
+	const anchor: PlanarPoint =
+		a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : (a ?? b ?? { x: p.x, y: p.y });
 
 	// Binary search the boundary incident == budget along the segment p→anchor.
 	let lo = 0;

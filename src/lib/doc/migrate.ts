@@ -126,9 +126,10 @@ export function entityToPixelRelative(entity: Entity): { x: number; y: number } 
  *    `EntityPose`), path point and annotation geometry is converted via
  *    `fromTrack(S, u)`; heading modes and metadata are unchanged. `(S, u)`
  *    becomes a derived view computed on demand by the track layer.
- *  - v7 → v8: added optional `domain` to `AuthoredClip` (derives the
- *    experience — Drill vs Strategy). Absent means `'practice'`, matching
- *    pre-v8 authored clips. No coordinate work: planar is already canonical.
+ *  - v7 → v8: added optional `annotations: Annotation[]` to `BoardDoc` for
+ *    free-play annotations (shown whenever no authored clip is active). Absent
+ *    means none, matching pre-v8 behaviour. No coordinate work: planar is
+ *    already canonical.
  */
 export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 	let next = doc;
@@ -240,6 +241,14 @@ export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 	if (next.version < 7) {
 		next = migrateV6ToV7(next);
 		next.version = 7;
+	}
+
+	if (next.version < 8) {
+		// Defensive copy so we never mutate the caller's object. The new
+		// board-level `annotations` field stays undefined (absent = none), so
+		// no data needs to be synthesised.
+		next = { ...next };
+		next.version = 8;
 	}
 
 	next.version = CURRENT_VERSION;
