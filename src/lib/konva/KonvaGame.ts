@@ -3,7 +3,11 @@ import Konva from 'konva';
 import type { Circle } from 'konva/lib/shapes/Circle';
 
 import { boardState } from '$lib/stores/konvaBoardState';
-import { selectedEntityId, directionControlActive } from '$lib/stores/selection';
+import {
+	selectedEntityId,
+	selectedAnnotationId,
+	directionControlActive
+} from '$lib/stores/selection';
 import { boardSettings } from '$lib/stores/boardSettings';
 import { authoringSession } from '$lib/stores/session';
 import { toolMode, isDrawingTool } from '$lib/stores/toolMode';
@@ -37,18 +41,43 @@ import { migrateBoardState } from '$lib/doc/migrate';
 import { trackLayer } from '$lib/track/trackLayer';
 import { motionHeading } from '$lib/track/heading';
 import { tweenSteps, easeInOutCubic, MAX_PATH_LENGTH_M, MAX_PATH_POINTS } from '$lib/track/tween';
-import { buildArcLength, catmullRom, simplify, clampNodeToBudget } from '$lib/track/pathMath';
+import {
+	buildArcLength,
+	catmullRom,
+	catmullRomClosed,
+	simplify,
+	clampNodeToBudget
+} from '$lib/track/pathMath';
 import type {
 	Entity,
 	EntityPose,
 	HeadingMode,
 	Step,
 	Annotation,
+	AnnotationTransform,
 	EntityPath,
 	PlanarPoint
 } from '$lib/doc/types';
 import type { PathFrame } from '$lib/recording/timeline/types';
-import { setEntityPath, addAnnotation, addFreeAnnotation, deletePath } from '$lib/doc/clipOps';
+import {
+	effectiveAnchors,
+	baseBox,
+	boxCorners,
+	halfSizes,
+	rotateHandlePos,
+	resolvedTransform,
+	moveTransform,
+	resizeTransform,
+	rotateTransform,
+	MIN_HALF
+} from './annotationTransform';
+import {
+	setEntityPath,
+	addAnnotation,
+	deleteAnnotation,
+	deletePath,
+	setAnnotationTransform
+} from '$lib/doc/clipOps';
 import type { TeamPlayerRole, TeamPlayerTeam } from './KonvaTeamPlayer';
 import type { SkatingOfficialRole } from './KonvaSkatingOfficial';
 
@@ -126,6 +155,8 @@ export class KonvaGame {
 	private rotationHandle: Konva.Group | null = null;
 	/** Reactive bridge from the selection store to the rotation handle render. */
 	private selectionUnsubscribe: (() => void) | null = null;
+	/** Reactive bridge from the annotation selection store to the ring render. */
+	private annotationSelectionUnsubscribe: (() => void) | null = null;
 	private directionControlUnsubscribe: (() => void) | null = null;
 	/** Thin dashed guide line between the facing marker and the direction knob. */
 	private directionLine: Konva.Line | null = null;
@@ -136,6 +167,27 @@ export class KonvaGame {
 
 	/** Drawing handler for annotation/path gestures */
 	private interactionUnsubscribe: (() => void) | null = null;
+
+	/** Reactive bridge: re-render annotations (and show/hide the selection box)
+	 * when the active tool changes. */
+	private toolModeUnsubscribe: (() => void) | null = null;
+
+	/** Active annotation move/resize/rotate gesture, or null when idle. */
+	private annotationGesture: {
+		type: 'move' | 'resize' | 'rotate';
+		annId: string;
+		ann: Annotation;
+		baseHw: number;
+		baseHh: number;
+		start: AnnotationTransform;
+		startPointer: PlanarPoint;
+		su: number;
+		sv: number;
+	} | null = null;
+	/** Suppresses the click that follows a gesture so it doesn't deselect.
+	 * Timestamp (not a flag) so a touch drag — which fires no click — can't
+	 * leave a lingering flag that swallows the next genuine tap. */
+	private lastGestureEnd = 0;
 
 	/**
 	 * Cached last sample heading map for captured-clip motion-derived heading (P4.5).
@@ -245,6 +297,7 @@ export class KonvaGame {
 		// 9. Direction control (knob + guide line) — above everything.
 		this.stage.add(this.controlLayer);
 
+		// Eraser cursor: a white circle that follows the pointer while the erase
 		// Build rotation handle (initially hidden).
 		this.buildRotationHandle();
 
@@ -261,6 +314,21 @@ export class KonvaGame {
 		this.selectionUnsubscribe = selectedEntityId.subscribe((id) => {
 			this.playerManager.setSelection(id);
 			this.updateRotationHandle();
+		});
+
+		// Redraw annotations when the selected mark changes so the dashed
+		// selection ring appears/clears immediately (the layer is rebuilt).
+		this.annotationSelectionUnsubscribe = selectedAnnotationId.subscribe(() => {
+			this.renderAnnotations(this.getActiveStep());
+		});
+
+		// The selection box only belongs to the Select tool; re-render on tool
+		// change so it appears/disappears with the active tool. Also toggles the
+		// eraser cursor for the erase tool.
+		this.toolModeUnsubscribe = toolMode.subscribe(() => {
+			if (this.annotationGesture) return; // don't clobber a live gesture
+			this.renderAnnotations(this.getActiveStep());
+			this.updateEraseCursor();
 		});
 
 		// The knob + dashed line appear/disappear when direction-control mode
@@ -343,8 +411,16 @@ export class KonvaGame {
 			const tool = get(toolMode);
 			if (!isDrawingTool(tool)) return;
 
-			// Only handle on stage or overlay layers, not on UI controls
-			if (e.target !== this.stage && e.target.parent !== this.stage) return;
+			// Only handle on stage or overlay layers, not on UI controls.
+			// Annotation shapes and active-step path lines are hittable content
+			// (for selection in Select / targeting in Erase), but a new draw
+			// should still start when the pointer lands on one — treat either
+			// like the empty canvas.
+			const drawTarget = e.target as Konva.Node;
+			const passthrough =
+				drawTarget.findAncestors('.annotation', true).length > 0 ||
+				drawTarget.findAncestors('.lineShape', true).length > 0;
+			if (!passthrough && drawTarget !== this.stage && drawTarget.parent !== this.stage) return;
 
 			e.cancelBubble = true;
 
@@ -374,9 +450,9 @@ export class KonvaGame {
 				} else {
 					drawingPoints = [{ x: planePos.x, y: planePos.y }];
 				}
-			} else if (tool === 'pen' || tool === 'zone') {
+			} else if (tool === 'pen' || tool === 'zone' || tool === 'arrow') {
 				drawingPoints = [{ x: planePos.x, y: planePos.y }];
-			} else if (tool === 'arrow' || tool === 'gap') {
+			} else if (tool === 'gap') {
 				firstAnchor = { x: planePos.x, y: planePos.y };
 			} else if (tool === 'label') {
 				const text = prompt('Label text:');
@@ -395,17 +471,17 @@ export class KonvaGame {
 				return;
 			}
 
-			// Create preview for freehand tools
-			if (tool === 'pen' || tool === 'drawPath' || tool === 'zone') {
+			// Create preview for freehand tools. The preview is always an OPEN
+			// stroke — the zone tool only closes/fills on release, so while
+			// drawing it reads as a freehand outline, not a forming zone.
+			if (tool === 'pen' || tool === 'drawPath' || tool === 'zone' || tool === 'arrow') {
 				previewLine = new Konva.Line({
-					points: drawingPoints.flatMap((pt) => {
-						const p = this.projectPoint(pt.x, pt.y);
-						return [p.x, p.y];
-					}),
+					points: this.projectSmoothed(drawingPoints, false).flatMap((p) => [p.x, p.y]),
 					stroke: tool === 'drawPath' ? this.trailColorFor(get(selectedEntityId) ?? '') : '#e11d48',
 					strokeWidth: 2,
 					lineCap: 'round',
 					lineJoin: 'round',
+					tension: 0,
 					opacity: 0.5,
 					listening: false
 				});
@@ -416,6 +492,10 @@ export class KonvaGame {
 		});
 
 		this.stage.on('pointermove', () => {
+			if (this.annotationGesture) {
+				this.updateAnnotationGesture();
+				return;
+			}
 			const tool = get(toolMode);
 			if (!isDrawingTool(tool) || (!firstAnchor && drawingPoints.length === 0)) return;
 
@@ -426,7 +506,7 @@ export class KonvaGame {
 
 				const planePos = this.pointerToPlane(pos);
 
-				if (tool === 'pen' || tool === 'drawPath' || tool === 'zone') {
+				if (tool === 'pen' || tool === 'drawPath' || tool === 'zone' || tool === 'arrow') {
 					// Enforce path-length cap for movement paths. Don't early-return
 					// (that would skip `rafId = null` and freeze all further drawing).
 					let acceptPoint = true;
@@ -444,13 +524,11 @@ export class KonvaGame {
 						drawingPoints.push({ x: planePos.x, y: planePos.y });
 					}
 
-					// Update preview
+					// Update preview (open stroke for all freehand tools, incl. zone)
 					if (previewLine) {
-						const projectedPoints = drawingPoints.map((pt) => this.projectPoint(pt.x, pt.y));
-						previewLine.points(projectedPoints.flatMap((p) => [p.x, p.y]));
-						if (tool === 'zone') {
-							previewLine.closed(true);
-						}
+						previewLine.points(
+							this.projectSmoothed(drawingPoints, false).flatMap((p) => [p.x, p.y])
+						);
 						// Visual cue: turn amber near the cap, red at the cap.
 						if (tool === 'drawPath') {
 							const ratio = pathLengthAccum / MAX_PATH_LENGTH_M;
@@ -459,23 +537,27 @@ export class KonvaGame {
 						}
 						this.pathLayer.batchDraw();
 					}
-				} else if (tool === 'arrow' || (tool === 'gap' && firstAnchor)) {
-					// Update preview line from first anchor to current
+				} else if (tool === 'gap' && firstAnchor) {
+					// Update preview line from first anchor to current. Remove only the
+					// previous preview — destroyChildren() would wipe committed annotations.
 					const layer = this.annotationLayer;
-					layer.destroyChildren(); // Clear previous preview
+					layer.find('.arrowPreview').forEach((n) => n.destroy());
 
 					const firstPx = this.projectPoint(firstAnchor!.x, firstAnchor!.y);
 					const currentPx = { x: pos.x, y: pos.y };
 
-					new Konva.Line({
-						points: [firstPx.x, firstPx.y, currentPx.x, currentPx.y],
-						stroke: '#e11d48',
-						strokeWidth: 2,
-						opacity: 0.5,
-						dash: tool === 'gap' ? [8, 8] : [],
-						listening: false,
-						parent: layer
-					});
+					layer.add(
+						new Konva.Line({
+							name: 'arrowPreview',
+							points: [firstPx.x, firstPx.y, currentPx.x, currentPx.y],
+							stroke: '#e11d48',
+							strokeWidth: 2,
+							opacity: 0.5,
+							dash: [8, 8],
+							listening: false
+						})
+					);
+					layer.batchDraw();
 				}
 
 				rafId = null;
@@ -483,6 +565,10 @@ export class KonvaGame {
 		});
 
 		this.stage.on('pointerup pointercancel', () => {
+			if (this.annotationGesture) {
+				this.commitAnnotationGesture();
+				return;
+			}
 			const tool = get(toolMode);
 			if (!isDrawingTool(tool)) return;
 
@@ -491,12 +577,12 @@ export class KonvaGame {
 				rafId = null;
 			}
 
-			// Clear preview
+			// Clear preview (surgical — renderAnnotations rebuilds the layer next)
 			if (previewLine) {
 				previewLine.destroy();
 				previewLine = null;
 			} else if (tool === 'arrow' || tool === 'gap') {
-				this.annotationLayer.destroyChildren();
+				this.annotationLayer.find('.arrowPreview').forEach((n) => n.destroy());
 			}
 
 			const step = this.getActiveStep();
@@ -523,6 +609,16 @@ export class KonvaGame {
 						style: { color: '#e11d48', width: 2 }
 					});
 				}
+			} else if (tool === 'arrow' && drawingPoints.length >= 2) {
+				const simplified = simplify(drawingPoints, 0.15);
+				if (simplified.length >= 2) {
+					this.createAnnotation({
+						id: crypto.randomUUID(),
+						kind: 'arrow',
+						points: simplified,
+						style: { color: '#e11d48', width: 2 }
+					});
+				}
 			} else if (tool === 'zone' && drawingPoints.length >= 3) {
 				const simplified = simplify(drawingPoints, 0.15);
 				if (simplified.length >= 3) {
@@ -533,14 +629,14 @@ export class KonvaGame {
 						style: { color: '#e11d48', width: 2 }
 					});
 				}
-			} else if ((tool === 'arrow' || tool === 'gap') && firstAnchor) {
+			} else if (tool === 'gap' && firstAnchor) {
 				const pos = this.stage.getPointerPosition();
 				if (pos) {
 					const planePos = this.pointerToPlane(pos);
 
 					this.createAnnotation({
 						id: crypto.randomUUID(),
-						kind: tool,
+						kind: 'gap',
 						from: firstAnchor,
 						to: { x: planePos.x, y: planePos.y },
 						style: { color: '#e11d48', width: 2 }
@@ -556,7 +652,7 @@ export class KonvaGame {
 			// Auto-return to select after gesture tools so the path's editing
 			// nodes appear immediately — in Select the previous/current/next
 			// paths for the selected entity all show their draggable handles.
-			if (tool === 'arrow' || tool === 'gap' || tool === 'label' || tool === 'drawPath') {
+			if (tool === 'gap' || tool === 'label' || tool === 'drawPath') {
 				toolMode.set('select');
 			}
 
@@ -590,10 +686,60 @@ export class KonvaGame {
 			return null;
 		};
 
+		// Mirrors playerIdFromEvent: walk the target (and ancestors) for an
+		// annotation group and read its `annId` attr (set in renderAnnotations).
+		const annotationIdFromEvent = (e: Konva.KonvaEventObject<unknown>): string | null => {
+			const target = e.target as Konva.Node;
+			const group = target.findAncestors('.annotation', true)[0];
+			return group ? ((group.getAttr('annId') as string | undefined) ?? null) : null;
+		};
+
+		// Same idea for movement paths: walk for a `lineShape` and read its
+		// `stepId`/`pathId` attrs (set in renderPathGeometry).
+		const pathIdFromEvent = (
+			e: Konva.KonvaEventObject<unknown>
+		): { stepId: string; pathId: string } | null => {
+			const target = e.target as Konva.Node;
+			const line = target.findAncestors('.lineShape', true)[0];
+			if (!line) return null;
+			const stepId = line.getAttr('stepId') as string | undefined;
+			const pathId = line.getAttr('pathId') as string | undefined;
+			return stepId && pathId ? { stepId, pathId } : null;
+		};
+
 		this.stage.on('click tap', (e) => {
 			if (this.replayMode) return;
+			// Swallow the click that follows a gesture (mouse fires one even
+			// after a drag) so it doesn't deselect the just-manipulated mark.
+			if (this.lastGestureEnd && Date.now() - this.lastGestureEnd < 400) {
+				this.lastGestureEnd = 0;
+				return;
+			}
 			// In hand mode the canvas is a pan surface — taps must not select.
 			if (get(toolMode) === 'hand') return;
+
+			// Erase tool: tap an annotation or an active-step movement path to
+			// delete it. Players are never affected; only the active step's own
+			// paths are erasable (ghost/adjacent-step paths are read-only).
+			if (get(toolMode) === 'erase') {
+				const annId = annotationIdFromEvent(e);
+				if (annId) {
+					deleteAnnotation(annId);
+					selectedAnnotationId.set(null);
+					this.renderAnnotations(this.getActiveStep());
+					return;
+				}
+				const pathHit = pathIdFromEvent(e);
+				if (pathHit) {
+					const active = this.getActiveStep();
+					if (active && pathHit.stepId === active.id) {
+						deletePath(active.id, pathHit.pathId);
+						const { prevStep, nextStep } = this.getAdjacentSteps();
+						this.renderPaths(active, get(selectedEntityId), prevStep, nextStep);
+					}
+				}
+				return;
+			}
 
 			const id = playerIdFromEvent(e);
 			if (id) {
@@ -603,8 +749,10 @@ export class KonvaGame {
 					return;
 				}
 				// Single-select: select the entity, direction control inactive.
+				// Mutual exclusion: selecting a skater clears any mark.
 				selectedEntityId.set(id);
 				directionControlActive.set(false);
+				selectedAnnotationId.set(null);
 
 				// In the path tool, selecting a player that already has a path in
 				// the current step drops into Select so its editing nodes appear.
@@ -615,10 +763,20 @@ export class KonvaGame {
 					if (hasPath) toolMode.set('select');
 				}
 			} else {
-				// Any non-skater click (empty canvas, track lines, …) deselects
-				// entirely and exits direction mode.
-				selectedEntityId.set(null);
-				directionControlActive.set(false);
+				const annId = annotationIdFromEvent(e);
+				if (annId && get(toolMode) === 'select') {
+					// Select the annotation; mutual exclusion clears the entity.
+					selectedEntityId.set(null);
+					selectedAnnotationId.set(annId);
+					directionControlActive.set(false);
+					e.cancelBubble = true;
+				} else {
+					// Any other non-skater click (empty canvas, track lines, …) or a
+					// non-select tool: deselect everything and exit direction mode.
+					selectedEntityId.set(null);
+					selectedAnnotationId.set(null);
+					directionControlActive.set(false);
+				}
 			}
 		});
 
@@ -630,9 +788,11 @@ export class KonvaGame {
 			if (id) {
 				selectedEntityId.set(id);
 				directionControlActive.set(true);
+				selectedAnnotationId.set(null);
 			} else {
 				selectedEntityId.set(null);
 				directionControlActive.set(false);
+				selectedAnnotationId.set(null);
 			}
 		});
 
@@ -666,6 +826,8 @@ export class KonvaGame {
 		window.visualViewport?.removeEventListener('resize', this.onVisualViewportResize);
 		this.gestureHandler.destroy();
 		this.selectionUnsubscribe?.();
+		this.annotationSelectionUnsubscribe?.();
+		this.toolModeUnsubscribe?.();
 		this.directionControlUnsubscribe?.();
 		this.playerManager?.destroy();
 		this.rotationHandle?.destroy();
@@ -2043,6 +2205,18 @@ export class KonvaGame {
 	}
 
 	/**
+	 * Smooths planar points with Catmull-Rom and projects them to stage pixels
+	 * for annotation rendering (pen = open curve, zone = closed loop). Unlike
+	 * smoothProject this never returns null — it falls back to straight
+	 * projection for degenerate (< 2 point) input — so a stroke always renders.
+	 */
+	private projectSmoothed(points: PlanarPoint[], closed = false): { x: number; y: number }[] {
+		if (points.length < 2) return points.map((p) => this.projectPoint(p.x, p.y));
+		const smoothed = closed ? catmullRomClosed(points, 8) : catmullRom(points, 8);
+		return smoothed.map((p) => this.projectPoint(p.x, p.y));
+	}
+
+	/**
 	 * Computes motion-heading overrides for a replay sample's entities and
 	 * publishes them to the pose store. Shared by both replay code paths.
 	 */
@@ -2188,21 +2362,23 @@ export class KonvaGame {
 			lineJoin: 'round',
 			tension: 0,
 			opacity: ghost ? 0.5 : 0.85,
-			listening: false
+			// Active-step lines are tappable so the erase tool can target them;
+			// ghost (adjacent-step) lines are not (they aren't erasable).
+			listening: !ghost
 		});
 		line.setAttr('stepId', step.id);
 		line.setAttr('pathId', path.id);
 		this.pathLayer.add(line);
 
 		if (editable) {
-			this.renderPathHandles(step, path, renderPoints, color, mode === 'current', mode);
+			this.renderPathHandles(step, path, renderPoints, color, mode);
 		}
 	}
 
 	/**
 	 * Adds control handles for one path. Each draggable handle clamps its drag
 	 * to the path's remaining length budget so a node can't push it past
-	 * MAX_PATH_LENGTH_M; the active step also gets a delete affordance.
+	 * MAX_PATH_LENGTH_M. (Path deletion is handled by the erase tool.)
 	 *
 	 * `mode` shapes which nodes appear:
 	 *  - current/next skip index 0 (anchored to a live position — the player,
@@ -2217,7 +2393,6 @@ export class KonvaGame {
 		path: EntityPath,
 		renderPoints: PlanarPoint[],
 		color: string,
-		withDelete: boolean,
 		mode: 'current' | 'prev' | 'next'
 	): void {
 		// Precompute metre-space positions and total length so each handle's
@@ -2284,48 +2459,6 @@ export class KonvaGame {
 			// whose endpoint chains to the current player's position).
 			this.controlLayer.add(handle);
 		}
-
-		// Delete affordance — only on the active step's path.
-		if (withDelete && path.points.length > 1) {
-			const lastPt = renderPoints[renderPoints.length - 1];
-			const lastPx = this.projectPoint(lastPt.x, lastPt.y);
-			const deleteSize = 12;
-
-			const deleteBtn = new Konva.Group({ name: 'pathDelete', listening: true });
-			new Konva.Rect({
-				x: lastPx.x - deleteSize / 2,
-				y: lastPx.y - deleteSize / 2,
-				width: deleteSize,
-				height: deleteSize,
-				fill: '#e11d48',
-				radius: 2,
-				parent: deleteBtn
-			});
-			new Konva.Text({
-				x: lastPx.x,
-				y: lastPx.y,
-				text: '✕',
-				fontSize: 10,
-				fontFamily: 'Arial',
-				fill: 'white',
-				textBaseline: 'middle',
-				align: 'center',
-				offsetX: 3,
-				offsetY: 3,
-				parent: deleteBtn
-			});
-			deleteBtn.setAttr('pathId', path.id);
-			deleteBtn.setAttr('stepId', step.id);
-
-			deleteBtn.on('click tap', () => {
-				deletePath(step.id, path.id);
-				const active = this.getActiveStep();
-				const { prevStep, nextStep } = this.getAdjacentSteps();
-				this.renderPaths(active, get(selectedEntityId), prevStep, nextStep);
-			});
-
-			this.controlLayer.add(deleteBtn);
-		}
 	}
 
 	/** Handles belonging to one path, filtered by step + path id. Handles live
@@ -2336,11 +2469,10 @@ export class KonvaGame {
 		);
 	}
 
-	/** Removes just the path handles + delete buttons from the top control
-	 * layer (leaving the direction/rotation controls untouched). */
+	/** Removes just the path handles from the top control layer (leaving the
+	 * direction/rotation controls untouched). */
 	private clearPathHandles(): void {
 		this.controlLayer.find('.pathHandle').forEach((h) => h.destroy());
-		this.controlLayer.find('.pathDelete').forEach((g) => g.destroy());
 	}
 
 	/** The line shape for one path, filtered by step + path id. */
@@ -2427,187 +2559,409 @@ export class KonvaGame {
 	}
 
 	/**
-	 * Renders annotations for a step. If step is undefined, clears the layer.
-	 * All annotations are drawn; visibility is controlled by the layer's visible flag.
+	 * Renders annotations for a step. With step undefined (Free Play) only
+	 * board-wide marks are shown; a step-scoped mark (scope.stepId) appears only
+	 * on its own step (decision #6: visible iff `!scope || scope.stepId ===
+	 * activeStep?.id`). Each visible mark is wrapped in a hittable Group (name
+	 * `annotation`, attr `annId`) so Select can target it; a dashed selection
+	 * ring for the currently selected mark is drawn on the top control layer.
 	 */
 	renderAnnotations(step: Step | undefined): void {
 		this.annotationLayer.destroyChildren();
 
-		// Step annotations in Drill; board-level annotations in Free Play. Key on
-		// step presence (not annotation presence) so a drill step with no
-		// annotations doesn't fall through to the board set.
-		const anns = step ? step.annotations : boardDoc.current.annotations;
-		if (!anns) {
-			this.annotationLayer.batchDraw();
-			return;
+		const activeStepId = step?.id;
+		const visible = (boardDoc.current.annotations ?? []).filter(
+			(ann) => !ann.scope || ann.scope.stepId === activeStepId
+		);
+
+		const selectedId = get(selectedAnnotationId);
+		let selectedAnn: Annotation | undefined;
+
+		for (const ann of visible) {
+			const group = new Konva.Group({ name: 'annotation', listening: true });
+			group.setAttr('annId', ann.id);
+			this.appendAnnotationShapes(group, ann, effectiveAnchors(ann));
+			this.annotationLayer.add(group);
+			if (ann.id === selectedId) selectedAnn = ann;
 		}
 
-		for (const ann of anns) {
-			switch (ann.kind) {
-				case 'pen': {
-					const projected = ann.points.map((pt) => this.projectPoint(pt.x, pt.y));
-					const points = projected.flatMap((p) => [p.x, p.y]);
+		// Selection box + handles on the top control layer — Select tool only.
+		this.renderAnnotationSelection(selectedAnn);
+
+		this.annotationLayer.batchDraw();
+		this.controlLayer.batchDraw();
+	}
+
+	/** Draws one annotation's shapes into `group` from effective (transformed)
+	 * anchor points. Shared by renderAnnotations and the live gesture redraw. */
+	private appendAnnotationShapes(group: Konva.Group, ann: Annotation, eff: PlanarPoint[]): void {
+		const stroke = ann.style.color;
+		const width = ann.style.width ?? 2;
+		switch (ann.kind) {
+			case 'pen': {
+				const points = this.projectSmoothed(eff, false).flatMap((p) => [p.x, p.y]);
+				group.add(
 					new Konva.Line({
 						points,
-						stroke: ann.style.color,
-						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						stroke,
+						strokeWidth: width,
 						lineCap: 'round',
 						lineJoin: 'round',
 						tension: 0,
-						listening: false,
-						parent: this.annotationLayer
-					});
-					break;
-				}
-				case 'arrow': {
-					const fromPx = this.projectPoint(ann.from.x, ann.from.y);
-					const toPx = this.projectPoint(ann.to.x, ann.to.y);
-					const dx = toPx.x - fromPx.x;
-					const dy = toPx.y - fromPx.y;
-					const angle = Math.atan2(dy, dx);
-					const headLength = 15;
-
-					// Line
-					new Konva.Line({
-						points: [fromPx.x, fromPx.y, toPx.x, toPx.y],
-						stroke: ann.style.color,
-						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
-						tension: 0,
-						listening: false,
-						parent: this.annotationLayer
-					});
-
-					// Arrowhead
-					const tip = {
-						x: toPx.x,
-						y: toPx.y
-					};
-					const base1 = {
-						x: toPx.x - headLength * Math.cos(angle - 0.5),
-						y: toPx.y - headLength * Math.sin(angle - 0.5)
-					};
-					const base2 = {
-						x: toPx.x - headLength * Math.cos(angle + 0.5),
-						y: toPx.y - headLength * Math.sin(angle + 0.5)
-					};
-					new Konva.Line({
-						points: [tip.x, tip.y, base1.x, base1.y, base2.x, base2.y],
-						stroke: ann.style.color,
-						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
-						tension: 0,
-						listening: false,
-						parent: this.annotationLayer
-					});
-					break;
-				}
-				case 'zone': {
-					const projected = ann.points.map((pt) => this.projectPoint(pt.x, pt.y));
-					const points = projected.flatMap((p) => [p.x, p.y]);
+						hitStrokeWidth: 12,
+						listening: true
+					})
+				);
+				break;
+			}
+			case 'arrow': {
+				const points = this.projectSmoothed(eff, false).flatMap((p) => [p.x, p.y]);
+				group.add(
 					new Konva.Line({
 						points,
-						stroke: ann.style.color,
-						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						stroke,
+						strokeWidth: width,
+						lineCap: 'round',
+						lineJoin: 'round',
+						tension: 0,
+						hitStrokeWidth: 12,
+						listening: true
+					})
+				);
+				// Draw arrowhead at the end, pointing in the direction of the last segment
+				if (eff.length >= 2) {
+					const last = this.projectPoint(eff[eff.length - 1].x, eff[eff.length - 1].y);
+					const prev = this.projectPoint(eff[eff.length - 2].x, eff[eff.length - 2].y);
+					const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+					const headLength = 15;
+					const base1 = {
+						x: last.x - headLength * Math.cos(angle - 0.5),
+						y: last.y - headLength * Math.sin(angle - 0.5)
+					};
+					const base2 = {
+						x: last.x - headLength * Math.cos(angle + 0.5),
+						y: last.y - headLength * Math.sin(angle + 0.5)
+					};
+				group.add(
+					new Konva.Line({
+						points: [last.x, last.y, base1.x, base1.y, base2.x, base2.y, last.x, last.y],
+						fill: stroke,
+						stroke,
+						strokeWidth: width,
+						closed: true,
+						tension: 0,
+						hitStrokeWidth: 12,
+						listening: true
+					})
+				);
+				}
+				break;
+			}
+			case 'zone': {
+				const points = this.projectSmoothed(eff, true).flatMap((p) => [p.x, p.y]);
+				group.add(
+					new Konva.Line({
+						points,
+						stroke,
+						strokeWidth: width,
 						lineCap: 'round',
 						lineJoin: 'round',
 						tension: 0,
 						closed: true,
-						fill: ann.style.color,
+						fill: stroke,
 						opacity: 0.15,
-						listening: false,
-						parent: this.annotationLayer
-					});
-					break;
-				}
-				case 'label': {
-					const atPx = this.projectPoint(ann.at.x, ann.at.y);
-					const fontSize = Math.max(12, 14 / this.stage.scaleX());
-
-					// Backdrop for legibility
-					const textNode = new Konva.Text({
-						x: atPx.x,
-						y: atPx.y,
-						text: ann.text,
-						fontSize,
-						fontFamily: 'Arial',
-						fill: ann.style.color,
-						listening: false,
-						parent: this.annotationLayer
-					});
-					// Use width approximation (fontSize * charCount) for backdrop
-					const charWidth = fontSize * 0.6;
-					const estimatedWidth = Math.max(100, ann.text.length * charWidth);
+						hitStrokeWidth: 12,
+						listening: true
+					})
+				);
+				break;
+			}
+			case 'label': {
+				const atPx = this.projectPoint(eff[0].x, eff[0].y);
+				const fontSize = Math.max(12, 14 / this.stage.scaleX());
+				const estimatedWidth = Math.max(100, ann.text.length * fontSize * 0.6);
+				group.add(
 					new Konva.Rect({
 						x: atPx.x - 4,
 						y: atPx.y - fontSize + 4,
 						width: estimatedWidth + 8,
 						height: fontSize + 8,
 						fill: 'rgba(255,255,255,0.8)',
-						listening: false,
-						parent: this.annotationLayer
-					});
-					textNode.moveToTop();
-					break;
-				}
-				case 'gap': {
-					const fromPx = this.projectPoint(ann.from.x, ann.from.y);
-					const toPx = this.projectPoint(ann.to.x, ann.to.y);
-					const dx = toPx.x - fromPx.x;
-					const dy = toPx.y - fromPx.y;
-					const angle = Math.atan2(dy, dx);
-					const tickOffset = 8;
-
-					// Main line (dashed)
+						listening: true
+					})
+				);
+				group.add(
+					new Konva.Text({
+						x: atPx.x,
+						y: atPx.y,
+						text: ann.text,
+						fontSize,
+						fontFamily: 'Arial',
+						fill: stroke,
+						listening: false
+					})
+				);
+				break;
+			}
+			case 'gap': {
+				const fromPx = this.projectPoint(eff[0].x, eff[0].y);
+				const toPx = this.projectPoint(eff[1].x, eff[1].y);
+				const angle = Math.atan2(toPx.y - fromPx.y, toPx.x - fromPx.x);
+				const tickOffset = 8;
+				group.add(
 					new Konva.Line({
 						points: [fromPx.x, fromPx.y, toPx.x, toPx.y],
-						stroke: ann.style.color,
-						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
+						stroke,
+						strokeWidth: width,
 						dash: [8, 8],
 						tension: 0,
-						listening: false,
-						parent: this.annotationLayer
-					});
-
-					// Perpendicular tick at from
-					const fromTick1 = {
-						x: fromPx.x + tickOffset * Math.cos(angle + Math.PI / 2),
-						y: fromPx.y + tickOffset * Math.sin(angle + Math.PI / 2)
+						hitStrokeWidth: 12,
+						listening: true
+					})
+				);
+				for (const t of [fromPx, toPx]) {
+					const t1 = {
+						x: t.x + tickOffset * Math.cos(angle + Math.PI / 2),
+						y: t.y + tickOffset * Math.sin(angle + Math.PI / 2)
 					};
-					const fromTick2 = {
-						x: fromPx.x + tickOffset * Math.cos(angle - Math.PI / 2),
-						y: fromPx.y + tickOffset * Math.sin(angle - Math.PI / 2)
+					const t2 = {
+						x: t.x + tickOffset * Math.cos(angle - Math.PI / 2),
+						y: t.y + tickOffset * Math.sin(angle - Math.PI / 2)
 					};
-					new Konva.Line({
-						points: [fromTick1.x, fromTick1.y, fromTick2.x, fromTick2.y],
-						stroke: ann.style.color,
-						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
-						tension: 0,
-						listening: false,
-						parent: this.annotationLayer
-					});
-
-					// Perpendicular tick at to
-					const toTick1 = {
-						x: toPx.x + tickOffset * Math.cos(angle + Math.PI / 2),
-						y: toPx.y + tickOffset * Math.sin(angle + Math.PI / 2)
-					};
-					const toTick2 = {
-						x: toPx.x + tickOffset * Math.cos(angle - Math.PI / 2),
-						y: toPx.y + tickOffset * Math.sin(angle - Math.PI / 2)
-					};
-					new Konva.Line({
-						points: [toTick1.x, toTick1.y, toTick2.x, toTick2.y],
-						stroke: ann.style.color,
-						strokeWidth: (ann.style.width ?? 2) * TRACK_SCALE,
-						tension: 0,
-						listening: false,
-						parent: this.annotationLayer
-					});
-					break;
+					group.add(
+						new Konva.Line({
+							points: [t1.x, t1.y, t2.x, t2.y],
+							stroke,
+							strokeWidth: width,
+							tension: 0,
+							hitStrokeWidth: 12,
+							listening: true
+						})
+					);
 				}
+				break;
 			}
 		}
+	}
 
+	/** The annotation group on the annotation layer for a given id, if present. */
+	private annotationGroupFor(annId: string): Konva.Group | undefined {
+		return Array.from(this.annotationLayer.find<Konva.Group>('.annotation')).find(
+			(g) => g.getAttr('annId') === annId
+		);
+	}
+
+	/** Live redraw of a single annotation from a working transform (gesture). */
+	private redrawAnnotationOnly(annId: string, ann: Annotation, t: AnnotationTransform): void {
+		const group = this.annotationGroupFor(annId);
+		if (!group) return;
+		group.destroyChildren();
+		this.appendAnnotationShapes(group, ann, effectiveAnchors(ann, t));
 		this.annotationLayer.batchDraw();
+	}
+
+	/**
+	 * Draws the selection affordance for an annotation on the control layer:
+	 * an oriented thin-line box (also the move grab) with four corner resize
+	 * handles and one rotation handle above the top edge. Select-tool only;
+	 * labels get a simple non-interactive ring (they are move-only via the
+	 * annotation body, not yet transformable).
+	 */
+	private renderAnnotationSelection(ann: Annotation | undefined): void {
+		this.controlLayer.find('.annotationSelection').forEach((n) => n.destroy());
+		if (!ann || get(toolMode) !== 'select') return;
+
+		const scale = this.stage.scaleX() || 1;
+		const sel = new Konva.Group({ name: 'annotationSelection', listening: true });
+		this.controlLayer.add(sel);
+
+		if (ann.kind === 'label') {
+			const atPx = this.projectPoint(effectiveAnchors(ann)[0].x, effectiveAnchors(ann)[0].y);
+			const fontSize = Math.max(12, 14 / scale);
+			const w = Math.max(100, ann.text.length * fontSize * 0.6) + 8;
+			const h = fontSize + 8;
+			sel.add(
+				new Konva.Rect({
+					x: atPx.x - 4,
+					y: atPx.y - fontSize + 4,
+					width: w,
+					height: h,
+					stroke: '#0ea5e9',
+					strokeWidth: 2 / scale,
+					dash: [4, 4],
+					listening: false
+				})
+			);
+			this.controlLayer.batchDraw();
+			return;
+		}
+
+		const xform = resolvedTransform(ann);
+		const corners = boxCorners(ann, xform).map((p) => this.projectPoint(p.x, p.y));
+		const { hw, hh } = halfSizes(ann, xform);
+		const centerPx = this.projectPoint(xform.cx, xform.cy);
+		const boxW = Math.max(hw, MIN_HALF) * 2 * TRACK_SCALE;
+		const boxH = Math.max(hh, MIN_HALF) * 2 * TRACK_SCALE;
+
+		// Continuous thin-line box, also the move grab. The fill is fully
+		// transparent (not coloured) yet still hittable — Konva's hit canvas
+		// fills the region with the shape's hit key whenever a fill is set,
+		// independent of its alpha.
+		const box = new Konva.Rect({
+			x: centerPx.x,
+			y: centerPx.y,
+			width: boxW,
+			height: boxH,
+			offsetX: boxW / 2,
+			offsetY: boxH / 2,
+			rotation: (xform.angle * 180) / Math.PI,
+			stroke: '#0ea5e9',
+			strokeWidth: 2 / scale,
+			fill: 'rgba(0,0,0,0)',
+			listening: true
+		});
+		sel.add(box);
+		box.on('pointerdown', (e) => this.startAnnotationGesture('move', ann, e));
+
+		// Four corner resize handles (circles). boxCorners order: ++, -+, --, +-.
+		const signs: Array<[number, number]> = [
+			[1, 1],
+			[-1, 1],
+			[-1, -1],
+			[1, -1]
+		];
+		corners.forEach((c, i) => {
+			const handle = new Konva.Circle({
+				x: c.x,
+				y: c.y,
+				radius: Math.max(6, 8 / scale),
+				fill: 'white',
+				stroke: '#0ea5e9',
+				strokeWidth: 2 / scale,
+				listening: true
+			});
+			sel.add(handle);
+			const [su, sv] = signs[i];
+			handle.on('pointerdown', (e) => this.startAnnotationGesture('resize', ann, e, su, sv));
+		});
+
+		// Rotation handle: centred above the top edge.
+		const rotOffsetPlane = 22 / (TRACK_SCALE * scale);
+		const rot = this.projectPoint(
+			rotateHandlePos(ann, rotOffsetPlane, xform).x,
+			rotateHandlePos(ann, rotOffsetPlane, xform).y
+		);
+		const rotHandle = new Konva.Circle({
+			x: rot.x,
+			y: rot.y,
+			radius: Math.max(6, 8 / scale),
+			fill: 'white',
+			stroke: '#0ea5e9',
+			strokeWidth: 2 / scale,
+			listening: true
+		});
+		sel.add(rotHandle);
+		rotHandle.on('pointerdown', (e) => this.startAnnotationGesture('rotate', ann, e));
+
+		this.controlLayer.batchDraw();
+	}
+
+	/** Begins a move/resize/rotate gesture for an annotation. */
+	private startAnnotationGesture(
+		type: 'move' | 'resize' | 'rotate',
+		ann: Annotation,
+		e: Konva.KonvaEventObject<unknown>,
+		su = 0,
+		sv = 0
+	): void {
+		if (get(toolMode) !== 'select') return;
+		const pos = this.stage.getPointerPosition();
+		if (!pos) return;
+		const b = baseBox(ann);
+		this.annotationGesture = {
+			type,
+			annId: ann.id,
+			ann,
+			baseHw: b.hw,
+			baseHh: b.hh,
+			start: resolvedTransform(ann),
+			startPointer: this.pointerToPlane(pos),
+			su,
+			sv
+		};
+		e.cancelBubble = true;
+	}
+
+	/** Applies the live transform during a drag and redraws the mark + box. */
+	private updateAnnotationGesture(): void {
+		const g = this.annotationGesture;
+		if (!g) return;
+		const pos = this.stage.getPointerPosition();
+		if (!pos) return;
+		const t = this.gestureTransform(g, this.pointerToPlane(pos));
+		this.redrawAnnotationOnly(g.annId, g.ann, t);
+		this.renderAnnotationSelection({ ...g.ann, transform: t });
+	}
+
+	/** Commits the gesture's final transform (one undo entry) and re-renders. */
+	private commitAnnotationGesture(): void {
+		const g = this.annotationGesture;
+		this.annotationGesture = null;
+		this.lastGestureEnd = Date.now();
+		if (!g) return;
+		const pos = this.stage.getPointerPosition();
+		const t = pos ? this.gestureTransform(g, this.pointerToPlane(pos)) : g.start;
+		if (this.transformsDiffer(t, g.start)) {
+			setAnnotationTransform(g.annId, t);
+		}
+		this.renderAnnotations(this.getActiveStep());
+	}
+
+	/** Computes the transform for the active gesture from the live pointer. */
+	private gestureTransform(
+		g: NonNullable<KonvaGame['annotationGesture']>,
+		pointer: PlanarPoint
+	): AnnotationTransform {
+		if (g.type === 'move') {
+			return moveTransform(g.start, {
+				x: pointer.x - g.startPointer.x,
+				y: pointer.y - g.startPointer.y
+			});
+		}
+		if (g.type === 'resize') {
+			return resizeTransform(g.start, g.baseHw, g.baseHh, g.su, g.sv, pointer);
+		}
+		return rotateTransform(g.start, { x: g.start.cx, y: g.start.cy }, g.startPointer, pointer);
+	}
+
+	private transformsDiffer(a: AnnotationTransform, b: AnnotationTransform): boolean {
+		return a.cx !== b.cx || a.cy !== b.cy || a.angle !== b.angle || a.sx !== b.sx || a.sy !== b.sy;
+	}
+
+	// Thin, elongated crosshair cursor for drawing tools (pen, arrow, zone, label, gap, drawPath).
+	// 32x32 SVG with 28px arms, 1px stroke, centered hotspot at (16,16).
+	private readonly CROSSHAIR_CURSOR = `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><line x1="2" y1="16" x2="30" y2="16" stroke="%230f172a" stroke-width="1"/><line x1="16" y1="2" x2="16" y2="30" stroke="%230f172a" stroke-width="1"/></svg>') 16 16, crosshair`;
+
+	// Eraser cursor: small circle matching the canvas background color.
+	// 16x16 SVG with 7px diameter circle, 1px stroke, centered hotspot at (8,8).
+	private readonly ERASE_CURSOR = `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5.25" fill="%23f0f0f0" stroke="%230f172a" stroke-width="0.75"/></svg>') 12 12, auto`;
+
+	/** Updates the OS cursor based on the active tool.
+	 * - Erase tool: shows eraser circle cursor
+	 * - Drawing tools: shows crosshair cursor
+	 * - Other tools: default cursor */
+	private updateEraseCursor(): void {
+		const tool = get(toolMode);
+		const el = this.stage.container();
+		if (!el) return;
+
+		if (tool === 'erase' && !this.replayMode) {
+			el.style.cursor = this.ERASE_CURSOR;
+		} else if (isDrawingTool(tool) && !this.replayMode) {
+			el.style.cursor = this.CROSSHAIR_CURSOR;
+		} else {
+			el.style.cursor = '';
+		}
 	}
 
 	/**
@@ -2630,17 +2984,18 @@ export class KonvaGame {
 
 				const color = this.trailColorFor(pose.id);
 
-				new Konva.Circle({
-					x: cx,
-					y: cy,
-					radius: PLAYER_RADIUS,
-					fill: color,
-					opacity,
-					stroke: 'black',
-					strokeWidth: 1,
-					listening: false,
-					parent: group
-				});
+				group.add(
+					new Konva.Circle({
+						x: cx,
+						y: cy,
+						radius: PLAYER_RADIUS,
+						fill: color,
+						opacity,
+						stroke: 'black',
+						strokeWidth: 1,
+						listening: false
+					})
+				);
 			}
 
 			this.ghostLayer.add(group);
@@ -2740,16 +3095,11 @@ export class KonvaGame {
 	}
 
 	/**
-	 * Helper to create an annotation on the active step (Drill) or on the board
-	 * itself (Free Play — no step exists, so it lands in `BoardDoc.annotations`).
+	 * Helper to create an annotation. Annotations are always board-wide on
+	 * creation (no scope); pin one to a step afterwards via setAnnotationScope.
 	 */
 	private createAnnotation(ann: Annotation): void {
-		const step = this.getActiveStep();
-		if (step) {
-			addAnnotation(step.id, ann as Annotation & { id?: string });
-		} else {
-			addFreeAnnotation(ann as Annotation & { id?: string });
-		}
+		addAnnotation(ann as Annotation & { id?: string });
 	}
 
 	/**
@@ -2909,6 +3259,68 @@ export class KonvaGame {
 			screenY: this.stage.y() + localY * scale,
 			label: hudLabel(entity)
 		};
+	}
+
+	/**
+	 * Returns HUD data (screen position + scope info) for the currently selected
+	 * annotation, or null when nothing is selected or the mark is filtered out on
+	 * the current step. The screen position tracks the annotation's bounding-box
+	 * centroid so a DOM overlay can follow the mark under pan/zoom. Called every
+	 * frame by the AnnotationHud overlay via rAF.
+	 */
+	getAnnotationHudData(annId: string | null): {
+		screenX: number;
+		screenY: number;
+		isStepScoped: boolean;
+		stepLabel: string;
+	} | null {
+		if (!annId) return null;
+		const ann = boardDoc.current.annotations?.find((a) => a.id === annId);
+		if (!ann) return null;
+
+		const step = this.getActiveStep();
+		// Hide the HUD when the selected mark isn't visible on this step
+		// (step-scoped mark, but a different/absent step is active).
+		if (ann.scope && (!step || ann.scope.stepId !== step.id)) return null;
+
+		// Bounding-box centroid in planar metres (after the transform).
+		const pts = effectiveAnchors(ann);
+		let minX = Infinity;
+		let minY = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+		for (const p of pts) {
+			if (p.x < minX) minX = p.x;
+			if (p.y < minY) minY = p.y;
+			if (p.x > maxX) maxX = p.x;
+			if (p.y > maxY) maxY = p.y;
+		}
+		const cx = (minX + maxX) / 2;
+		const cy = (minY + maxY) / 2;
+
+		const center = this.getStageCenter();
+		const scale = this.stage.scaleX();
+		const localX = center.x + cx * TRACK_SCALE;
+		const localY = center.y + cy * TRACK_SCALE;
+
+		return {
+			screenX: this.stage.x() + localX * scale,
+			screenY: this.stage.y() + localY * scale,
+			isStepScoped: !!ann.scope,
+			stepLabel: this.stepLabelFor(step)
+		};
+	}
+
+	/** Human-readable label for the active step (its title or "Step {idx+1}"). */
+	private stepLabelFor(step: Step | undefined): string {
+		if (!step) return 'this step';
+		const title = step.title?.trim();
+		if (title) return title;
+		const clipId = boardDoc.current.activeClipId;
+		const clip = clipId ? boardDoc.current.clips.find((c) => c.id === clipId) : undefined;
+		const idx =
+			clip && clip.kind === 'authored' ? clip.steps.findIndex((s) => s.id === step.id) : -1;
+		return idx >= 0 ? `Step ${idx + 1}` : 'this step';
 	}
 }
 

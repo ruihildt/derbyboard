@@ -430,7 +430,7 @@ describe('migrate', () => {
 			expect(clip.steps[0].entities[0].manualHeading).toBe(true);
 		});
 
-		it('bumps a v5 document to v6, adding annotations and paths fields', () => {
+		it('bumps a v5 document to v6 (annotations/paths absent)', () => {
 			const v5 = migrateBoardState({
 				version: 3,
 				createdAt: '2024-01-01T00:00:00.000Z',
@@ -440,10 +440,10 @@ describe('migrate', () => {
 			v5.version = 5;
 			const migrated = migrateBoardDoc(v5);
 			expect(migrated.version).toBe(CURRENT_VERSION);
+			// No annotations on an empty board; steps carry no paths (absent = none).
+			expect(migrated.annotations).toBeUndefined();
 			const clip = migrated.clips[0];
 			if (!clip || clip.kind !== 'authored') return;
-			// annotations and paths should be undefined (absent = none)
-			expect(clip.steps[0].annotations).toBeUndefined();
 			expect(clip.steps[0].paths).toBeUndefined();
 		});
 
@@ -602,24 +602,32 @@ describe('migrate', () => {
 			const expectedPath = fromTrack(2, 0.5);
 			expect(step.paths![0].points[1].x).toBeCloseTo(expectedPath.x, 5);
 
+			// Step annotations were flattened onto the board array (v7→v8), each
+			// tagged scope.stepId === 's0', with planar geometry. The step itself
+			// carries no annotations field any more.
+			expect((step as unknown as { annotations?: unknown }).annotations).toBeUndefined();
+			expect(migrated.annotations).toHaveLength(3);
+			const anns = migrated.annotations!;
+			for (const a of anns) expect(a.scope).toEqual({ stepId: 's0' });
+
 			// Pen points
-			const pen = step.annotations![0];
+			const pen = anns[0];
 			if (pen.kind !== 'pen') throw new Error('expected pen');
 			for (const pt of pen.points) {
 				expect(Number.isFinite(pt.x)).toBe(true);
 				expect(Number.isFinite(pt.y)).toBe(true);
 			}
 
-			// Arrow from/to
-			const arrow = step.annotations![1];
+			// Arrow points (migrated from from/to)
+			const arrow = anns[1];
 			if (arrow.kind !== 'arrow') throw new Error('expected arrow');
 			const expectedFrom = fromTrack(1, 0.3);
-			expect(arrow.from.x).toBeCloseTo(expectedFrom.x, 5);
+			expect(arrow.points[0].x).toBeCloseTo(expectedFrom.x, 5);
 			const expectedTo = fromTrack(3, 0.7);
-			expect(arrow.to.x).toBeCloseTo(expectedTo.x, 5);
+			expect(arrow.points[1].x).toBeCloseTo(expectedTo.x, 5);
 
 			// Label at
-			const label = step.annotations![2];
+			const label = anns[2];
 			if (label.kind !== 'label') throw new Error('expected label');
 			const expectedAt = fromTrack(6, 0.5);
 			expect(label.at.x).toBeCloseTo(expectedAt.x, 5);
@@ -651,6 +659,107 @@ describe('migrate', () => {
 			const migrated = migrateBoardDoc(v6);
 			expect(Number.isFinite(migrated.entities[0].x)).toBe(true);
 			expect(Number.isFinite(migrated.entities[0].y)).toBe(true);
+		});
+	});
+
+	describe('migrateBoardDoc — v7 → v8 (flatten step annotations)', () => {
+		/** A v7 doc: planar geometry, a step still carrying legacy annotations. */
+		function v7Doc(): BoardDoc {
+			return {
+				version: 7,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				meta: {},
+				entities: [],
+				clips: [
+					{
+						kind: 'authored',
+						id: 'c1',
+						steps: [
+							{
+								id: 's0',
+								entities: [],
+								annotations: [
+									{
+										id: 'a1',
+										kind: 'pen',
+										points: [
+											{ x: 1, y: 2 },
+											{ x: 3, y: 4 }
+										],
+										style: { color: '#ff0000' }
+									},
+									{
+										id: 'a2',
+										kind: 'label',
+										at: { x: 5, y: 6 },
+										text: 'hi',
+										style: { color: '#0000ff' }
+									}
+								]
+							}
+						]
+					}
+				],
+				activeClipId: 'c1'
+			} as unknown as BoardDoc;
+		}
+
+		it('flattens step annotations onto the board array with scope.stepId', () => {
+			const migrated = migrateBoardDoc(v7Doc());
+			expect(migrated.version).toBe(CURRENT_VERSION);
+			expect(migrated.annotations).toHaveLength(2);
+			for (const a of migrated.annotations!) {
+				expect(a.scope).toEqual({ stepId: 's0' });
+			}
+			const clip = migrated.clips[0];
+			if (clip.kind !== 'authored') throw new Error('expected authored clip');
+			// The step no longer carries an annotations field.
+			expect((clip.steps[0] as unknown as { annotations?: unknown }).annotations).toBeUndefined();
+		});
+
+		it('keeps existing board annotations board-wide and dedups by id', () => {
+			const v7 = v7Doc();
+			// A board-wide annotation + one sharing an id with a step annotation.
+			v7.annotations = [
+				{
+					id: 'b1',
+					kind: 'label',
+					at: { x: 0, y: 0 },
+					text: 'board',
+					style: { color: '#000' }
+				},
+				{
+					id: 'a1',
+					kind: 'label',
+					at: { x: 9, y: 9 },
+					text: 'dup',
+					style: { color: '#000' }
+				}
+			];
+			const migrated = migrateBoardDoc(v7);
+			// b1 + step a1 + step a2; the step's a1 (dup of the board one) is skipped.
+			expect(migrated.annotations).toHaveLength(3);
+			expect(migrated.annotations!.map((a) => a.id).sort()).toEqual(['a1', 'a2', 'b1']);
+			// The board-wide b1 keeps no scope; flattened marks are scoped to s0.
+			const b1 = migrated.annotations!.find((a) => a.id === 'b1')!;
+			expect(b1.scope).toBeUndefined();
+			const a2 = migrated.annotations!.find((a) => a.id === 'a2')!;
+			expect(a2.scope).toEqual({ stepId: 's0' });
+		});
+
+		it('is idempotent', () => {
+			const once = migrateBoardDoc(v7Doc());
+			const twice = migrateBoardDoc(once);
+			expect(twice).toEqual(once);
+		});
+
+		it('leaves an empty board with no annotations array', () => {
+			const v7 = v7Doc();
+			// Strip the step annotations: nothing to flatten.
+			(v7.clips[0] as unknown as { steps: { annotations?: unknown }[] }).steps[0].annotations =
+				undefined;
+			const migrated = migrateBoardDoc(v7);
+			expect(migrated.annotations).toBeUndefined();
 		});
 	});
 });

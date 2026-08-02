@@ -24,9 +24,9 @@ import {
 	clearEntityPath,
 	deletePath,
 	addAnnotation,
-	updateAnnotation,
 	deleteAnnotation,
-	clearAnnotations
+	clearAnnotations,
+	setAnnotationScope
 } from './clipOps';
 
 function entity(id: string, x: number, y = 0.5, heading = 0): Entity {
@@ -189,25 +189,24 @@ describe('clipOps — deleteStep / moveStep / renameStep / setStepPackZone', () 
 		expect(getActiveClip()!.steps[0].showPackZone).toBe(true);
 	});
 
-	it('duplicateActiveStep copies annotations and paths deeply', () => {
+	it('duplicateActiveStep does not copy annotations (board-level) and not paths', () => {
 		createAuthoredClipFromBoard();
-		const annId = 'test-ann';
+		// Annotations are board-level now: set one up via addAnnotation.
+		addAnnotation({
+			id: 'test-ann',
+			kind: 'pen',
+			points: [
+				{ x: 0, y: 0.5 },
+				{ x: 1, y: 0.5 },
+				{ x: 2, y: 0.5 }
+			],
+			style: { color: '#ff0000', width: 2 }
+		} as Omit<Annotation, 'id'>);
+		// A path still lives on the step.
 		const pathId = 'test-path';
 		boardDoc.applyEdit((d) => {
 			const c = getActiveClip(d);
 			if (!c) return;
-			c.steps[0].annotations = [
-				{
-					id: annId,
-					kind: 'pen',
-					points: [
-						{ x: 0, y: 0.5 },
-						{ x: 1, y: 0.5 },
-						{ x: 2, y: 0.5 }
-					],
-					style: { color: '#ff0000', width: 2 }
-				}
-			];
 			c.steps[0].paths = [
 				{
 					id: pathId,
@@ -220,22 +219,21 @@ describe('clipOps — deleteStep / moveStep / renameStep / setStepPackZone', () 
 					]
 				}
 			];
-		}, 'add annotations and paths');
-		const sourceStep = getActiveClip()!.steps[0];
-		expect(sourceStep.annotations).toHaveLength(1);
-		expect(sourceStep.paths).toHaveLength(1);
-		duplicateActiveStep();
-		const copyStep = getActiveClip()!.steps[1];
-		expect(copyStep.annotations).toHaveLength(1);
-		// Paths are NOT copied — the duplicate starts fresh from the arrival pose.
-		expect(copyStep.paths).toBeUndefined();
+		}, 'add path');
 
-		if (sourceStep.annotations![0].kind === 'pen' && copyStep.annotations![0].kind === 'pen') {
-			// Deep copy: point objects should be distinct
-			expect(copyStep.annotations![0].points[0]).not.toBe(sourceStep.annotations![0].points[0]);
-			// Geometry should be equal
-			expect(copyStep.annotations![0].points).toEqual(sourceStep.annotations![0].points);
-		}
+		expect(boardDoc.current.annotations).toHaveLength(1);
+		expect(getActiveClip()!.steps[0].paths).toHaveLength(1);
+
+		const before = boardDoc.current.annotations!;
+		duplicateActiveStep();
+
+		// Annotations are board-level: duplication must not touch them.
+		expect(boardDoc.current.annotations).toHaveLength(1);
+		expect(boardDoc.current.annotations![0]).toBe(before[0]);
+		// The copy carries no annotation field (and paths are not inherited).
+		const copyStep = getActiveClip()!.steps[1];
+		expect((copyStep as unknown as { annotations?: unknown }).annotations).toBeUndefined();
+		expect(copyStep.paths).toBeUndefined();
 	});
 });
 
@@ -301,10 +299,8 @@ describe('clipOps — paths and annotations', () => {
 		expect(step.paths).toHaveLength(0);
 	});
 
-	it('addAnnotation creates a new annotation', () => {
-		createAuthoredClipFromBoard();
-		const stepId = getActiveClip()!.steps[0].id;
-		const id = addAnnotation(stepId, {
+	it('addAnnotation creates a new board-wide annotation', () => {
+		const id = addAnnotation({
 			kind: 'pen',
 			points: [
 				{ x: 0, y: 0.5 },
@@ -312,52 +308,21 @@ describe('clipOps — paths and annotations', () => {
 			],
 			style: { color: '#ff0000' }
 		} as Omit<Annotation, 'id'>);
-		const step = getActiveClip()!.steps[0];
-		expect(step.annotations).toHaveLength(1);
-		expect(step.annotations![0].id).toBe(id);
-		if (step.annotations![0].kind === 'pen') {
-			expect(step.annotations![0].points).toEqual([
+		expect(boardDoc.current.annotations).toHaveLength(1);
+		const ann = boardDoc.current.annotations![0];
+		expect(ann.id).toBe(id);
+		// Board-wide by default: no scope.
+		expect(ann.scope).toBeUndefined();
+		if (ann.kind === 'pen') {
+			expect(ann.points).toEqual([
 				{ x: 0, y: 0.5 },
 				{ x: 1, y: 0.5 }
 			]);
-		}
-	});
-
-	it('updateAnnotation replaces an annotation by id', () => {
-		createAuthoredClipFromBoard();
-		const stepId = getActiveClip()!.steps[0].id;
-		const id = addAnnotation(stepId, {
-			kind: 'pen',
-			points: [
-				{ x: 0, y: 0.5 },
-				{ x: 1, y: 0.5 }
-			],
-			style: { color: '#ff0000' }
-		} as Omit<Annotation, 'id'>);
-		updateAnnotation(stepId, id, {
-			id,
-			kind: 'pen',
-			points: [
-				{ x: 2, y: 0.5 },
-				{ x: 3, y: 0.5 }
-			],
-			style: { color: '#00ff00' }
-		});
-		const step = getActiveClip()!.steps[0];
-		expect(step.annotations).toHaveLength(1);
-		if (step.annotations![0].kind === 'pen') {
-			expect(step.annotations![0].points).toEqual([
-				{ x: 2, y: 0.5 },
-				{ x: 3, y: 0.5 }
-			]);
-			expect(step.annotations![0].style.color).toBe('#00ff00');
 		}
 	});
 
 	it('deleteAnnotation removes an annotation by id', () => {
-		createAuthoredClipFromBoard();
-		const stepId = getActiveClip()!.steps[0].id;
-		const id = addAnnotation(stepId, {
+		const id = addAnnotation({
 			kind: 'pen',
 			points: [
 				{ x: 0, y: 0.5 },
@@ -365,15 +330,12 @@ describe('clipOps — paths and annotations', () => {
 			],
 			style: { color: '#ff0000' }
 		} as Omit<Annotation, 'id'>);
-		deleteAnnotation(stepId, id);
-		const step = getActiveClip()!.steps[0];
-		expect(step.annotations).toHaveLength(0);
+		deleteAnnotation(id);
+		expect(boardDoc.current.annotations).toHaveLength(0);
 	});
 
-	it('clearAnnotations removes all annotations from a step', () => {
-		createAuthoredClipFromBoard();
-		const stepId = getActiveClip()!.steps[0].id;
-		addAnnotation(stepId, {
+	it('clearAnnotations removes all annotations from the board', () => {
+		addAnnotation({
 			kind: 'pen',
 			points: [
 				{ x: 0, y: 0.5 },
@@ -381,7 +343,7 @@ describe('clipOps — paths and annotations', () => {
 			],
 			style: { color: '#ff0000' }
 		} as Omit<Annotation, 'id'>);
-		addAnnotation(stepId, {
+		addAnnotation({
 			kind: 'pen',
 			points: [
 				{ x: 2, y: 0.5 },
@@ -389,9 +351,23 @@ describe('clipOps — paths and annotations', () => {
 			],
 			style: { color: '#00ff00' }
 		} as Omit<Annotation, 'id'>);
-		clearAnnotations(stepId);
-		const step = getActiveClip()!.steps[0];
-		expect(step.annotations).toBeUndefined();
+		clearAnnotations();
+		expect(boardDoc.current.annotations).toBeUndefined();
+	});
+
+	it('setAnnotationScope pins an annotation to a step and back to board-wide', () => {
+		const id = addAnnotation({
+			kind: 'pen',
+			points: [
+				{ x: 0, y: 0.5 },
+				{ x: 1, y: 0.5 }
+			],
+			style: { color: '#ff0000' }
+		} as Omit<Annotation, 'id'>);
+		setAnnotationScope(id, 'step-1');
+		expect(boardDoc.current.annotations![0].scope).toEqual({ stepId: 'step-1' });
+		setAnnotationScope(id, null);
+		expect(boardDoc.current.annotations![0].scope).toBeUndefined();
 	});
 
 	it('path/annotation ops create one undo entry each', () => {
@@ -405,7 +381,7 @@ describe('clipOps — paths and annotations', () => {
 		]);
 		expect(undoDepth()).toBe(historyDepth + 1);
 
-		addAnnotation(stepId, {
+		addAnnotation({
 			kind: 'pen',
 			points: [
 				{ x: 0, y: 0.5 },
@@ -416,12 +392,10 @@ describe('clipOps — paths and annotations', () => {
 		expect(undoDepth()).toBe(historyDepth + 2);
 
 		boardDoc.undo();
-		const step = getActiveClip()!.steps[0];
-		expect(step.annotations).toBeUndefined();
+		expect(boardDoc.current.annotations).toBeUndefined();
 
 		boardDoc.undo();
-		const step2 = getActiveClip()!.steps[0];
-		expect(step2.paths).toBeUndefined();
+		expect(getActiveClip()!.steps[0].paths).toBeUndefined();
 	});
 
 	it('non-finite points are dropped', () => {
@@ -435,21 +409,20 @@ describe('clipOps — paths and annotations', () => {
 			{ x: 3, y: 0.5 }
 		];
 		setEntityPath(stepId, 'a', pointsWithNaN);
-		const step = getActiveClip()!.steps[0];
-		expect(step.paths![0].points).toEqual([
+		expect(getActiveClip()!.steps[0].paths![0].points).toEqual([
 			{ x: 0, y: 0.5 },
 			{ x: 1, y: 0.5 },
 			{ x: 3, y: 0.5 }
 		]);
 
-		addAnnotation(stepId, {
+		addAnnotation({
 			kind: 'pen',
 			points: pointsWithNaN,
 			style: { color: '#ff0000' }
 		} as Omit<Annotation, 'id'>);
-		const step2 = getActiveClip()!.steps[0];
-		if (step2.annotations![0].kind === 'pen') {
-			expect(step2.annotations![0].points).toEqual([
+		const ann = boardDoc.current.annotations![0];
+		if (ann.kind === 'pen') {
+			expect(ann.points).toEqual([
 				{ x: 0, y: 0.5 },
 				{ x: 1, y: 0.5 },
 				{ x: 3, y: 0.5 }

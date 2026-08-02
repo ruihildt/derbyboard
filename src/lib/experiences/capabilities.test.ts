@@ -69,4 +69,13 @@ describe('capabilities — getCapabilities', () => {
 		expect(caps.admittedTools).toEqual(ALL_TOOLS);
 		expect(caps.admittedEntityKinds).toEqual(['skater', 'official']);
 	});
+
+	it('erase tool is admitted in both free and drill', () => {
+		expect(getCapabilities(boardDoc.current).admittedTools).toContain('erase');
+		boardDoc.applyEdit((d) => {
+			d.clips.push(authoredClip('c1'));
+		}, 'add clip');
+		authoringSession.set({ activeClipId: 'c1', activeStepIndex: 0 });
+		expect(getCapabilities(boardDoc.current).admittedTools).toContain('erase');
+	});
 });

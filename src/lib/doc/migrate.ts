@@ -27,6 +27,13 @@ function finiteOrZero(v: number | null | undefined): number {
 }
 
 /**
+ * Legacy step shape that still carries per-step `annotations` (removed from the
+ * v8 `Step` type). The v6→v7 geometry conversion and the v7→v8 flatten both
+ * touch these legacy annotations before they land on the board array.
+ */
+type PreV8Step = Step & { annotations?: Annotation[] };
+
+/**
  * Migrate boardState v3 (pixel-relative positions) to BoardDoc v7 (planar
  * world metres). The viewport center is assumed to be at (0, 0) in the relative
  * coordinate system, so a pixel-relative `(rx, ry)` maps to world metres
@@ -126,10 +133,11 @@ export function entityToPixelRelative(entity: Entity): { x: number; y: number } 
  *    `EntityPose`), path point and annotation geometry is converted via
  *    `fromTrack(S, u)`; heading modes and metadata are unchanged. `(S, u)`
  *    becomes a derived view computed on demand by the track layer.
- *  - v7 → v8: added optional `annotations: Annotation[]` to `BoardDoc` for
- *    free-play annotations (shown whenever no authored clip is active). Absent
- *    means none, matching pre-v8 behaviour. No coordinate work: planar is
- *    already canonical.
+ *  - v7 → v8: annotations became board-wide. Existing per-step
+ *    `step.annotations` are flattened onto `BoardDoc.annotations`, each tagged
+ *    `scope: { stepId }` (shown only on its originating step; absent scope ⇒
+ *    board-wide). The `Step.annotations` field is removed. No coordinate work:
+ *    planar is already canonical.
  */
 export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 	let next = doc;
@@ -244,11 +252,61 @@ export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 	}
 
 	if (next.version < 8) {
-		// Defensive copy so we never mutate the caller's object. The new
-		// board-level `annotations` field stays undefined (absent = none), so
-		// no data needs to be synthesised.
-		next = { ...next };
+		// Flatten step-attached annotations onto the board array, each tagged
+		// with `scope: { stepId }` so it shows only on its originating step.
+		// Board-wide annotations (already on `draft.annotations`) are kept
+		// as-is. Defensive-copy clips/steps so the caller's object is untouched.
+		next = {
+			...next,
+			clips: next.clips.map((clip) =>
+				clip.kind === 'authored'
+					? {
+							...clip,
+							steps: clip.steps.map((step) => ({ ...(step as PreV8Step) }))
+						}
+					: clip
+			)
+		};
+
+		const boardAnns = next.annotations ?? [];
+		const collected: Annotation[] = [...boardAnns];
+		const seen = new Set(boardAnns.map((a) => a.id));
+
+		for (const clip of next.clips) {
+			if (clip.kind !== 'authored') continue;
+			for (const step of clip.steps) {
+				const legacy = (step as PreV8Step).annotations;
+				if (legacy) {
+					for (const ann of legacy) {
+						if (seen.has(ann.id)) continue; // dedup by id
+						seen.add(ann.id);
+						collected.push({ ...ann, scope: { stepId: step.id } });
+					}
+					delete (step as PreV8Step).annotations;
+				}
+			}
+		}
+
+		next.annotations = collected.length > 0 ? collected : undefined;
 		next.version = 8;
+	}
+
+	if (next.version < 9) {
+		// Convert arrow annotations from {from, to} to {points: [from, to]}
+		// This is a structural change to support freehand arrow drawing
+		if (next.annotations) {
+			next.annotations = next.annotations.map((ann) => {
+				if (ann.kind === 'arrow' && 'from' in ann && 'to' in ann) {
+					const oldArrow = ann as unknown as { from: PlanarPoint; to: PlanarPoint };
+					return {
+						...ann,
+						points: [oldArrow.from, oldArrow.to]
+					} as Annotation;
+				}
+				return ann;
+			});
+		}
+		next.version = 9;
 	}
 
 	next.version = CURRENT_VERSION;
@@ -307,7 +365,13 @@ function migrateV6ToV7(doc: BoardDoc): BoardDoc {
 				points: ann.points.map(pointToPlanar)
 			} as Annotation;
 		}
-		if (ann.kind === 'arrow' || ann.kind === 'gap') {
+		if (ann.kind === 'arrow') {
+			return {
+				...ann,
+				points: [pointToPlanar(ann.from), pointToPlanar(ann.to)]
+			} as Annotation;
+		}
+		if (ann.kind === 'gap') {
 			return {
 				...ann,
 				from: pointToPlanar(ann.from),
@@ -318,9 +382,13 @@ function migrateV6ToV7(doc: BoardDoc): BoardDoc {
 		return { ...ann, at: pointToPlanar(ann.at) } as Annotation;
 	};
 
-	const convertStep = (step: Step): Step => {
+	// `convertStep` operates on the legacy `PreV8Step` shape so any pre-v8
+	// step-attached annotations have their geometry converted through the v7
+	// planar migration in place. They are NOT part of the v8 `Step` type; the
+	// v7→v8 flatten below lifts them onto the board array and deletes the field.
+	const convertStep = (step: PreV8Step): PreV8Step => {
 		const entities = step.entities.map((e) => convertPose(e as EntityPose) as EntityPose);
-		const out: Step = { ...step, entities };
+		const out: PreV8Step = { ...step, entities };
 		if (step.paths) out.paths = step.paths.map(convertPath);
 		if (step.annotations) out.annotations = step.annotations.map(convertAnn);
 		return out;

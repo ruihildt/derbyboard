@@ -42,18 +42,54 @@ export interface AnnotationStyle {
 }
 
 /**
- * Flat annotation union. Every kind carries `id`, a `style`, and its geometry
- * entirely in planar world metres. No nesting, no grouping. Captured clips do
- * not carry annotations. Authored-clip steps carry per-step annotations
- * (appear/disappear with the step); the board carries free-play annotations,
- * shown whenever no clip is active.
+ * Pins an annotation to a single step. Absent `scope` ⇒ the mark is board-wide
+ * (shown on every step and in free play).
+ */
+export interface AnnotationScope {
+	stepId: string;
+}
+
+/**
+ * An affine manipulation of an annotation's base geometry, expressed in planar
+ * metres. The base geometry (points/from/to/at) never changes; move/resize/
+ * rotate edit this transform instead, so the selection box can stay oriented
+ * with the element and re-select consistently. Absent means identity.
+ *
+ * Effective anchor = `cx,cy + R(angle) * (sx*(b.x-baseCx), sy*(b.y-baseCy))`
+ * where `baseCx,baseCy` is the centre of the base geometry's axis-aligned
+ * bounding box (derived, not stored). `sx/sy` are per-axis scales relative to
+ * that base box; `angle` is radians.
+ */
+export interface AnnotationTransform {
+	cx: number;
+	cy: number;
+	angle: number;
+	sx: number;
+	sy: number;
+}
+
+/** Fields shared by every annotation kind. */
+export interface AnnotationBase {
+	id: string;
+	style: AnnotationStyle;
+	/** Pin a mark to one step; absent means board-wide (shown everywhere). */
+	scope?: AnnotationScope;
+	/** Move/resize/rotate manipulation; absent means identity. */
+	transform?: AnnotationTransform;
+}
+
+/**
+ * Flat annotation union. Every kind shares `AnnotationBase` (id + style +
+ * optional `scope`) and carries its geometry entirely in planar world metres.
+ * No nesting, no grouping. All annotations live board-wide on
+ * `BoardDoc.annotations`; `scope.stepId` makes a mark visible only on that step.
  */
 export type Annotation =
-	| { id: string; kind: 'pen'; points: PlanarPoint[]; style: AnnotationStyle }
-	| { id: string; kind: 'arrow'; from: PlanarPoint; to: PlanarPoint; style: AnnotationStyle }
-	| { id: string; kind: 'zone'; points: PlanarPoint[]; style: AnnotationStyle }
-	| { id: string; kind: 'label'; at: PlanarPoint; text: string; style: AnnotationStyle }
-	| { id: string; kind: 'gap'; from: PlanarPoint; to: PlanarPoint; style: AnnotationStyle };
+	| (AnnotationBase & { kind: 'pen'; points: PlanarPoint[] })
+	| (AnnotationBase & { kind: 'arrow'; points: PlanarPoint[] })
+	| (AnnotationBase & { kind: 'zone'; points: PlanarPoint[] })
+	| (AnnotationBase & { kind: 'label'; at: PlanarPoint; text: string })
+	| (AnnotationBase & { kind: 'gap'; from: PlanarPoint; to: PlanarPoint });
 
 export interface Entity {
 	id: string;
@@ -94,8 +130,6 @@ export interface Step {
 	entities: EntityPose[];
 	/** @deprecated Under the fixed-duration model every step is exactly 1 s. Kept for backward-compat. */
 	holdMs?: number;
-	/** Freehand/marker annotations belonging to this step; appear/disappear with it. */
-	annotations?: Annotation[];
 	/** Per-entity movement paths; a path on step i describes motion during step i's second. */
 	paths?: EntityPath[];
 	/**
@@ -175,12 +209,12 @@ export interface BoardDoc {
 	entities: Entity[];
 	clips: Clip[];
 	activeClipId: string | null;
-	/** Free-play annotations drawn directly on the board (no clip/step). Shown
-	 * whenever no authored clip is active; absent means none. */
+	/** Board-wide annotations. Each may carry an optional `scope` to pin it to a
+	 * single step; absent scope ⇒ shown everywhere. Absent array means none. */
 	annotations?: Annotation[];
 }
 
-export const CURRENT_VERSION = 8;
+export const CURRENT_VERSION = 9;
 
 export function createEmptyDoc(): BoardDoc {
 	return {

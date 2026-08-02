@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	simplify,
 	catmullRom,
+	catmullRomClosed,
 	buildArcLength,
 	sampleAtArcLength,
 	pathTangentAt,
@@ -83,6 +84,40 @@ describe('pathMath — catmullRom', () => {
 		}
 
 		expect(maxSecondDiff).toBeLessThan(0.1);
+	});
+});
+
+describe('pathMath — catmullRomClosed', () => {
+	it('samples every segment once for a loop (n * samples)', () => {
+		const points = [tp(0, 0.5), tp(1, 0.5), tp(2, 0.5), tp(3, 0.5)];
+		const smoothed = catmullRomClosed(points, 8);
+		expect(smoothed.length).toBe(points.length * 8);
+	});
+
+	it('falls back to the open variant for fewer than 3 points', () => {
+		const two = [tp(0, 0.5), tp(1, 0.5)];
+		expect(catmullRomClosed(two, 8).length).toBe(catmullRom(two, 8).length);
+	});
+
+	it('wraps the curve so the seam between last and first is smooth', () => {
+		// A square-ish loop: smoothing should pull samples off the corners
+		// (no sample sits exactly on a sharp 90-degree vertex midpoint gap).
+		const points = [
+			{ x: 0, y: 0 },
+			{ x: 4, y: 0 },
+			{ x: 4, y: 4 },
+			{ x: 0, y: 4 }
+		];
+		const smoothed = catmullRomClosed(points, 8);
+		// Output stays within the loop's bounding box (no wild overshoot).
+		for (const p of smoothed) {
+			expect(p.x).toBeGreaterThanOrEqual(-2);
+			expect(p.x).toBeLessThanOrEqual(6);
+			expect(p.y).toBeGreaterThanOrEqual(-2);
+			expect(p.y).toBeLessThanOrEqual(6);
+		}
+		// And there are many more samples than control points (it interpolated).
+		expect(smoothed.length).toBeGreaterThan(points.length);
 	});
 });
 

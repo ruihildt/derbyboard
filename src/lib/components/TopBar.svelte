@@ -44,7 +44,8 @@
 		{ id: 'arrow', label: 'Arrow', icon: '→' },
 		{ id: 'zone', label: 'Zone', icon: '◯' },
 		{ id: 'label', label: 'Label', icon: 'A' },
-		{ id: 'gap', label: 'Gap', icon: '⫶' }
+		{ id: 'gap', label: 'Gap', icon: '⫶' },
+		{ id: 'erase', label: 'Erase', icon: '' }
 	];
 
 	// Reset to the neutral tool whenever the current tool isn't admitted by the
@@ -126,6 +127,24 @@
 									</svg>
 								{:else if tool.id === 'drawPath'}
 									<DrawSquareOutline class="h-[18px] w-[18px]" aria-hidden="true" />
+								{:else if tool.id === 'erase'}
+									<!-- Eraser glyph: tap an annotation to delete it. -->
+									<svg
+										class="h-[18px] w-[18px]"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										aria-hidden="true"
+									>
+										<path
+											d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"
+										/>
+										<path d="M22 21H7" />
+										<path d="m5 11 9 9" />
+									</svg>
 								{:else}
 									{tool.icon}
 								{/if}

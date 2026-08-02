@@ -42,9 +42,11 @@ export const VIEW_TOOLS: DrawTool[] = ['select', 'hand'];
 
 /**
  * Annotation/drawing tools that lay marks directly on the board surface with
- * no step required — admitted in both Free Play and Drill.
+ * no step required — admitted in both Free Play and Drill. Includes `erase`,
+ * which removes an annotation by tapping it (annotations only; never players
+ * or movement paths).
  */
-export const ANNOTATION_TOOLS: DrawTool[] = ['pen', 'arrow', 'zone', 'label'];
+export const ANNOTATION_TOOLS: DrawTool[] = ['pen', 'arrow', 'zone', 'label', 'erase'];
 
 /**
  * Step-scoped authoring tools, admitted only by Drill: `drawPath` (movement

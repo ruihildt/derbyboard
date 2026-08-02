@@ -9,7 +9,8 @@ import type {
 	EntityPose,
 	Step,
 	PlanarPoint,
-	Annotation
+	Annotation,
+	AnnotationTransform
 } from './types';
 import { MAX_STEPS_PER_CLIP } from './types';
 
@@ -147,12 +148,6 @@ export function duplicateActiveStep(): string | null {
 			id: stepId,
 			title: source.title,
 			entities: arrivalPoses.map((p) => ({ ...p })),
-			annotations: source.annotations?.map((a) => ({
-				...a,
-				...(a.kind === 'pen' || a.kind === 'zone'
-					? { points: a.points.map((pt) => ({ ...pt })) }
-					: {})
-			})),
 			showPackZone: source.showPackZone
 		};
 		c.steps.splice(insertAt, 0, copy);
@@ -174,6 +169,13 @@ export function deleteStep(stepId: string): void {
 		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
 		if (!c) return;
 		c.steps = c.steps.filter((s) => s.id !== stepId);
+		// Promote annotations scoped to the deleted step to board-wide so they
+		// don't vanish permanently — they become visible on every step.
+		if (draft.annotations) {
+			for (const ann of draft.annotations) {
+				if (ann.scope?.stepId === stepId) delete ann.scope;
+			}
+		}
 	}, 'Delete step');
 	// Keep the board pointing at a valid step; if we removed the active one,
 	// clamp to the previous step and reload it.
@@ -292,109 +294,86 @@ export function deletePath(stepId: string, pathId: string): void {
 	}, 'Delete path');
 }
 
-/** Appends an annotation to `stepId`. Returns the new annotation id (caller may pass its own id). */
-export function addAnnotation(
-	stepId: string,
-	ann: Omit<Annotation, 'id'> & { id?: string }
-): string {
-	const id = ann.id ?? newId();
-	boardDoc.applyEdit((draft) => {
-		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
-		if (!c) return;
-		const step = c.steps.find((s) => s.id === stepId);
-		if (!step) return;
-
-		if (!step.annotations) step.annotations = [];
-
-		const filtered: Annotation = { ...ann, id } as Annotation;
-
-		if ('points' in filtered && Array.isArray(filtered.points)) {
-			(filtered as Extract<Annotation, { kind: 'pen' | 'zone' }>).points = filtered.points.filter(
-				(p) => Number.isFinite(p.x) && Number.isFinite(p.y)
-			);
-		}
-
-		step.annotations.push(filtered);
-	}, 'Add annotation');
-	return id;
-}
-
-/** Replaces an annotation by id (full replacement; used after a reshape/edit). */
-export function updateAnnotation(stepId: string, annId: string, ann: Annotation): void {
-	boardDoc.applyEdit((draft) => {
-		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
-		if (!c) return;
-		const step = c.steps.find((s) => s.id === stepId);
-		if (!step || !step.annotations) return;
-
-		const idx = step.annotations.findIndex((a) => a.id === annId);
-		if (idx >= 0) {
-			const filtered: Annotation = { ...ann, id: annId };
-
-			if ('points' in filtered && Array.isArray(filtered.points)) {
-				(filtered as Extract<Annotation, { kind: 'pen' | 'zone' }>).points = filtered.points.filter(
-					(p) => Number.isFinite(p.x) && Number.isFinite(p.y)
-				);
-			}
-
-			step.annotations[idx] = filtered;
-		}
-	}, 'Edit annotation');
-}
-
-/** Deletes an annotation by id. No-op if absent. */
-export function deleteAnnotation(stepId: string, annId: string): void {
-	boardDoc.applyEdit((draft) => {
-		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
-		if (!c) return;
-		const step = c.steps.find((s) => s.id === stepId);
-		if (!step || !step.annotations) return;
-		step.annotations = step.annotations.filter((a) => a.id !== annId);
-	}, 'Delete annotation');
-}
-
-/** Removes every annotation from `stepId`. */
-export function clearAnnotations(stepId: string): void {
-	boardDoc.applyEdit((draft) => {
-		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
-		if (!c) return;
-		const step = c.steps.find((s) => s.id === stepId);
-		if (!step) return;
-		step.annotations = undefined;
-	}, 'Clear annotations');
+/**
+ * Drops non-finite points from pen/zone geometry (guards against corrupt saves
+ * / NaN-producing draws). Leaves other kinds untouched.
+ */
+function sanitiseAnnotationGeometry(ann: Annotation): Annotation {
+	if (ann.kind === 'pen' || ann.kind === 'zone') {
+		return {
+			...ann,
+			points: ann.points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
+		};
+	}
+	return ann;
 }
 
 /**
- * Free-play annotation ops: target the board-level `annotations` array shown
- * whenever no authored clip is active. Mirror of the step-scoped ops above.
+ * Appends a board-wide annotation to `BoardDoc.annotations`. Returns the new id
+ * (the caller may pass its own). Scope is intentionally not accepted here —
+ * drawing always creates a board-wide mark; use {@link setAnnotationScope} to
+ * pin one to a step afterwards.
  */
-
-/** Appends a free-play annotation to the board. Returns the id (caller may pass its own). */
-export function addFreeAnnotation(ann: Omit<Annotation, 'id'> & { id?: string }): string {
+export function addAnnotation(ann: Omit<Annotation, 'id'> & { id?: string }): string {
 	const id = ann.id ?? newId();
 	boardDoc.applyEdit((draft) => {
 		if (!draft.annotations) draft.annotations = [];
 		const filtered: Annotation = { ...ann, id } as Annotation;
-		if ('points' in filtered && Array.isArray(filtered.points)) {
-			(filtered as Extract<Annotation, { kind: 'pen' | 'zone' }>).points = filtered.points.filter(
-				(p) => Number.isFinite(p.x) && Number.isFinite(p.y)
-			);
-		}
-		draft.annotations.push(filtered);
+		draft.annotations.push(sanitiseAnnotationGeometry(filtered));
 	}, 'Add annotation');
 	return id;
 }
 
-/** Deletes a free-play annotation by id. No-op if absent. */
-export function deleteFreeAnnotation(annId: string): void {
+/**
+ * Pins an annotation to a step (`stepId` set) or makes it board-wide
+ * (`stepId === null` clears the scope). One undo entry.
+ */
+export function setAnnotationScope(annId: string, stepId: string | null): void {
+	boardDoc.applyEdit(
+		(draft) => {
+			if (!draft.annotations) return;
+			const ann = draft.annotations.find((a) => a.id === annId);
+			if (!ann) return;
+			if (stepId === null) {
+				delete ann.scope;
+			} else {
+				ann.scope = { stepId };
+			}
+		},
+		stepId === null ? 'Show on all steps' : 'Pin to step'
+	);
+}
+
+/**
+ * Sets an annotation's move/resize/rotate transform. One undo entry. Pass
+ * `undefined` to reset to identity (clears the field).
+ */
+export function setAnnotationTransform(
+	annId: string,
+	transform: AnnotationTransform | undefined
+): void {
+	boardDoc.applyEdit((draft) => {
+		if (!draft.annotations) return;
+		const ann = draft.annotations.find((a) => a.id === annId);
+		if (!ann) return;
+		if (transform === undefined) {
+			delete ann.transform;
+		} else {
+			ann.transform = transform;
+		}
+	}, 'Transform annotation');
+}
+
+/** Deletes an annotation by id. No-op if absent. */
+export function deleteAnnotation(annId: string): void {
 	boardDoc.applyEdit((draft) => {
 		if (!draft.annotations) return;
 		draft.annotations = draft.annotations.filter((a) => a.id !== annId);
 	}, 'Delete annotation');
 }
 
-/** Removes every free-play annotation from the board. */
-export function clearFreeAnnotations(): void {
+/** Removes every annotation from the board. */
+export function clearAnnotations(): void {
 	boardDoc.applyEdit((draft) => {
 		draft.annotations = undefined;
 	}, 'Clear annotations');

@@ -173,6 +173,28 @@ export function catmullRom(points: PlanarPoint[], samplesPerSegment = 8): Planar
 	return result;
 }
 
+/**
+ * Closed-loop Catmull-Rom: the curve wraps from the last point back to the
+ * first, producing a smooth closed blob (used by the zone/area tool). Falls
+ * back to the open variant when there aren't enough points to form a loop.
+ */
+export function catmullRomClosed(points: PlanarPoint[], samplesPerSegment = 8): PlanarPoint[] {
+	const n = points.length;
+	if (n < 3) return catmullRom(points, samplesPerSegment);
+	const result: PlanarPoint[] = [];
+	const at = (i: number): PlanarPoint => points[((i % n) + n) % n];
+	for (let i = 0; i < n; i++) {
+		const p0 = at(i - 1);
+		const p1 = at(i);
+		const p2 = at(i + 1);
+		const p3 = at(i + 2);
+		for (let j = 0; j < samplesPerSegment; j++) {
+			result.push(catmullRomInterpolate(p0, p1, p2, p3, j / samplesPerSegment));
+		}
+	}
+	return result;
+}
+
 function catmullRomInterpolate(
 	p0: PlanarPoint,
 	p1: PlanarPoint,
