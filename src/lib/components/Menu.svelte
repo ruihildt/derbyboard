@@ -118,7 +118,7 @@
 </script>
 
 <Button
-	class="min-h-11 min-w-11 rounded-lg bg-white !p-1 shadow-lg shadow-black/5 hover:bg-primary-200"
+	class="pointer-events-auto min-h-11 min-w-11 rounded-lg bg-white !p-1 shadow-lg shadow-black/5 hover:bg-primary-200"
 	onclick={toggleMenu}
 >
 	<BarsOutline class="h-6 w-6" color="gray" />

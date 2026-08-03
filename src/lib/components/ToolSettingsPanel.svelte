@@ -17,7 +17,9 @@
 
 	// The capture settings sections show only while a capture tool is armed.
 	// Switching to a drawing/view tool hides the panel; other tools may later
-	// surface their own settings here.
+	// surface their own settings here. While a capture tool is armed the
+	// capture zone is always resize-able (ZoneOverlay edit mode is derived
+	// from the armed tool — see regionMode store); no manual toggle.
 	let mode = $derived($toolMode === 'video' || $toolMode === 'screenshot' ? $toolMode : null);
 
 	function pill(active: boolean): string {

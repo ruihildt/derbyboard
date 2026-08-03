@@ -19,7 +19,6 @@
 	import StepStrip from '$lib/components/StepStrip.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
 	import UndoRedoControls from '$lib/components/UndoRedoControls.svelte';
-	import CaptureBar from '$lib/components/CaptureBar.svelte';
 	import BoardSettings from '$lib/components/BoardSettings.svelte';
 	import Library from '$lib/components/Library.svelte';
 	import Changelog from '$lib/components/Changelog.svelte';
@@ -31,6 +30,7 @@
 	import AnnotationHud from '$lib/components/AnnotationHud.svelte';
 	import { captureSettings } from '$lib/stores/captureSettings';
 	import { exportSettings } from '$lib/stores/exportSettings';
+	import { regionMode } from '$lib/stores/regionMode';
 	import { formatRatio } from '$lib/utils/capture';
 	import type { TimelineFrame, TimelineProject } from '$lib/recording/timeline/types';
 
@@ -54,10 +54,6 @@
 
 	let replayFrame = $state<TimelineFrame | null>(null);
 	let replaySource = $state<{ w: number; h: number } | null>(null);
-
-	// Capture-region interaction mode: 'board' = fully pass-through (default),
-	// 'edit' = resize handles hot. Only meaningful while a region is editable.
-	let regionMode = $state<'board' | 'edit'>('board');
 
 	// Replay framing overlay. Region archives draw their capture region;
 	// full-frame archives draw the whole source viewport so the letterbox bars
@@ -184,7 +180,7 @@
 			zone={captureZone}
 			ratio={captureRatio}
 			{interactive}
-			mode={regionMode}
+			mode={$regionMode}
 			watermark={$exportSettings.watermark !== 'hidden'}
 			onchange={(z) => captureSettings.update((s) => ({ ...s, zone: z }))}
 		/>
@@ -282,14 +278,9 @@
 			? 'left-0 right-[24rem]'
 			: 'inset-x-0'}"
 	>
-		<div class="pointer-events-auto relative flex w-full items-center">
-			<div class="flex items-center gap-2">
-				<ZoomControl {game} />
-				<UndoRedoControls />
-			</div>
-			<div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-				<CaptureBar {isRecording} bind:regionMode />
-			</div>
+		<div class="pointer-events-auto flex items-center gap-2">
+			<ZoomControl {game} />
+			<UndoRedoControls />
 		</div>
 		{#if caps.timeline}
 			<StepStrip {game} />

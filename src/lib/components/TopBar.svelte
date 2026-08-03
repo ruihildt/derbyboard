@@ -95,8 +95,12 @@
 		: 'inset-x-0'} px-[max(0.75rem,env(safe-area-inset-left))] py-[max(0.5rem,env(safe-area-inset-top))]"
 >
 	<!-- Left column: Menu and the contextual settings panel share the same
-	     slot — opening the menu hides the settings panel content. -->
-	<div class="pointer-events-auto flex flex-col items-start gap-2">
+	     slot — opening the menu hides the settings panel content. The wrapper
+	     is pass-through so its empty area (it otherwise spans the full bar
+	     width) doesn't block the capture-zone resize handles drawn below it
+	     (ZoneOverlay, z-20). The Menu trigger and panel opt back in to
+	     pointer events on their own roots. -->
+	<div class="pointer-events-none flex flex-col items-start gap-2">
 		<Menu bind:open={menuOpen} {game} {onOpenArchive} {onOpenNews} {onOpenBoardSettings} />
 		{#if !menuOpen}
 			<ToolSettingsPanel {game} />
