@@ -98,6 +98,7 @@ export class KonvaGestureHandler {
 	};
 
 	private beginPinch() {
+		console.debug('[zoom-debug] pinch begin');
 		this.pinching = true;
 		this.startScale = this.stage.scaleX();
 		this.prevDraggable = this.stage.draggable();
@@ -126,6 +127,11 @@ export class KonvaGestureHandler {
 		e.evt.preventDefault();
 		const pos = this.stage.getPointerPosition();
 		if (!pos) return;
+		// TEMPORARY diagnostic: expose momentum/inertial scrolls that silently
+		// drift the zoom after a trackpad pan. Remove once cause is confirmed.
+		console.debug(
+			`[zoom-debug] wheel: deltaY=${e.evt.deltaY.toFixed(2)} deltaMode=${e.evt.deltaMode} ctrl=${e.evt.ctrlKey}`
+		);
 		const factor = Math.exp(-e.evt.deltaY * 0.001);
 		this.zoomAt(pos, this.stage.scaleX() * factor);
 		this.schedulePersist();

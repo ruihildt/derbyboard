@@ -17,6 +17,16 @@ import type { KonvaPlayerManager } from '../KonvaPlayerManager';
 
 const FRAME_DEFAULT_MARGIN = 0.1;
 
+/** TEMPORARY diagnostic for the "zoom drifts down" bug: logs every stage
+ * scale change with its trigger. Remove once the cause is confirmed. */
+function logZoom(source: string, from: number, to: number, extra?: unknown) {
+	if (Math.abs(from - to) < 1e-9) return;
+	console.debug(
+		`[zoom-debug] ${source}: ${(from * 100).toFixed(2)}% -> ${(to * 100).toFixed(2)}%`,
+		extra ?? ''
+	);
+}
+
 export interface ViewportHooks {
 	isReplayMode: () => boolean;
 	getPlayerManager: () => KonvaPlayerManager;
@@ -103,6 +113,9 @@ export class ViewportController {
 		const newH = el?.clientHeight ?? window.innerHeight;
 		// Skip no-op / scale-only events.
 		if (Math.abs(newW - this.width) < 1 && Math.abs(newH - this.height) < 1) return;
+		console.debug(
+			`[zoom-debug] applyResize: ${this.width}x${this.height} -> ${newW}x${newH}, stage zoom ${(this.stage.scaleX() * 100).toFixed(2)}%, persisted zoom ${((get(boardState).viewSettings?.zoom ?? 1) * 100).toFixed(2)}%`
+		);
 
 		const orientationChanged = this.prevPortrait !== newH > newW;
 		this.recalculateDimensions();
@@ -251,6 +264,7 @@ export class ViewportController {
 		const cy = (b.minY + b.maxY) / 2;
 
 		const scale = Math.min(this.width / tw, this.height / th, MAX_ZOOM);
+		logZoom('fitToTrack', this.stage.scaleX(), scale, `viewport ${this.width}x${this.height}`);
 		const sx = this.width / 2 - cx * scale;
 		const sy = this.height / 2 - cy * scale;
 
@@ -284,6 +298,7 @@ export class ViewportController {
 
 	// Update zoom while maintaining the center point
 	private updateZoom(newScale: number) {
+		logZoom('updateZoom (zoom buttons)', this.stage.scaleX(), newScale);
 		// Get current center point
 		const centerX = this.stage.width() / 2;
 		const centerY = this.stage.height() / 2;
@@ -321,6 +336,7 @@ export class ViewportController {
 		const worldX = (viewportPoint.x - this.stage.x()) / s;
 		const worldY = (viewportPoint.y - this.stage.y()) / s;
 		const clamped = Math.min(Math.max(newScale, MIN_ZOOM), MAX_ZOOM);
+		logZoom('zoomAt (wheel/pinch)', s, clamped);
 		this.stage.scale({ x: clamped, y: clamped });
 		this.stage.position({
 			x: viewportPoint.x - worldX * clamped,
@@ -390,6 +406,8 @@ export class ViewportController {
 			// Convert relative positions back to absolute
 			const absoluteX = state.viewSettings.relativeX * centerX;
 			const absoluteY = state.viewSettings.relativeY * centerY;
+
+			logZoom('loadViewSettings (resize snap-back)', this.stage.scaleX(), state.viewSettings.zoom);
 
 			this.stage.scale({
 				x: state.viewSettings.zoom,
