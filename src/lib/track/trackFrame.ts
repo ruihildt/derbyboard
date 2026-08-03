@@ -224,6 +224,30 @@ export function tangentAt(s: number): MeterPoint {
 	}
 }
 
+/**
+ * Unit tangent of the skating direction at a planar (metre) point — a direct
+ * equivalent of `tangentAt(toTrack(p).s)` that classifies the segment once and
+ * skips the measurement-point/normal/lane-bounds round trip (atan2 + several
+ * sin/cos/sqrt) entirely. On the turns the tangent is the radius rotated 90°
+ * (a normalize, no trig); on the straights it is a constant. Used by the
+ * heading-resolution hot path (per dragmove / per playback frame).
+ *
+ * Same classification caveats as {@link toTrack}: points deep in the infield
+ * may be attributed to a different segment than geometrically nearest — far
+ * beyond any realistic skater placement.
+ */
+export function tangentAtPoint(p: MeterPoint): MeterPoint {
+	if (p.x > C1.x || p.x < C2.x) {
+		const c = p.x > C1.x ? C1 : C2;
+		const dx = p.x - c.x;
+		const dy = p.y - c.y;
+		const r = Math.hypot(dx, dy);
+		if (r < 1e-9) return { x: 0, y: -1 }; // degenerate: same as θ = 0
+		return { x: dy / r, y: -dx / r };
+	}
+	return p.y <= 0 ? { x: -1, y: 0 } : { x: 1, y: 0 };
+}
+
 export function laneToOffset(s: number, u: number): number {
 	const bounds = laneBounds(s);
 	return bounds.inner + u * (bounds.outer - bounds.inner);

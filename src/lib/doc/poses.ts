@@ -1,5 +1,5 @@
 import { boardDoc } from './store';
-import type { Entity, HeadingMode, WorldPoint } from './types';
+import type { BoardDoc, Entity, HeadingMode, WorldPoint } from './types';
 
 export interface Pose {
 	x: number;
@@ -90,6 +90,26 @@ export class PoseStore {
 	get version(): number {
 		return this.versionCounter;
 	}
+
+	/**
+	 * Committed-entity lookup cache, keyed on the doc's reference identity
+	 * (doc updates are immutable, so a new edit always means a new object).
+	 * `effective()` runs per entity per frame during playback/drags; the
+	 * previous linear `entities.find` made that O(n) per lookup — O(n²) per
+	 * frame across a roster.
+	 */
+	private committedCache: { doc: BoardDoc; byId: Map<string, Entity> } | null = null;
+
+	private committedEntity(id: string): Entity | undefined {
+		const doc = boardDoc.current;
+		if (this.committedCache?.doc !== doc) {
+			this.committedCache = {
+				doc,
+				byId: new Map(doc.entities.map((e) => [e.id, e]))
+			};
+		}
+		return this.committedCache.byId.get(id);
+	}
 	/**
 	 * Optional override for how a committed gesture is written to the
 	 * document. When set (e.g. by the authoring layer while editing an
@@ -125,7 +145,7 @@ export class PoseStore {
 		if (l) return l;
 		const o = this.overrides.get(id);
 		if (o) return o;
-		const entity = boardDoc.current.entities.find((e) => e.id === id);
+		const entity = this.committedEntity(id);
 		return entity ? poseOf(entity) : undefined;
 	}
 

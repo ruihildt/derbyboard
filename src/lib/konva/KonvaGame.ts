@@ -364,7 +364,10 @@ export class KonvaGame {
 		});
 
 		this.playersLayer.on('dragmove touchmove', (e) => {
-			this.playerManager.handleDragMove(e);
+			// handleDragMove resolves the dragged entity's heading once for this
+			// event; the rotation handle reuses it below instead of resolving
+			// the same heading (entity find + track tangent) a second time.
+			const heading = this.playerManager.handleDragMove(e);
 			if (!this.replayMode) {
 				// rAF-coalesced: dragmove/touchmove can fire faster than one frame
 				// (coalesced pointer events on touch), but only the latest state
@@ -378,7 +381,7 @@ export class KonvaGame {
 					const player = target.getAttr('player') as { id?: string } | undefined;
 					if (player?.id) {
 						if (player.id === get(selectedEntityId)) {
-							this.updateRotationHandle();
+							this.updateRotationHandle(heading);
 						}
 						// Path lines are anchored to the skater (current step's start,
 						// previous step's endpoint) — keep them glued during the drag.
@@ -500,7 +503,10 @@ export class KonvaGame {
 
 		this.stage.on('pointermove', () => {
 			if (this.annotationGesture) {
-				this.updateAnnotationGesture();
+				// rAF-coalesced: pointermove fires faster than the display
+				// refresh (especially coalesced touch events), but only the
+				// latest pointer position before paint matters.
+				this.scheduleAnnotationGestureUpdate();
 				return;
 			}
 			const tool = get(toolMode);
@@ -828,6 +834,16 @@ export class KonvaGame {
 	}
 
 	destroy() {
+		// Cancel in-flight rAF loops so nothing mutates destroyed layers (or
+		// the global pose store) after teardown.
+		if (this.tweenRafId !== null) {
+			cancelAnimationFrame(this.tweenRafId);
+			this.tweenRafId = null;
+		}
+		if (this.annotationGestureRafId !== null) {
+			cancelAnimationFrame(this.annotationGestureRafId);
+			this.annotationGestureRafId = null;
+		}
 		if (this.resizeTimer) clearTimeout(this.resizeTimer);
 		window.removeEventListener('resize', this.handleResize);
 		window.visualViewport?.removeEventListener('resize', this.onVisualViewportResize);
@@ -842,8 +858,11 @@ export class KonvaGame {
 		this.trackSurfaceLayer.destroy();
 		this.trackLinesLayer.destroy();
 		this.engagementZoneLayer.destroy();
+		this.pathLayer.destroy();
 		this.trailLayer.destroy();
+		this.ghostLayer.destroy();
 		this.playersLayer.destroy();
+		this.annotationLayer.destroy();
 		this.controlLayer.destroy();
 		this.stage.destroy();
 	}
@@ -1692,7 +1711,9 @@ export class KonvaGame {
 			this.pushTrails(poses);
 			this.trailLayer.batchDraw();
 		}
-		this.updateRotationHandle();
+		// The sampler already resolved every heading for this frame — reuse the
+		// selected entity's instead of resolving it again in the handle update.
+		this.updateRotationHandle(poses.find((p) => p.id === get(selectedEntityId))?.heading ?? null);
 		this.engagementZoneLayer.batchDraw();
 		this.playersLayer.batchDraw();
 	}
@@ -2109,8 +2130,12 @@ export class KonvaGame {
 	 * knob and dashed guide line are shown only while the direction control is
 	 * active (double-click). Called on selection/activation changes and
 	 * playback ticks.
+	 *
+	 * `headingHint` (relative/fixed/auto modes only) is an already-resolved
+	 * heading for the selected entity, letting per-event callers share one
+	 * heading resolution instead of re-deriving it here.
 	 */
-	updateRotationHandle(): void {
+	updateRotationHandle(headingHint: number | null = null): void {
 		const selectedId = get(selectedEntityId);
 		const active = get(directionControlActive);
 		if (!selectedId || this.replayMode || !active) {
@@ -2144,7 +2169,7 @@ export class KonvaGame {
 		} else {
 			// Relative/fixed/auto: knob orbits the skater along the resolved
 			// facing (tangent+delta, or the frozen absolute angle).
-			heading = this.playerManager.resolvedHeadingFor(selectedId) ?? pose.heading;
+			heading = headingHint ?? this.playerManager.resolvedHeadingFor(selectedId) ?? pose.heading;
 			const handleOffset = PLAYER_RADIUS * 4;
 			hx = cx + handleOffset * Math.cos(heading);
 			hy = cy + handleOffset * Math.sin(heading);
@@ -2978,6 +3003,17 @@ export class KonvaGame {
 		e.cancelBubble = true;
 	}
 
+	/** Pending rAF for the coalesced annotation-gesture redraw. */
+	private annotationGestureRafId: number | null = null;
+
+	private scheduleAnnotationGestureUpdate(): void {
+		if (this.annotationGestureRafId !== null) return;
+		this.annotationGestureRafId = requestAnimationFrame(() => {
+			this.annotationGestureRafId = null;
+			this.updateAnnotationGesture();
+		});
+	}
+
 	/** Applies the live transform during a drag and redraws the mark + box. */
 	private updateAnnotationGesture(): void {
 		const g = this.annotationGesture;
@@ -2985,12 +3021,32 @@ export class KonvaGame {
 		const pos = this.stage.getPointerPosition();
 		if (!pos) return;
 		const t = this.gestureTransform(g, this.pointerToPlane(pos));
+
+		if (g.type === 'move') {
+			// Cheap path: a move is a uniform translation, so just offset the
+			// existing nodes (they're built at origin) instead of destroying
+			// and rebuilding every shape — and the selection box with its five
+			// handles — on every frame of the drag.
+			const dx = (t.cx - g.start.cx) * TRACK_SCALE;
+			const dy = (t.cy - g.start.cy) * TRACK_SCALE;
+			this.annotationGroupFor(g.annId)?.position({ x: dx, y: dy });
+			this.controlLayer.findOne('.annotationSelection')?.position({ x: dx, y: dy });
+			this.annotationLayer.batchDraw();
+			this.controlLayer.batchDraw();
+			return;
+		}
+
+		// Resize/rotate change the geometry: rebuild the mark and box.
 		this.redrawAnnotationOnly(g.annId, g.ann, t);
 		this.renderAnnotationSelection({ ...g.ann, transform: t });
 	}
 
 	/** Commits the gesture's final transform (one undo entry) and re-renders. */
 	private commitAnnotationGesture(): void {
+		if (this.annotationGestureRafId !== null) {
+			cancelAnimationFrame(this.annotationGestureRafId);
+			this.annotationGestureRafId = null;
+		}
 		const g = this.annotationGesture;
 		this.annotationGesture = null;
 		this.lastGestureEnd = Date.now();
@@ -3327,94 +3383,28 @@ export class KonvaGame {
 	}
 
 	/**
-	 * Returns HUD data (screen position + label) for the currently selected
-	 * entity, or null when nothing is selected. The screen position accounts
-	 * for the current stage pan/zoom so a DOM overlay can track the entity.
-	 * Called every frame by the HUD overlay component via rAF.
+	 * Projects a planar world-metre point to viewport (screen) pixels through
+	 * the current stage pan/zoom. Used by the DOM HUD overlays, which track
+	 * positions per frame but compute everything else reactively.
 	 */
-	getEntityHudData(): {
-		screenX: number;
-		screenY: number;
-		label: string;
-	} | null {
-		const selectedId = get(selectedEntityId);
-		if (!selectedId) return null;
-		const entity = boardDoc.current.entities.find((e) => e.id === selectedId);
-		const pose = poseStore.effective(selectedId);
-		if (!entity || !pose) return null;
-
+	planeToScreen(p: PlanarPoint): { x: number; y: number } {
 		const center = this.getStageCenter();
 		const scale = this.stage.scaleX();
-		const localX = center.x + pose.x * TRACK_SCALE;
-		const localY = center.y + pose.y * TRACK_SCALE;
-
 		return {
-			screenX: this.stage.x() + localX * scale,
-			screenY: this.stage.y() + localY * scale,
-			label: hudLabel(entity)
+			x: this.stage.x() + (center.x + p.x * TRACK_SCALE) * scale,
+			y: this.stage.y() + (center.y + p.y * TRACK_SCALE) * scale
 		};
 	}
 
 	/**
-	 * Returns HUD data (screen position + scope info) for the currently selected
-	 * annotation, or null when nothing is selected or the mark is filtered out on
-	 * the current step. The screen position tracks the annotation's bounding-box
-	 * centroid so a DOM overlay can follow the mark under pan/zoom. Called every
-	 * frame by the AnnotationHud overlay via rAF.
+	 * Screen position of one entity's effective pose, or null when unknown.
+	 * Lightweight per-frame accessor for the entity HUD (the label is derived
+	 * reactively in the component, not here).
 	 */
-	getAnnotationHudData(annId: string | null): {
-		screenX: number;
-		screenY: number;
-		isStepScoped: boolean;
-		stepLabel: string;
-	} | null {
-		if (!annId) return null;
-		const ann = boardDoc.current.annotations?.find((a) => a.id === annId);
-		if (!ann) return null;
-
-		const step = this.getActiveStep();
-		// Hide the HUD when the selected mark isn't visible on this step
-		// (step-scoped mark, but a different/absent step is active).
-		if (ann.scope && (!step || ann.scope.stepId !== step.id)) return null;
-
-		// Bounding-box centroid in planar metres (after the transform).
-		const pts = effectiveAnchors(ann);
-		let minX = Infinity;
-		let minY = Infinity;
-		let maxX = -Infinity;
-		let maxY = -Infinity;
-		for (const p of pts) {
-			if (p.x < minX) minX = p.x;
-			if (p.y < minY) minY = p.y;
-			if (p.x > maxX) maxX = p.x;
-			if (p.y > maxY) maxY = p.y;
-		}
-		const cx = (minX + maxX) / 2;
-		const cy = (minY + maxY) / 2;
-
-		const center = this.getStageCenter();
-		const scale = this.stage.scaleX();
-		const localX = center.x + cx * TRACK_SCALE;
-		const localY = center.y + cy * TRACK_SCALE;
-
-		return {
-			screenX: this.stage.x() + localX * scale,
-			screenY: this.stage.y() + localY * scale,
-			isStepScoped: !!ann.scope,
-			stepLabel: this.stepLabelFor(step)
-		};
-	}
-
-	/** Human-readable label for the active step (its title or "Step {idx+1}"). */
-	private stepLabelFor(step: Step | undefined): string {
-		if (!step) return 'this step';
-		const title = step.title?.trim();
-		if (title) return title;
-		const clipId = boardDoc.current.activeClipId;
-		const clip = clipId ? boardDoc.current.clips.find((c) => c.id === clipId) : undefined;
-		const idx =
-			clip && clip.kind === 'authored' ? clip.steps.findIndex((s) => s.id === step.id) : -1;
-		return idx >= 0 ? `Step ${idx + 1}` : 'this step';
+	getEntityScreenPos(id: string): { x: number; y: number } | null {
+		const pose = poseStore.effective(id);
+		if (!pose) return null;
+		return this.planeToScreen(pose);
 	}
 }
 
@@ -3430,7 +3420,7 @@ const ROLE_LABELS: Record<string, string> = {
 	alternate: 'Alternate'
 };
 
-function hudLabel(entity: Entity): string {
+export function hudLabel(entity: Entity): string {
 	if (entity.kind === 'skater' && entity.team) {
 		return `${entity.team} ${ROLE_LABELS[entity.role] ?? entity.role}`;
 	}

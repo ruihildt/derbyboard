@@ -46,6 +46,31 @@ function lerpRoster<T extends Positioned>(a: T[], b: T[], f: number): T[] {
 	return result;
 }
 
+function rosterEqual(a: Positioned[], b: Positioned[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i].id !== b[i].id) return false;
+		if (a[i].relative.x !== b[i].relative.x || a[i].relative.y !== b[i].relative.y) return false;
+	}
+	return true;
+}
+
+/**
+ * True when two samples are positionally identical (rosters + view). The
+ * recorder's hold anchors create long plateaus of such pairs; detecting them
+ * lets replay skip the per-frame roster rebuild (Maps/Sets/spreads per
+ * entity) for a result identical to the previous frame anyway.
+ */
+function samplesEqual(a: TimelineSample, b: TimelineSample): boolean {
+	if (a.view.zoom !== b.view.zoom) return false;
+	if (a.view.relativeX !== b.view.relativeX) return false;
+	if (a.view.relativeY !== b.view.relativeY) return false;
+	if (a.pathFrame !== b.pathFrame) return false;
+	return (
+		rosterEqual(a.teamPlayers, b.teamPlayers) && rosterEqual(a.skatingOfficials, b.skatingOfficials)
+	);
+}
+
 /**
  * Binary-searches the surrounding samples in a project and interpolates the
  * board state at time `t` (ms). Clamps to the first/last sample at the ends.
@@ -74,6 +99,10 @@ export function interpolateSample(project: TimelineProject, t: number): Timeline
 	}
 	const a = samples[lo];
 	const b = samples[lo + 1] ?? a;
+
+	// Hold-plateau fast path: identical endpoints interpolate to themselves.
+	if (a === b || samplesEqual(a, b)) return { ...a, t };
+
 	const span = b.t - a.t;
 	const f = span > 0 ? (t - a.t) / span : 0;
 

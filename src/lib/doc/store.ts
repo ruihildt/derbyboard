@@ -1,4 +1,4 @@
-import { writable, get } from 'svelte/store';
+import { writable } from 'svelte/store';
 import type { BoardDoc } from './types';
 import { createEmptyDoc } from './types';
 import { History } from './history';
@@ -33,11 +33,15 @@ export class BoardDocStore {
 	private store = writable<BoardDoc>(createEmptyDoc());
 	private history = new History();
 	private saveTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Cached current doc — `current` is read in per-frame paths, where a
+	 * subscribe/unsubscribe pair per access is needless churn. Kept in sync
+	 * by the constructor's store subscription. */
+	private currentDoc: BoardDoc = createEmptyDoc();
 
 	subscribe = this.store.subscribe;
 
 	get current(): BoardDoc {
-		return get(this.store);
+		return this.currentDoc;
 	}
 
 	constructor() {
@@ -49,7 +53,10 @@ export class BoardDocStore {
 		}
 		// Debounced persistence: coalesce bursts of edits (e.g. a fast undo
 		// run or repeated applyEdit) into a single localStorage write.
-		this.store.subscribe((doc) => this.scheduleSave(doc));
+		this.store.subscribe((doc) => {
+			this.currentDoc = doc;
+			this.scheduleSave(doc);
+		});
 	}
 
 	private scheduleSave(doc: BoardDoc): void {

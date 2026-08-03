@@ -22,6 +22,8 @@ export class KonvaPlayerManager {
 
 	private teamPlayers: KonvaTeamPlayer[] = [];
 	private skatingOfficials: KonvaSkatingOfficial[] = [];
+	/** Cached blocker/pivot subset (invalidated on every roster mutation). */
+	private blockersCache: KonvaTeamPlayer[] | null = null;
 	private docUnsubscribe: (() => void) | null = null;
 	/** Whether the facing marker (brace) is drawn. Driven by board settings. */
 	private headingVisible = true;
@@ -70,6 +72,7 @@ export class KonvaPlayerManager {
 	 * used both for full loads and for incremental document updates.
 	 */
 	private reconcileToEntities(entities: Entity[]): void {
+		this.blockersCache = null;
 		const entityIds = new Set(entities.map((e) => e.id));
 		const autoFace = get(boardSettings).autoFace ?? true;
 
@@ -198,6 +201,7 @@ export class KonvaPlayerManager {
 		this.skatingOfficials.forEach((p) => p.destroy());
 		this.teamPlayers = [];
 		this.skatingOfficials = [];
+		this.blockersCache = null;
 		this.layer.batchDraw();
 	}
 
@@ -252,24 +256,27 @@ export class KonvaPlayerManager {
 	 * mirrors the dragged node and any nudged neighbours into the pose
 	 * store's live tier and refreshes in-bounds status.
 	 */
-	handleDragMove(e: Konva.KonvaEventObject<unknown>): void {
+	handleDragMove(e: Konva.KonvaEventObject<unknown>): number | null {
 		const target = e.target as Konva.Node;
-		if (target.hasName('playerGroup')) {
-			this.collisionSystem.resolveCollisions();
+		if (!target.hasName('playerGroup')) return null;
+		this.collisionSystem.resolveCollisions(this.teamPlayers, this.skatingOfficials);
 
-			const player = target.getAttr('player');
-			const identifiable = this.asIdentifiable(player);
-			if (identifiable) {
-				this.captureLivePose(identifiable);
-				// Keep the facing marker aimed along the (new) track tangent while
-				// the skater is dragged, so it always points at the direction
-				// control which orbits along the heading.
-				this.refreshHeadingFor(identifiable.id);
-			}
-			if (player instanceof KonvaTeamPlayer) {
-				player.updateInBounds();
-			}
+		const player = target.getAttr('player');
+		const identifiable = this.asIdentifiable(player);
+		let heading: number | null = null;
+		if (identifiable) {
+			this.captureLivePose(identifiable);
+			// Keep the facing marker aimed along the (new) track tangent while
+			// the skater is dragged, so it always points at the direction
+			// control which orbits along the heading.
+			heading = this.refreshHeadingFor(identifiable.id);
 		}
+		if (player instanceof KonvaTeamPlayer) {
+			player.updateInBounds();
+		}
+		// The resolved heading is returned so the caller (the rotation handle)
+		// doesn't resolve the SAME heading a second time for this event.
+		return heading;
 	}
 
 	/**
@@ -300,6 +307,7 @@ export class KonvaPlayerManager {
 	addTeamPlayer(x: number, y: number, team: TeamPlayerTeam, role: TeamPlayerRole, id?: string) {
 		const player = new KonvaTeamPlayer(x, y, this.layer, team, role, id);
 		this.teamPlayers.push(player);
+		this.blockersCache = null;
 		return player;
 	}
 
@@ -310,9 +318,15 @@ export class KonvaPlayerManager {
 	}
 
 	getBlockers() {
-		return this.teamPlayers.filter(
-			(player) => player.role === TeamPlayerRole.blocker || player.role === TeamPlayerRole.pivot
-		);
+		// Cached: determinePack calls this every animation frame during
+		// playback, and the filter allocation is pure waste while the roster
+		// is unchanged.
+		if (!this.blockersCache) {
+			this.blockersCache = this.teamPlayers.filter(
+				(player) => player.role === TeamPlayerRole.blocker || player.role === TeamPlayerRole.pivot
+			);
+		}
+		return this.blockersCache;
 	}
 
 	getTeamPlayers() {
@@ -389,9 +403,10 @@ export class KonvaPlayerManager {
 	 * tracks the track tangent live (and thereby points at the direction
 	 * control, which orbits along the heading).
 	 */
-	refreshHeadingFor(id: string): void {
+	refreshHeadingFor(id: string): number | null {
 		const heading = this.resolvedHeadingFor(id);
 		if (heading !== null) this.setHeadingFor(id, heading);
+		return heading;
 	}
 
 	/**
@@ -429,18 +444,27 @@ export class KonvaPlayerManager {
 	 * are skipped rather than created.
 	 */
 	applyEffectivePoses(draw = true): void {
+		// Hoist the stage read: projectPose→center() does getStage() + two
+		// dimension reads — per entity per frame without this.
+		const center = this.center();
 		for (const p of this.teamPlayers) {
 			const pose = poseStore.effective(p.id);
 			if (pose) {
-				p.setPosition(this.projectPose(pose));
+				p.setPosition({
+					x: center.x + pose.x * TRACK_SCALE,
+					y: center.y + pose.y * TRACK_SCALE
+				});
 				p.setHeading(pose.heading);
 			}
-			p.updateInBounds();
+			p.updateInBounds(center);
 		}
 		for (const p of this.skatingOfficials) {
 			const pose = poseStore.effective(p.id);
 			if (pose) {
-				p.setPosition(this.projectPose(pose));
+				p.setPosition({
+					x: center.x + pose.x * TRACK_SCALE,
+					y: center.y + pose.y * TRACK_SCALE
+				});
 				p.setHeading(pose.heading);
 			}
 		}
@@ -470,6 +494,7 @@ export class KonvaPlayerManager {
 	 * remove players no longer present, add new ones, and update/replace the rest.
 	 */
 	reconcileTeamPlayers(positions: TeamPlayerPosition[], centerX: number, centerY: number): void {
+		this.blockersCache = null;
 		const desiredIds = new Set(positions.map((p) => p.id).filter((id): id is string => !!id));
 
 		this.teamPlayers = this.teamPlayers.filter((player) => {

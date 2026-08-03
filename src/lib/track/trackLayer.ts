@@ -2,7 +2,7 @@ import type { PlanarPoint } from '$lib/doc/types';
 import {
 	fromTrack as frameFromTrack,
 	toTrack as frameToTrack,
-	tangentAt as frameTangentAt,
+	tangentAtPoint as frameTangentAtPoint,
 	laneBounds as frameLaneBounds,
 	isInBoundsTrack
 } from './trackFrame';
@@ -51,10 +51,7 @@ export const trackLayer: TrackContext = {
 		return { S: s, u };
 	},
 	fromTrack: (S, u) => frameFromTrack(S, u),
-	tangentAt: (p) => {
-		const { s } = frameToTrack(p);
-		return frameTangentAt(s);
-	},
+	tangentAt: (p) => frameTangentAtPoint(p),
 	laneBounds: (p) => {
 		const { s } = frameToTrack(p);
 		return frameLaneBounds(s);

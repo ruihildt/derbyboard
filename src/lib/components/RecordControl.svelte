@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { ToolbarButton } from 'flowbite-svelte';
 	import { MicrophoneOutline, MicrophoneSlashOutline, StopSolid } from 'flowbite-svelte-icons';
 	import { get } from 'svelte/store';
@@ -37,6 +38,14 @@
 	// parent (CaptureBar) can disable tab switching during the countdown too.
 	$effect(() => {
 		locked = isRecording || countdown !== null || disabled;
+	});
+
+	// Guard: unmounting mid-recording/countdown must not leave the recorder's
+	// rAF sampling loop (or the timers) running against a torn-down board.
+	onDestroy(() => {
+		if (countdownTimer) clearInterval(countdownTimer);
+		if (timeInterval) clearInterval(timeInterval);
+		if (recorder && isRecording) recorder.stop();
 	});
 
 	async function startRecording() {

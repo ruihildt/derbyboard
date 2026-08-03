@@ -37,6 +37,8 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 	isInPack: boolean;
 	isRearmost: boolean;
 	isForemost: boolean;
+	/** Last status stroke actually written to the nodes (see applyStatusStroke). */
+	private lastStroke: string | null = null;
 
 	/**
 	 * Returns the base circle shape representing the player
@@ -154,6 +156,10 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 		} else {
 			stroke = colors.playerDefault;
 		}
+		// Compare-then-write: this runs per entity per frame during playback,
+		// and an unchanged Konva attribute write still marks the node dirty.
+		if (stroke === this.lastStroke) return;
+		this.lastStroke = stroke;
 		this.circle.stroke(stroke);
 		this.setHeadingColor(stroke);
 	}
@@ -164,11 +170,14 @@ export class KonvaTeamPlayer extends KonvaPlayer {
 	 * circle), converting the Konva pixel position to package meters.
 	 * Preserves the current pack / engagement-zone colouring.
 	 */
-	public updateInBounds(): void {
-		const stage = this.group.getStage();
-		if (!stage) return;
+	public updateInBounds(centerPx?: { x: number; y: number }): void {
+		let center = centerPx;
+		if (!center) {
+			const stage = this.group.getStage();
+			if (!stage) return;
+			center = { x: stage.width() / 2, y: stage.height() / 2 };
+		}
 
-		const center = { x: stage.width() / 2, y: stage.height() / 2 };
 		this.isInBounds = isInBounds(pxToMeter(this.getPosition(), center));
 		this.applyStatusStroke();
 	}

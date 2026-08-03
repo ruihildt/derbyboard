@@ -1,23 +1,38 @@
 <script lang="ts">
+	import { get } from 'svelte/store';
 	import { boardSettings } from '$lib/stores/boardSettings';
 	import { selectedEntityId } from '$lib/stores/selection';
-	import type { KonvaGame } from '$lib/konva/KonvaGame';
+	import { boardDoc } from '$lib/doc/store';
+	import { hudLabel, type KonvaGame } from '$lib/konva/KonvaGame';
 
 	let { game }: { game: KonvaGame } = $props();
 
 	let screenX = $state(0);
 	let screenY = $state(0);
-	let label = $state('');
 
 	let rafId = 0;
 	let active = $derived(($boardSettings.entityHudVisible ?? false) && !!$selectedEntityId);
 
+	// The label only changes with the document or selection — computed
+	// reactively here, NOT per frame in the rAF tick (which previously did a
+	// doc read + entity find + pose lookup + label build at 60fps).
+	let label = $derived.by(() => {
+		const id = $selectedEntityId;
+		if (!id) return '';
+		const entity = $boardDoc.entities.find((e) => e.id === id);
+		return entity ? hudLabel(entity) : '';
+	});
+
+	// Only the screen position genuinely needs per-frame tracking
+	// (pan/zoom/drag/playback move it without any store changing).
 	function tick() {
-		const data = game.getEntityHudData();
-		if (data) {
-			screenX = data.screenX;
-			screenY = data.screenY;
-			label = data.label;
+		const id = get(selectedEntityId);
+		if (id) {
+			const pos = game.getEntityScreenPos(id);
+			if (pos) {
+				screenX = pos.x;
+				screenY = pos.y;
+			}
 		}
 		rafId = requestAnimationFrame(tick);
 	}

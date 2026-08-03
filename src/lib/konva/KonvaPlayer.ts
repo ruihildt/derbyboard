@@ -19,6 +19,7 @@ interface PlayerCircleConfig {
 	strokeWidth: number;
 	listening: boolean;
 	name: string;
+	perfectDrawEnabled?: boolean;
 }
 
 /**
@@ -77,7 +78,8 @@ export class KonvaPlayer {
 			radius: PLAYER_RADIUS,
 			strokeWidth: PLAYER_STROKE_WIDTH,
 			listening: true,
-			name: 'baseCircle'
+			name: 'baseCircle',
+			perfectDrawEnabled: false
 		};
 
 		this.baseCircle = new Konva.Circle(circleConfig);
@@ -97,26 +99,35 @@ export class KonvaPlayer {
 		this.chevronPath = this.buildChevron();
 		this.facingGroup.add(this.chevronPath);
 
-		// Touch-viable grab area (P3 task 12): a larger, effectively-invisible
-		// circle whose only purpose is hit detection, so fingers reliably grab
-		// entities on a phone. It resolves to the same draggable group, and the
-		// near-zero alpha keeps it visually imperceptible while remaining
-		// hittable in Konva's hit graph (a fully transparent/null fill would
-		// NOT be hittable in the interior).
+		// Touch-viable grab area (P3 task 12): a larger circle whose only
+		// purpose is hit detection, so fingers reliably grab entities on a
+		// phone. It resolves to the same draggable group. `fillEnabled: false`
+		// keeps it off the SCENE canvas entirely (no wasted invisible fill
+		// pass per player per frame); the explicit `hitFunc` draws it on the
+		// HIT canvas so it stays fully hittable.
+		const hitRadius = PLAYER_RADIUS * HIT_SCALE;
 		this.group.add(
 			new Konva.Circle({
 				x: 0,
 				y: 0,
-				radius: PLAYER_RADIUS * HIT_SCALE,
-				fill: 'rgba(0,0,0,0.005)',
+				radius: hitRadius,
+				fillEnabled: false,
 				listening: true,
 				name: 'hitArea',
-				perfectDrawEnabled: false
+				perfectDrawEnabled: false,
+				hitFunc: (ctx, shape) => {
+					ctx.beginPath();
+					ctx.arc(0, 0, hitRadius, 0, Math.PI * 2);
+					ctx.closePath();
+					ctx.fillStrokeShape(shape);
+				}
 			})
 		);
 
 		layer.add(this.group);
-		layer.batchDraw();
+		// No batchDraw here: every creator (reconcile/clear/initialLoad) draws
+		// the layer at the end of its own pass; drawing per node meant ~20
+		// redundant draw schedules on a full-roster reconcile.
 	}
 
 	/**
@@ -198,6 +209,9 @@ export class KonvaPlayer {
 	 */
 	setHeading(rad: number): void {
 		const degrees = (rad * 180) / Math.PI;
+		// Compare-then-write: setHeading runs per entity per frame during
+		// playback; an unchanged rotation write still dirties the node.
+		if (Math.abs(degrees - this.facingGroup.rotation()) < 1e-6) return;
 		this.facingGroup.rotation(degrees);
 	}
 

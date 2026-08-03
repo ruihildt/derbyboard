@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { ToolbarButton } from 'flowbite-svelte';
 	import {
 		PlayOutline,
@@ -38,6 +39,13 @@
 	let playing = $state(false);
 	let currentTime = $state(0);
 	let duration = $state(0);
+
+	// Guard: if this component were ever unmounted mid-playback, the player's
+	// rAF loop would keep driving the (possibly torn-down) stage forever.
+	onDestroy(() => {
+		player?.destroy();
+		player = null;
+	});
 
 	// Interactive progression bar state.
 	let trackEl = $state<HTMLDivElement | undefined>();
