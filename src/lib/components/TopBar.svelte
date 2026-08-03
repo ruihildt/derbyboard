@@ -37,14 +37,13 @@
 	});
 
 	const tools: { id: DrawTool; label: string; icon: string }[] = [
-		{ id: 'select', label: 'Select', icon: '' },
 		{ id: 'hand', label: 'Pan (hand)', icon: '' },
+		{ id: 'select', label: 'Select', icon: '' },
 		{ id: 'drawPath', label: 'Draw movement path', icon: '' },
 		{ id: 'pen', label: 'Freehand pen', icon: '✏' },
 		{ id: 'arrow', label: 'Arrow', icon: '→' },
 		{ id: 'zone', label: 'Zone', icon: '◯' },
 		{ id: 'label', label: 'Label', icon: 'A' },
-		{ id: 'gap', label: 'Gap', icon: '⫶' },
 		{ id: 'erase', label: 'Erase', icon: '' }
 	];
 
@@ -74,10 +73,10 @@
 	     is shared across Free Play and Drill; the drawing tools appear only in
 	     Drill (behind a divider). The switcher badge indicates the mode. -->
 	<div
-		class="pointer-events-auto absolute left-1/2 top-[max(0.5rem,env(safe-area-inset-top))] -translate-x-1/2"
+		class="pointer-events-auto flex absolute left-1/2 top-[max(0.5rem,env(safe-area-inset-top))] -translate-x-1/2 items-center gap-0.5"
 	>
 		<div
-			class="flex flex-wrap items-center justify-center gap-1 rounded-2xl bg-white p-1 shadow-lg shadow-black/10"
+			class="flex flex-wrap items-center justify-center rounded-2xl bg-white p-1 shadow-lg shadow-black/10"
 		>
 			<ExperienceSwitcher />
 
@@ -160,16 +159,16 @@
 	     sidebar is docked (open + pinned) — its own pin/close controls suffice. -->
 	{#if !docked}
 		<div
-			class="pointer-events-auto absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.5rem,env(safe-area-inset-top))]"
+			class="pointer-events-auto absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.5rem,env(safe-area-inset-top))] flex items-center gap-1"
 		>
 			<button
 				type="button"
-				class="library-trigger flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-white p-2 shadow-lg shadow-black/5 hover:bg-primary-200"
 				onclick={onOpenLibrary}
+				class="flex min-h-11 min-w-11 items-center justify-center rounded-lg bg-white p-2 text-gray-700 shadow-lg shadow-black/5 hover:bg-primary-200"
 				aria-label="Library"
 				title="Library"
 			>
-				<BookOpenOutline class="h-6 w-6 text-gray-700" />
+				<BookOpenOutline class="h-6 w-6" />
 			</button>
 		</div>
 	{/if}
