@@ -428,7 +428,7 @@ export class KonvaPlayerManager {
 	 * Roster is assumed stable (a clip is one lineup evolving); missing nodes
 	 * are skipped rather than created.
 	 */
-	applyEffectivePoses(): void {
+	applyEffectivePoses(draw = true): void {
 		for (const p of this.teamPlayers) {
 			const pose = poseStore.effective(p.id);
 			if (pose) {
@@ -444,7 +444,9 @@ export class KonvaPlayerManager {
 				p.setHeading(pose.heading);
 			}
 		}
-		this.layer.batchDraw();
+		// Composite frame paths (applyAuthoredPoses/applySampleOverrides) pass
+		// draw=false and draw the layer once at the end of the frame.
+		if (draw) this.layer.batchDraw();
 	}
 
 	/**

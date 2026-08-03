@@ -45,6 +45,18 @@ export class AuthoredPlayer {
 	private currentTime = 0;
 	private rafId: number | null = null;
 
+	/**
+	 * Cached sampling inputs. The clip never changes for the player's
+	 * lifetime, so the arc-length tables and heading-resolved pose arrays are
+	 * built ONCE and only rebuilt when `boardSettings.autoFace` flips — not
+	 * per frame (rebuilding them at 60fps allocated tens of thousands of
+	 * short-lived objects per second).
+	 */
+	private cachedAutoFace: boolean | null = null;
+	private cachedStepMaps: Map<string, ArcLengthPath>[] | null = null;
+	private cachedPoseArrays: Array<{ id: string; x: number; y: number; heading: number }[]> | null =
+		null;
+
 	private clockStart = 0; // performance.now() at clock (re)start
 	private clockOffset = 0; // timeline time corresponding to clockStart
 
@@ -170,12 +182,20 @@ export class AuthoredPlayer {
 		const clamped = Math.max(0, Math.min(t, this.getDuration()));
 		this.currentTime = clamped;
 		const autoFace = get(boardSettings).autoFace ?? true;
-		const stepMaps = this.stepPathMaps();
+		if (
+			autoFace !== this.cachedAutoFace ||
+			this.cachedStepMaps === null ||
+			this.cachedPoseArrays === null
+		) {
+			this.cachedAutoFace = autoFace;
+			this.cachedStepMaps = this.stepPathMaps();
+			this.cachedPoseArrays = this.stepPoseArrays(autoFace);
+		}
 		const poses = sampleAuthoredAt(
 			this.timeline,
-			this.stepPoseArrays(),
+			this.cachedPoseArrays,
 			clamped,
-			stepMaps,
+			this.cachedStepMaps,
 			autoFace
 		);
 		this.game.applyAuthoredPoses(poses);
@@ -186,8 +206,9 @@ export class AuthoredPlayer {
 		return this.clip.steps.map((s, i) => resolveStepPaths(s, this.clip.steps[i + 1]));
 	}
 
-	private stepPoseArrays(): Array<{ id: string; x: number; y: number; heading: number }[]> {
-		const autoFace = get(boardSettings).autoFace ?? true;
+	private stepPoseArrays(
+		autoFace: boolean
+	): Array<{ id: string; x: number; y: number; heading: number }[]> {
 		// Pre-resolve headings based on autoFace setting.
 		const resolvedSteps = resolveHeadings(
 			this.clip.steps.map((s) => s.entities),

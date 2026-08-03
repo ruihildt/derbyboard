@@ -72,7 +72,7 @@ export class KonvaPackManager {
 	 * the committed pose otherwise — this is the one accessor every consumer
 	 * uses, so there is no separate "dragging" branch here.
 	 */
-	determinePack() {
+	determinePack(draw = true) {
 		const blockers = this.playerManager.getBlockers();
 
 		// Reset pack-related FLAGS only — deliberately without writing the
@@ -117,14 +117,18 @@ export class KonvaPackManager {
 				if (rear) rear.isRearmost = true;
 				if (fore) fore.isForemost = true;
 			}
-			this.updateEngagementZone(packDerived, method);
+			this.updateEngagementZone(packDerived, method, draw);
 		} else {
 			// No pack (split / none).
 			this.engagementZonePath.hide();
 		}
 
-		this.engagementZoneLayer.batchDraw();
-		this.playersLayer.batchDraw();
+		// Composite frame paths (applyAuthoredPoses/applySampleOverrides) pass
+		// draw=false and draw each layer once at the end of the frame.
+		if (draw) {
+			this.engagementZoneLayer.batchDraw();
+			this.playersLayer.batchDraw();
+		}
 	}
 
 	private center(): MeterPoint {
@@ -132,7 +136,7 @@ export class KonvaPackManager {
 		return { x: (stage?.width() ?? 0) / 2, y: (stage?.height() ?? 0) / 2 };
 	}
 
-	private updateEngagementZone(packDerived: DerivedSkater[], method: PackMethod) {
+	private updateEngagementZone(packDerived: DerivedSkater[], method: PackMethod, draw = true) {
 		if (!this.zoneVisible) {
 			this.engagementZonePath.hide();
 			return;
@@ -144,6 +148,6 @@ export class KonvaPackManager {
 		}
 		this.engagementZonePath.data(pathData);
 		this.engagementZonePath.show();
-		this.engagementZoneLayer.batchDraw();
+		if (draw) this.engagementZoneLayer.batchDraw();
 	}
 }

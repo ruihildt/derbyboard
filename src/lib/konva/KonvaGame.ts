@@ -204,6 +204,13 @@ export class KonvaGame {
 	private currentPathFrame: PathFrame | undefined;
 
 	/**
+	 * Reusable replay path lines, keyed by `prev:|next:|cur:` + path id.
+	 * Owned by {@link renderPathFrame}; any code that wipes `pathLayer`
+	 * directly (renderPaths) must clear this map too.
+	 */
+	private pathFrameLines = new Map<string, Konva.Line>();
+
+	/**
 	 * Resets the captured-clip heading state (called on replay start/seek-large-jump).
 	 */
 	private resetCapturedHeadingState(): void {
@@ -1449,6 +1456,16 @@ export class KonvaGame {
 	 * recording captures the true position of every entity throughout the
 	 * whole gesture, not just the dragged one's final pose.
 	 */
+	/**
+	 * Current path-frame reference (identity, not a copy). `currentPathFrame`
+	 * is only ever reassigned — never mutated — so a reference comparison
+	 * detects any path-overlay change (renderPaths/renderPathFrame) without
+	 * building a snapshot. Used by the timeline recorder's idle dirty-check.
+	 */
+	getPathFrameRef(): PathFrame | undefined {
+		return this.currentPathFrame;
+	}
+
 	getSnapshot(): Snapshot {
 		const centerX = this.width / 2;
 		const centerY = this.height / 2;
@@ -1667,12 +1684,16 @@ export class KonvaGame {
 		for (const pose of poses) {
 			poseStore.setLive(pose.id, { x: pose.x, y: pose.y, heading: pose.heading });
 		}
-		this.playerManager.applyEffectivePoses();
-		this.packManager.determinePack();
-		if (this.trailsEnabled) this.pushTrails(poses);
+		// draw=false on the composite steps: each layer is drawn exactly once,
+		// at the end of the frame, instead of 2–3 times per frame.
+		this.playerManager.applyEffectivePoses(false);
+		this.packManager.determinePack(false);
+		if (this.trailsEnabled) {
+			this.pushTrails(poses);
+			this.trailLayer.batchDraw();
+		}
 		this.updateRotationHandle();
 		this.engagementZoneLayer.batchDraw();
-		this.trailLayer.batchDraw();
 		this.playersLayer.batchDraw();
 	}
 
@@ -2240,15 +2261,43 @@ export class KonvaGame {
 
 		// Apply heading to the Konva facing groups (reconcileTeamPlayers sets
 		// positions only; applyEffectivePoses rotates the chevrons from the
-		// override tier).
-		this.playerManager.applyEffectivePoses();
-		this.packManager.determinePack();
-		this.trackSurfaceLayer.batchDraw();
-		this.trackLinesLayer.batchDraw();
+		// override tier). draw=false on the composite steps so each layer is
+		// drawn exactly once per replay frame.
+		this.playerManager.applyEffectivePoses(false);
+		this.packManager.determinePack(false);
 		this.engagementZoneLayer.batchDraw();
 		this.playersLayer.batchDraw();
 
+		// Konva bakes the stage transform into each layer's canvas at draw
+		// time, so the static stage-local layers (track, ghosts, annotations,
+		// paths) must be redrawn whenever the view changes — but ONLY then.
+		// A fixed-view replay no longer repaints the expensive track layers
+		// every frame.
+		this.redrawStaticLayersIfViewChanged();
+
 		if (sample.pathFrame) this.renderPathFrame(sample.pathFrame);
+	}
+
+	/**
+	 * Last stage transform that the static stage-local layers (track surface,
+	 * track lines, ghosts, annotations) were drawn at. Konva bakes the stage
+	 * transform into each layer's canvas at draw time, so these layers only
+	 * need a repaint when the view actually changes — not every replay frame.
+	 */
+	private lastStaticTransform: { scale: number; x: number; y: number } | null = null;
+
+	/** Redraws the static stage-local layers iff the stage transform changed. */
+	private redrawStaticLayersIfViewChanged(): void {
+		const scale = this.stage.scaleX();
+		const x = this.stage.x();
+		const y = this.stage.y();
+		const t = this.lastStaticTransform;
+		if (t && t.scale === scale && t.x === x && t.y === y) return;
+		this.lastStaticTransform = { scale, x, y };
+		this.trackSurfaceLayer.batchDraw();
+		this.trackLinesLayer.batchDraw();
+		this.ghostLayer.batchDraw();
+		this.annotationLayer.batchDraw();
 	}
 
 	/**
@@ -2256,28 +2305,51 @@ export class KonvaGame {
 	 * export so captured recordings include per-step paths). Renders ALL paths
 	 * in the frame — the frame already represents the visual state captured at
 	 * record time, so no overlay/selection filtering is applied.
+	 *
+	 * Lines are cached by path id and updated in place (points/stroke), so a
+	 * replay frame with unchanged paths costs zero node allocations; only
+	 * added/removed paths create/destroy nodes.
 	 */
 	renderPathFrame(frame: PathFrame | undefined): void {
 		this.currentPathFrame = frame;
-		this.pathLayer.destroyChildren();
 		if (!frame) {
-			this.pathLayer.draw();
+			if (this.pathFrameLines.size > 0) {
+				for (const line of this.pathFrameLines.values()) line.destroy();
+				this.pathFrameLines.clear();
+				this.pathLayer.batchDraw();
+			}
 			return;
 		}
 
 		const strokeWidth = Math.max(2, (PLAYER_RADIUS * 0.4) / this.stage.scaleX());
 		const ghostStrokeWidth = Math.max(1.5, (PLAYER_RADIUS * 0.3) / this.stage.scaleX());
+		const seen = new Set<string>();
 
-		const addLine = (points: PlanarPoint[], opts: Konva.LineConfig): void => {
+		const upsertLine = (
+			key: string,
+			points: PlanarPoint[],
+			opts: Konva.LineConfig,
+			ghost: boolean
+		): void => {
 			const projected = this.smoothProject(points);
 			if (!projected) return;
-			this.pathLayer.add(
-				new Konva.Line({
-					points: projected.flatMap((p) => [p.x, p.y]),
-					listening: false,
-					...opts
-				})
-			);
+			seen.add(key);
+			const flat = projected.flatMap((p) => [p.x, p.y]);
+			const existing = this.pathFrameLines.get(key);
+			if (existing) {
+				existing.points(flat);
+				existing.setAttrs(opts);
+				if (ghost) existing.moveToBottom();
+				return;
+			}
+			const line = new Konva.Line({
+				points: flat,
+				listening: false,
+				...opts
+			});
+			this.pathFrameLines.set(key, line);
+			this.pathLayer.add(line);
+			if (ghost) line.moveToBottom();
 		};
 
 		const ghostOpts: Konva.LineConfig = {
@@ -2288,19 +2360,32 @@ export class KonvaGame {
 			lineJoin: 'round',
 			opacity: 0.5
 		};
-		frame.prevPaths?.forEach((p) => addLine(p.points, ghostOpts));
-		frame.nextPaths?.forEach((p) => addLine(p.points, ghostOpts));
+		frame.prevPaths?.forEach((p) => upsertLine(`prev:${p.id}`, p.points, ghostOpts, true));
+		frame.nextPaths?.forEach((p) => upsertLine(`next:${p.id}`, p.points, ghostOpts, true));
 
 		for (const path of frame.paths) {
-			addLine(path.points, {
-				stroke: this.trailColorFor(path.entityId),
-				strokeWidth,
-				tension: 0,
-				opacity: 0.85
-			});
+			upsertLine(
+				`cur:${path.id}`,
+				path.points,
+				{
+					stroke: this.trailColorFor(path.entityId),
+					strokeWidth,
+					tension: 0,
+					opacity: 0.85
+				},
+				false
+			);
 		}
 
-		this.pathLayer.draw();
+		// Remove lines whose path is no longer in the frame.
+		for (const [key, line] of this.pathFrameLines) {
+			if (!seen.has(key)) {
+				line.destroy();
+				this.pathFrameLines.delete(key);
+			}
+		}
+
+		this.pathLayer.batchDraw();
 	}
 
 	/**
@@ -2504,6 +2589,7 @@ export class KonvaGame {
 		if (this.replayMode) return;
 
 		this.pathLayer.destroyChildren();
+		this.pathFrameLines.clear();
 		this.clearPathHandles();
 
 		const editable = get(toolMode) === 'select';
@@ -2642,18 +2728,18 @@ export class KonvaGame {
 						x: last.x - headLength * Math.cos(angle + 0.5),
 						y: last.y - headLength * Math.sin(angle + 0.5)
 					};
-				group.add(
-					new Konva.Line({
-						points: [last.x, last.y, base1.x, base1.y, base2.x, base2.y, last.x, last.y],
-						fill: stroke,
-						stroke,
-						strokeWidth: width,
-						closed: true,
-						tension: 0,
-						hitStrokeWidth: 12,
-						listening: true
-					})
-				);
+					group.add(
+						new Konva.Line({
+							points: [last.x, last.y, base1.x, base1.y, base2.x, base2.y, last.x, last.y],
+							fill: stroke,
+							stroke,
+							strokeWidth: width,
+							closed: true,
+							tension: 0,
+							hitStrokeWidth: 12,
+							listening: true
+						})
+					);
 				}
 				break;
 			}
@@ -3136,9 +3222,8 @@ export class KonvaGame {
 			};
 		});
 
-		// Re-render this path's line. Synchronous draw (not batchDraw) so it
-		// tracks the handle every move — the handle lives on the separate
-		// controlLayer, so an rAF redraw of pathLayer can lag behind the drag.
+		// Re-render this path's line (batchDrawn — renders before the next
+		// paint, so it still tracks the handle every move).
 		this.redrawPathLine(step.id, path.id, newPoints);
 
 		// The active step's endpoint chains to the next step's start (index 0),
@@ -3156,14 +3241,18 @@ export class KonvaGame {
 		}
 	}
 
-	/** Re-projects `points` and synchronously redraws the line for one path. */
+	/** Re-projects `points` and redraws the line for one path. */
 	private redrawPathLine(stepId: string, pathId: string, points: PlanarPoint[]): void {
 		const line = this.pathLineFor(stepId, pathId);
 		if (!line || points.length < 2) return;
 		const projected = this.smoothProject(points);
 		if (projected) {
 			line.points(projected.flatMap((p) => [p.x, p.y]));
-			this.pathLayer.draw();
+			// batchDraw, not draw(): dragmove can fire several times per frame
+			// (coalesced touch events), and each synchronous draw() was a
+			// blocking full-layer repaint. batchDraw still renders before the
+			// next paint, so the line tracks the pointer without lag.
+			this.pathLayer.batchDraw();
 		}
 	}
 
@@ -3185,6 +3274,11 @@ export class KonvaGame {
 			pts[0] = { ...poseMetres };
 			this.redrawPathLine(active.id, curPath.id, pts);
 		}
+
+		// Previous-step ghost lines are only rendered for the SELECTED entity
+		// (see renderPaths), so the adjacent-step lookup — and its two doc
+		// reads — is skipped for every other dragged skater.
+		if (entityId !== get(selectedEntityId)) return;
 
 		// Previous step: its endpoint chains to this skater. Index 0 is the prev
 		// path's own stored start (not injected — see renderPathGeometry), so we

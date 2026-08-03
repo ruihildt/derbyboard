@@ -1,5 +1,11 @@
 import type { KonvaGame } from '$lib/konva/KonvaGame';
 import type { TimelineProject, TimelineSample, Snapshot } from './types';
+import { poseStore } from '$lib/doc/poses';
+import { boardDoc } from '$lib/doc/store';
+import { boardSettings, type BoardSettings } from '$lib/stores/boardSettings';
+import { get } from 'svelte/store';
+import type { BoardDoc } from '$lib/doc/types';
+import type { PathFrame } from './types';
 
 /**
  * Epsilon for snapshot comparison. Positions closer than this (in pixels) are
@@ -42,6 +48,19 @@ export class TimelineRecorder {
 	private rafId: number | null = null;
 	private lastSnapshot: TimelineSample | null = null;
 
+	/**
+	 * Dirty-check cache, refreshed whenever the full snapshot path runs.
+	 * Lets idle frames prove "nothing the snapshot covers could have changed"
+	 * with a handful of primitive/reference reads — the previous
+	 * implementation built a full snapshot plus two lookup Maps every frame
+	 * just to discover the board was idle.
+	 */
+	private lastPoseVersion = -1;
+	private lastDocRef: BoardDoc | null = null;
+	private lastView = { zoom: 0, x: 0, y: 0, w: 0, h: 0 };
+	private lastPathFrameRef: PathFrame | undefined;
+	private lastSettingsRef: BoardSettings | null = null;
+
 	constructor(game: KonvaGame) {
 		this.game = game;
 	}
@@ -60,6 +79,7 @@ export class TimelineRecorder {
 		const initial = this.game.getSnapshot();
 		this.lastSnapshot = { t: 0, ...initial };
 		this.samples.push(this.lastSnapshot);
+		this.refreshDirtyCache();
 
 		this.startFrameLoop();
 	}
@@ -90,6 +110,14 @@ export class TimelineRecorder {
 	 */
 	private tryPushSample(): void {
 		if (!this.running || !this.lastSnapshot) return;
+		// Zero-allocation pre-check: skip the snapshot build entirely while
+		// the board is provably idle (the common case during a recording).
+		if (!this.boardMayHaveChanged()) return;
+		// Refresh unconditionally — the epsilon comparison below anchors to
+		// `lastSnapshot` (not this cache), so sub-epsilon drift still
+		// accumulates correctly across frames.
+		this.refreshDirtyCache();
+
 		const now = performance.now();
 		const t = now - this.startTime;
 		const current = this.game.getSnapshot();
@@ -110,6 +138,43 @@ export class TimelineRecorder {
 		const sample = { t, ...current };
 		this.lastSnapshot = sample;
 		this.samples.push(sample);
+	}
+
+	/**
+	 * True only when something the snapshot covers could have changed since
+	 * the last full check. A false positive costs one getSnapshot +
+	 * hasChanged (which then correctly declines to push); a false negative
+	 * would lose motion, so every signal the snapshot reads is covered:
+	 * pose tiers (version), committed doc (reference identity — doc updates
+	 * are immutable), stage view + size, and the path-frame reference.
+	 */
+	private boardMayHaveChanged(): boolean {
+		const stage = this.game.getStage();
+		if (poseStore.version !== this.lastPoseVersion) return true;
+		if (boardDoc.current !== this.lastDocRef) return true;
+		if (stage.scaleX() !== this.lastView.zoom) return true;
+		if (stage.x() !== this.lastView.x) return true;
+		if (stage.y() !== this.lastView.y) return true;
+		if (stage.width() !== this.lastView.w || stage.height() !== this.lastView.h) return true;
+		if (this.game.getPathFrameRef() !== this.lastPathFrameRef) return true;
+		// getSnapshot() reads pathsVisible from boardSettings (immutable updates).
+		if (get(boardSettings) !== this.lastSettingsRef) return true;
+		return false;
+	}
+
+	private refreshDirtyCache(): void {
+		const stage = this.game.getStage();
+		this.lastPoseVersion = poseStore.version;
+		this.lastDocRef = boardDoc.current;
+		this.lastView = {
+			zoom: stage.scaleX(),
+			x: stage.x(),
+			y: stage.y(),
+			w: stage.width(),
+			h: stage.height()
+		};
+		this.lastPathFrameRef = this.game.getPathFrameRef();
+		this.lastSettingsRef = get(boardSettings);
 	}
 
 	/**

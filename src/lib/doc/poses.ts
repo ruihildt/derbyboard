@@ -80,6 +80,17 @@ export class PoseStore {
 	private live = new Map<string, Pose>();
 	private overrides = new Map<string, Pose>();
 	/**
+	 * Monotonic counter bumped by every mutation of the live/override tiers.
+	 * Lets per-frame consumers (the timeline recorder) detect "nothing moved"
+	 * with a single number read instead of building a snapshot to compare.
+	 */
+	private versionCounter = 0;
+
+	/** Bumped on every live/override mutation. Cheap idle dirty-check. */
+	get version(): number {
+		return this.versionCounter;
+	}
+	/**
 	 * Optional override for how a committed gesture is written to the
 	 * document. When set (e.g. by the authoring layer while editing an
 	 * authored step), the gesture's poses are written through it INSTEAD of
@@ -148,6 +159,7 @@ export class PoseStore {
 			return;
 		}
 		this.live.set(id, merged);
+		this.versionCounter++;
 	}
 
 	/**
@@ -160,6 +172,7 @@ export class PoseStore {
 			return;
 		}
 		this.overrides.set(id, pose);
+		this.versionCounter++;
 	}
 
 	/**
@@ -174,6 +187,7 @@ export class PoseStore {
 
 	/** Discards all live overrides without writing them to the document. */
 	abortGesture(): void {
+		if (this.live.size > 0) this.versionCounter++;
 		this.live.clear();
 	}
 
@@ -182,6 +196,7 @@ export class PoseStore {
 	 * board reset so the override tier doesn't leak into editing.
 	 */
 	clearOverrides(): void {
+		if (this.overrides.size > 0) this.versionCounter++;
 		this.overrides.clear();
 	}
 
@@ -204,6 +219,7 @@ export class PoseStore {
 				? this.commitHook(poses, label, opts)
 				: this.defaultCommit(poses, label, opts);
 		this.live.clear();
+		this.versionCounter++;
 		return changed;
 	}
 
