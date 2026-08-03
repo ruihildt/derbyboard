@@ -9,7 +9,7 @@ import type { TeamPlayerPosition, SkatingOfficialPosition } from '$lib/stores/ko
 import { CollisionSystem } from './CollisionSystem';
 import defaultLineup from '$lib/data/start-flat.json';
 import { boardDoc } from '$lib/doc/store';
-import type { Entity } from '$lib/doc/types';
+import type { Entity, BoardDoc } from '$lib/doc/types';
 import { poseStore, type Pose } from '$lib/doc/poses';
 import { resolveHeading } from '$lib/track/heading';
 import { boardSettings } from '$lib/stores/boardSettings';
@@ -604,12 +604,17 @@ export class KonvaPlayerManager {
 		poseStore.commitGesture(`Move ${poseStore.touchedIds().length} player(s)`);
 	}
 
-	loadDefaultLineup() {
-		// Assign deterministic ids to the predefined lineup so a reset is an
-		// idempotent, id-stable operation: the same default player keeps the
-		// same id across resets, so reconcile updates nodes in place instead of
-		// minting fresh UUIDs (and a leaked/orphaned subscription matching on
-		// id would hit existing nodes rather than create duplicates).
+	/**
+	 * Builds the default lineup as a { BoardDoc, KonvaBoardState } pair without
+	 * touching any store. Used by {@link loadDefaultLineup} (initial load) and
+	 * by {@link KonvaGame.resetBoard} (which writes through `applyEdit` so the
+	 * reset is a single undoable history entry instead of clearing history).
+	 *
+	 * Deterministic ids keep a reset idempotent: the same default player keeps
+	 * the same id across resets, so reconcile updates nodes in place instead
+	 * of minting fresh UUIDs.
+	 */
+	buildDefaultLineupDoc(): { doc: BoardDoc; state: KonvaBoardState } {
 		const teamPlayers = defaultLineup.teamPlayers.map((player, i) => ({
 			...player,
 			id: `default-team-${player.team}-${player.role}-${i}`,
@@ -622,18 +627,22 @@ export class KonvaPlayerManager {
 			role: official.role as SkatingOfficialRole
 		}));
 
-		// Type conversion for the predefined lineup
 		const typedLineup: KonvaBoardState = {
 			...defaultLineup,
 			teamPlayers,
 			skatingOfficials
 		};
 
+		return { doc: migrateBoardState(typedLineup), state: typedLineup };
+	}
+
+	loadDefaultLineup() {
+		const { doc, state } = this.buildDefaultLineupDoc();
+
 		// Update the store with the predefined lineup
-		boardState.set(typedLineup);
+		boardState.set(state);
 
 		// Migrate to document
-		const doc = migrateBoardState(typedLineup);
 		boardDoc.set(doc);
 
 		// Load the players from the document

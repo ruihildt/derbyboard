@@ -129,6 +129,12 @@ export class KonvaGame {
 	 * when the active tool changes. */
 	private toolModeUnsubscribe: (() => void) | null = null;
 
+	/** Reactive bridge: re-render step overlays (paths, annotations, onion
+	 * skin) when the document changes via undo/redo. Explicit edits already
+	 * call renderStepOverlays, but undo/redo only swap the doc — without this
+	 * subscription the visual layers would stay stale after an undo. */
+	private docUnsubscribe: (() => void) | null = null;
+
 	private gestureHandler!: KonvaGestureHandler;
 
 	constructor(containerId: string, width: number, height: number) {
@@ -360,6 +366,15 @@ export class KonvaGame {
 			this.updateRotationHandle();
 		});
 
+		// Re-render step overlays when the document changes via undo/redo.
+		// Explicit edits already trigger renderStepOverlays; this subscription
+		// catches the undo/redo path (and any external doc load) so annotations
+		// and paths don't stay stale after history navigation.
+		this.docUnsubscribe = boardDoc.subscribe(() => {
+			if (this.replay.isActive() || this.authored.isActive()) return;
+			this.renderStepOverlays(this.getActiveStep(), get(selectedEntityId));
+		});
+
 		// Control stage/player dragging from the resolved interaction flags
 		// (tool only): `hand` pans, `select` edits, drawing tools do neither.
 		this.interactionUnsubscribe = interaction.subscribe(({ panEnabled, entitiesEnabled }) => {
@@ -483,6 +498,7 @@ export class KonvaGame {
 		this.annotationSelectionUnsubscribe?.();
 		this.toolModeUnsubscribe?.();
 		this.directionControlUnsubscribe?.();
+		this.docUnsubscribe?.();
 		this.playerManager?.destroy();
 		this.rotationHandleController.destroy();
 		this.trackSurfaceLayer.destroy();
@@ -590,9 +606,11 @@ export class KonvaGame {
 		// and then NaN-poisoned them via the collision solver.
 		this.playerManager.clear();
 
-		// Either load from state or default lineup based on current state
-		const state = get(boardState);
-		if (state.teamPlayers && state.teamPlayers.length > 0) {
+		// Either load from the document or load the default lineup.
+		// Checking boardDoc (not boardState) keeps a single source of truth:
+		// after an undo restores the doc, a subsequent resize/rebuild must
+		// render the restored entities, not wipe them with loadDefaultLineup.
+		if (boardDoc.current.entities.length > 0) {
 			this.playerManager.initialLoad();
 		} else {
 			this.playerManager.loadDefaultLineup();
@@ -697,9 +715,38 @@ export class KonvaGame {
 	}
 
 	resetBoard() {
-		// Discard any uncommitted gesture so live poses keyed to ids that are
-		// about to be replaced can never commit onto the new document.
-		poseStore.abortGesture();
+		// Exit any active replay first so it restores the board before we
+		// tear it down; otherwise replay's override tier would survive the
+		// reset and keep players pinned to sample poses.
+		if (this.replay.isActive()) {
+			this.setReplayMode(false);
+		}
+
+		// Tear down all authoring residue: authored-playback flag, poseStore
+		// live + override tiers (moved/animated poses), focus/dim, trails,
+		// selection, direction control. Without this the override tier keeps
+		// players at their last playback positions after the doc is reset.
+		this.resetAuthoringView();
+
+		// Build the default lineup and write it through applyEdit so the reset
+		// is a SINGLE undoable history entry (set would clear history). The
+		// recipe replaces entities with the default lineup and clears clips,
+		// annotations, and the active clip.
+		const { doc: defaultDoc, state: defaultState } = this.playerManager.buildDefaultLineupDoc();
+		boardDoc.applyEdit((draft) => {
+			draft.entities = defaultDoc.entities;
+			draft.clips = [];
+			draft.activeClipId = null;
+			draft.annotations = [];
+			draft.meta = {};
+		}, 'Reset board');
+
+		// Sync the legacy persisted state to the default lineup so view
+		// settings and the lineup-presence flag match the new doc.
+		boardState.set(defaultState);
+
+		// Clear selection stores
+		selectedAnnotationId.set(null);
 
 		// Reset stage position and scale
 		this.stage.position({ x: 0, y: 0 });
@@ -708,20 +755,10 @@ export class KonvaGame {
 		// Make sure dimensions are current
 		this.viewport.recalculateDimensions();
 
-		// Reset persisted state first
-		boardState.set({
-			version: 3,
-			createdAt: new Date().toISOString(),
-			teamPlayers: [],
-			skatingOfficials: [],
-			viewSettings: {
-				zoom: BASE_ZOOM,
-				relativeX: 0,
-				relativeY: 0
-			}
-		});
-
-		// Rebuild everything with fresh dimensions
+		// Rebuild everything with fresh dimensions. Since the doc now has
+		// entities (the default lineup), rebuildTrackAndPlayers calls
+		// initialLoad (renders from the doc) rather than loadDefaultLineup
+		// (which would call boardDoc.set and wipe the undo history entry).
 		this.rebuildTrackAndPlayers();
 
 		this.stage.batchDraw();
