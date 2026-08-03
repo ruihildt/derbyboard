@@ -9,8 +9,11 @@ import type { CaptureFormat, CaptureZone } from '$lib/utils/capture';
 export interface CaptureSettings {
 	format: CaptureFormat;
 	zone?: CaptureZone;
+	/** Whether video recording captures microphone audio. */
+	audio: boolean;
 }
 
 export const captureSettings = persisted<CaptureSettings>('derbyboard-capture2', {
-	format: 'full'
+	format: 'full',
+	audio: false
 });

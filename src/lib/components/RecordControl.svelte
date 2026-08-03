@@ -27,7 +27,6 @@
 	let recorder = $state<TimelineRecorder | null>(null);
 	let audioCapture = $state<AudioCapture | null>(null);
 	let audioActive = false;
-	let withAudio = $state(false);
 	let countdown = $state<number | null>(null);
 	let countdownTimer = $state<ReturnType<typeof setInterval> | null>(null);
 	let countdownToken = 0;
@@ -69,7 +68,7 @@
 
 		// Capture mic audio first (shared clock origin with the timeline).
 		audioActive = false;
-		if (withAudio) {
+		if (get(captureSettings).audio) {
 			audioCapture = new AudioCapture();
 			audioActive = await audioCapture.start();
 		}
@@ -131,19 +130,23 @@
 			await startRecording();
 		}
 	}
+
+	function toggleAudio() {
+		captureSettings.update((s) => ({ ...s, audio: !s.audio }));
+	}
 </script>
 
 <div class="flex items-center gap-1">
-	<!-- Sound -->
+	<!-- Microphone toggle (shared with the settings panel via the store). -->
 	<ToolbarButton
 		class={locked
 			? '!m-0 flex min-h-9 min-w-9 items-center justify-center rounded-lg p-1 cursor-not-allowed opacity-50'
 			: '!m-0 flex min-h-9 min-w-9 items-center justify-center rounded-lg p-1 hover:bg-primary-200'}
-		onclick={() => (withAudio = !withAudio)}
+		onclick={toggleAudio}
 		disabled={locked}
-		aria-label={withAudio ? 'Disable microphone' : 'Enable microphone'}
+		aria-label={$captureSettings.audio ? 'Disable microphone' : 'Enable microphone'}
 	>
-		{#if withAudio}
+		{#if $captureSettings.audio}
 			<MicrophoneOutline class="text-sm text-gray-700" />
 		{:else}
 			<MicrophoneSlashOutline class="text-gray-700" />

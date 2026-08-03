@@ -1,32 +1,54 @@
 <script lang="ts">
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
+	import type { TimelineProject } from '$lib/recording/timeline/types';
 	import { boardDoc } from '$lib/doc/store';
 	import { authoringSession } from '$lib/stores/session';
 	import { getCapabilities } from '$lib/experiences/capabilities';
-	import { toolMode, type DrawTool } from '$lib/stores/toolMode';
-	import { BookOpenOutline, DrawSquareOutline } from 'flowbite-svelte-icons';
+	import { toolMode, isCaptureTool, type DrawTool } from '$lib/stores/toolMode';
+	import { captureMode, type CaptureMode } from '$lib/stores/captureMode';
+	import { captureScreenshot } from '$lib/utils/screenshot';
+	import {
+		BookOpenOutline,
+		CameraPhotoOutline,
+		DrawSquareOutline,
+		VideoCameraOutline
+	} from 'flowbite-svelte-icons';
 
 	import Menu from './Menu.svelte';
+	import ToolSettingsPanel from './ToolSettingsPanel.svelte';
 	import ExperienceSwitcher from './ExperienceSwitcher.svelte';
+	import RecordControl from './RecordControl.svelte';
 
 	let {
 		game,
 		docked = false,
+		isRecording = $bindable(false),
 		onOpenArchive,
 		onOpenNews,
 		onOpenBoardSettings,
-		onOpenLibrary
+		onOpenLibrary,
+		onRecorded
 	}: {
 		game: KonvaGame;
 		/** When true the Library sidebar is docked: the bar frames only the
 		 * canvas area (right-inset by the sidebar width) so its centered
 		 * content and right-anchored trigger follow the canvas, not the viewport. */
 		docked?: boolean;
+		isRecording?: boolean;
 		onOpenArchive?: () => void;
 		onOpenNews?: () => void;
 		onOpenBoardSettings?: () => void;
 		onOpenLibrary?: () => void;
+		onRecorded?: (project: TimelineProject, audioBlob: Blob | null) => void;
 	} = $props();
+
+	// Busy signal from the video record control (covers countdown + active
+	// recording). Disables capture-tool switching mid-recording.
+	let videoLocked = $state(false);
+
+	// Main menu open state — lifted so the settings panel can hide while the
+	// menu occupies the same slot.
+	let menuOpen = $state(false);
 
 	// Capabilities are derived from the doc shape. Touch both stores so this
 	// re-derives when either the document or the authoring session changes.
@@ -47,12 +69,20 @@
 		{ id: 'erase', label: 'Erase', icon: '' }
 	];
 
+	// Capture tools live in the toolbar as their own group, separated from the
+	// drawing tools. They arm the tool (mutually exclusive with the drawing
+	// tools); the action control (record / capture button) renders top-right.
+	const captureTools: { id: CaptureMode; label: string }[] = [
+		{ id: 'video', label: 'Video' },
+		{ id: 'screenshot', label: 'Screenshot' }
+	];
+
 	// Reset to the neutral tool whenever the current tool isn't admitted by the
 	// active experience (e.g. a drawing tool armed in Drill, then the board
 	// drops back to Free; or the `hand` tool armed in Free, then a clip turns
-	// the board into Drill). Keeps a stale tool from acting on an uneditable
-	// board.
+	// the board into Drill). Capture tools are always available and exempt.
 	$effect(() => {
+		if (isCaptureTool($toolMode)) return;
 		if (!caps.admittedTools.includes($toolMode)) {
 			toolMode.set('select');
 		}
@@ -64,9 +94,13 @@
 		? 'left-0 right-[24rem]'
 		: 'inset-x-0'} px-[max(0.75rem,env(safe-area-inset-left))] py-[max(0.5rem,env(safe-area-inset-top))]"
 >
-	<!-- Main menu: top-left, separate from the board controls. -->
-	<div class="pointer-events-auto">
-		<Menu {game} {onOpenArchive} {onOpenNews} {onOpenBoardSettings} />
+	<!-- Left column: Menu and the contextual settings panel share the same
+	     slot — opening the menu hides the settings panel content. -->
+	<div class="pointer-events-auto flex flex-col items-start gap-2">
+		<Menu bind:open={menuOpen} {game} {onOpenArchive} {onOpenNews} {onOpenBoardSettings} />
+		{#if !menuOpen}
+			<ToolSettingsPanel {game} />
+		{/if}
 	</div>
 
 	<!-- Unified control bar (centered): board interactions only. The switcher
@@ -152,15 +186,67 @@
 					{/each}
 				</div>
 			{/if}
+
+			<!-- Capture tools: always available, separated from the drawing
+			     palette. They arm the tool (mutually exclusive with the drawing
+			     tools). Disabled while recording. -->
+			<div class="mx-0.5 h-6 w-px self-center bg-gray-200"></div>
+			<div class="flex items-center gap-0.5">
+				{#each captureTools as tool (tool.id)}
+					<button
+						type="button"
+						class="flex min-h-11 min-w-9 items-center justify-center rounded-lg px-2 text-sm font-medium transition-colors {$toolMode ===
+						tool.id
+							? 'bg-primary-100 text-primary-700'
+							: 'text-gray-600 hover:bg-primary-50'} {videoLocked
+							? 'cursor-not-allowed opacity-50'
+							: ''}"
+						onclick={() => {
+							if (videoLocked) return;
+							toolMode.set(tool.id);
+							captureMode.set(tool.id);
+						}}
+						disabled={videoLocked}
+						aria-label={tool.label}
+						title={tool.label}
+					>
+						{#if tool.id === 'video'}
+							<VideoCameraOutline class="h-[18px] w-[18px]" aria-hidden="true" />
+						{:else}
+							<CameraPhotoOutline class="h-[18px] w-[18px]" aria-hidden="true" />
+						{/if}
+					</button>
+				{/each}
+			</div>
 		</div>
 	</div>
 
-	<!-- Library trigger: top-right, opens the Library sidebar. Hidden while the
-	     sidebar is docked (open + pinned) — its own pin/close controls suffice. -->
-	{#if !docked}
-		<div
-			class="pointer-events-auto absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.5rem,env(safe-area-inset-top))] flex items-center gap-1"
-		>
+	<!-- Top-right cluster: the capture action bar sits to the left of the
+	     Library trigger. It's always shown — Video renders the record button
+	     (with mic toggle), anything else defaults to the screenshot capture
+	     button. The Library trigger itself is hidden while the sidebar is
+	     docked, but the capture bar stays visible just left of the sidebar. -->
+	<div
+		class="pointer-events-auto absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.5rem,env(safe-area-inset-top))] flex items-center gap-1"
+	>
+		{#if $captureMode === 'video'}
+			<div class="flex items-center rounded-lg bg-white p-1 shadow-lg shadow-black/5">
+				<RecordControl bind:isRecording bind:locked={videoLocked} {game} {onRecorded} />
+			</div>
+		{:else}
+			<div class="flex items-center rounded-lg bg-white p-1 shadow-lg shadow-black/5">
+				<button
+					type="button"
+					class="flex min-h-9 items-center gap-2 whitespace-nowrap rounded-lg px-2 text-sm text-gray-700 hover:bg-primary-200"
+					onclick={() => captureScreenshot(game)}
+					aria-label="Capture screenshot"
+				>
+					<CameraPhotoOutline class="h-5 w-5 text-gray-700" />
+					Capture
+				</button>
+			</div>
+		{/if}
+		{#if !docked}
 			<button
 				type="button"
 				onclick={onOpenLibrary}
@@ -170,6 +256,6 @@
 			>
 				<BookOpenOutline class="h-6 w-6" />
 			</button>
-		</div>
-	{/if}
+		{/if}
+	</div>
 </div>

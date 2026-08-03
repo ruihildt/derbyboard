@@ -2,7 +2,7 @@
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { exportBoardToFile, loadBoardFromFile } from '$lib/utils/boardStateService';
 
-	import { Dropdown, DropdownItem, Modal, Button } from 'flowbite-svelte';
+	import { Button, Modal } from 'flowbite-svelte';
 	import {
 		BarsOutline,
 		RefreshOutline,
@@ -18,31 +18,55 @@
 
 	let {
 		game,
+		open = $bindable(false),
 		onOpenArchive,
 		onOpenNews,
 		onOpenBoardSettings
 	}: {
 		game: KonvaGame;
+		open?: boolean;
 		onOpenArchive?: () => void;
 		onOpenNews?: () => void;
 		onOpenBoardSettings?: () => void;
 	} = $props();
 
-	let dropdownOpen = $state(false);
 	let showErrorModal = $state(false);
 	let errorMessage = $state('');
+	let isFullscreen = $state(false);
+	let menuRef = $state<HTMLDivElement | undefined>(undefined);
+
+	// Close the inline menu on any pointer down outside of it (e.g. on the board).
+	$effect(() => {
+		if (!open) return;
+		function onPointerDown(e: PointerEvent) {
+			if (menuRef && !menuRef.contains(e.target as Node)) {
+				open = false;
+			}
+		}
+		window.addEventListener('pointerdown', onPointerDown);
+		return () => window.removeEventListener('pointerdown', onPointerDown);
+	});
+
+	// Track fullscreen so the menu item label stays in sync.
+	$effect(() => {
+		function onFs() {
+			isFullscreen = !!document.fullscreenElement;
+		}
+		document.addEventListener('fullscreenchange', onFs);
+		return () => document.removeEventListener('fullscreenchange', onFs);
+	});
 
 	function toggleMenu() {
-		dropdownOpen = !dropdownOpen;
+		open = !open;
 	}
 
 	function handleReset() {
 		game.resetBoard();
-		dropdownOpen = false;
+		open = false;
 	}
 
 	async function handleOpenBoard() {
-		dropdownOpen = false;
+		open = false;
 		const input = document.createElement('input');
 		input.type = 'file';
 		input.accept = '.json';
@@ -61,21 +85,21 @@
 
 	function handleExportBoard() {
 		exportBoardToFile();
-		dropdownOpen = false;
+		open = false;
 	}
 
 	function handleOpenArchive() {
-		dropdownOpen = false;
+		open = false;
 		onOpenArchive?.();
 	}
 
 	function handleOpenNews() {
-		dropdownOpen = false;
+		open = false;
 		onOpenNews?.();
 	}
 
 	function handleOpenBoardSettings() {
-		dropdownOpen = false;
+		open = false;
 		onOpenBoardSettings?.();
 	}
 
@@ -85,79 +109,74 @@
 		} else {
 			await document.exitFullscreen();
 		}
-		dropdownOpen = false;
+		open = false;
+	}
+
+	function item(): string {
+		return 'flex w-full items-center rounded-lg px-2 py-1.5 text-sm text-gray-700 hover:bg-primary-200';
 	}
 </script>
 
 <Button
 	class="min-h-11 min-w-11 rounded-lg bg-white !p-1 shadow-lg shadow-black/5 hover:bg-primary-200"
-	onclick={() => toggleMenu}
+	onclick={toggleMenu}
 >
 	<BarsOutline class="h-6 w-6" color="gray" />
 </Button>
 
-<Dropdown bind:isOpen={dropdownOpen} class="w-48">
-	<DropdownItem class="flex items-center text-gray-700 hover:bg-primary-200" onclick={handleReset}>
-		<RefreshOutline class="mr-2 h-4 w-4" />
-		<span>Reset board</span>
-	</DropdownItem>
-	<DropdownItem
-		class="flex items-center text-gray-700 hover:bg-primary-200"
-		onclick={handleOpenBoard}
+{#if open}
+	<!-- Inline menu card: occupies the same slot as the settings panel below
+	     the hamburger. The settings panel is hidden while this is open. -->
+	<div
+		bind:this={menuRef}
+		class="pointer-events-auto w-60 rounded-2xl bg-white p-2 shadow-lg shadow-black/10"
 	>
-		<FolderOpenOutline class="mr-2 h-4 w-4" />
-		<span>Open board</span>
-	</DropdownItem>
-	<DropdownItem
-		class="flex items-center text-gray-700 hover:bg-primary-200"
-		onclick={handleExportBoard}
-	>
-		<ArrowDownToBracketOutline class="mr-2 h-4 w-4" />
-		<span>Export board</span>
-	</DropdownItem>
-	<DropdownItem
-		class="flex items-center text-gray-700 hover:bg-primary-200"
-		onclick={handleOpenArchive}
-	>
-		<ArchiveOutline class="mr-2 h-4 w-4" />
-		<span>Open recording</span>
-	</DropdownItem>
-	<DropdownItem
-		class="flex items-center text-gray-700 hover:bg-primary-200"
-		onclick={handleOpenBoardSettings}
-	>
-		<CogOutline class="mr-2 h-4 w-4" />
-		<span>Board settings</span>
-	</DropdownItem>
-	<DropdownItem
-		class="flex items-center text-gray-700 hover:bg-primary-200"
-		onclick={toggleFullscreen}
-	>
-		{#if typeof document !== 'undefined' && !!document.fullscreenElement}
-			<MinimizeOutline class="mr-2 h-4 w-4" />
-			<span>Exit fullscreen</span>
-		{:else}
-			<ExpandOutline class="mr-2 h-4 w-4" />
-			<span>Fullscreen</span>
-		{/if}
-	</DropdownItem>
-	<DropdownItem
-		class="flex items-center text-gray-700 hover:bg-primary-200"
-		onclick={handleOpenNews}
-	>
-		<NewspaperOutline class="mr-2 h-4 w-4" />
-		<span>News</span>
-	</DropdownItem>
-	<DropdownItem
-		class="flex items-center text-gray-700 hover:bg-primary-200"
-		href="https://github.com/ruihildt/derbyboard"
-		target="_blank"
-		onclick={() => (dropdownOpen = false)}
-	>
-		<InfoCircleOutline class="mr-2 h-4 w-4" />
-		<span>About</span>
-	</DropdownItem>
-</Dropdown>
+		<div class="flex flex-col gap-0.5">
+			<button class={item()} onclick={handleReset}>
+				<RefreshOutline class="mr-2 h-4 w-4" />
+				<span>Reset board</span>
+			</button>
+			<button class={item()} onclick={handleOpenBoard}>
+				<FolderOpenOutline class="mr-2 h-4 w-4" />
+				<span>Open board</span>
+			</button>
+			<button class={item()} onclick={handleExportBoard}>
+				<ArrowDownToBracketOutline class="mr-2 h-4 w-4" />
+				<span>Export board</span>
+			</button>
+			<button class={item()} onclick={handleOpenArchive}>
+				<ArchiveOutline class="mr-2 h-4 w-4" />
+				<span>Open recording</span>
+			</button>
+			<button class={item()} onclick={handleOpenBoardSettings}>
+				<CogOutline class="mr-2 h-4 w-4" />
+				<span>Board settings</span>
+			</button>
+			<button class={item()} onclick={toggleFullscreen}>
+				{#if isFullscreen}
+					<MinimizeOutline class="mr-2 h-4 w-4" />
+					<span>Exit fullscreen</span>
+				{:else}
+					<ExpandOutline class="mr-2 h-4 w-4" />
+					<span>Fullscreen</span>
+				{/if}
+			</button>
+			<button class={item()} onclick={handleOpenNews}>
+				<NewspaperOutline class="mr-2 h-4 w-4" />
+				<span>News</span>
+			</button>
+			<a
+				class={item()}
+				href="https://github.com/ruihildt/derbyboard"
+				target="_blank"
+				onclick={() => (open = false)}
+			>
+				<InfoCircleOutline class="mr-2 h-4 w-4" />
+				<span>About</span>
+			</a>
+		</div>
+	</div>
+{/if}
 
 <Modal bind:open={showErrorModal} size="xs">
 	<div class="px-5 py-4 text-center">

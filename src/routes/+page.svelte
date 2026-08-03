@@ -55,8 +55,6 @@
 	let replayFrame = $state<TimelineFrame | null>(null);
 	let replaySource = $state<{ w: number; h: number } | null>(null);
 
-	type CaptureTab = 'video' | 'screenshot';
-	let activeTab = $state<CaptureTab>('video');
 	// Capture-region interaction mode: 'board' = fully pass-through (default),
 	// 'edit' = resize handles hot. Only meaningful while a region is editable.
 	let regionMode = $state<'board' | 'edit'>('board');
@@ -208,6 +206,7 @@
 	<TopBar
 		{game}
 		{docked}
+		bind:isRecording
 		onOpenArchive={() => {
 			loadError = '';
 			replayBar?.load();
@@ -215,6 +214,7 @@
 		onOpenNews={() => changelog?.open()}
 		onOpenBoardSettings={() => boardSettingsModal?.open()}
 		onOpenLibrary={() => library?.open()}
+		onRecorded={(project, audioBlob) => replayBar?.replay(project, audioBlob)}
 	/>
 {/if}
 
@@ -288,13 +288,7 @@
 				<UndoRedoControls />
 			</div>
 			<div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-				<CaptureBar
-					{game}
-					bind:activeTab
-					bind:isRecording
-					bind:regionMode
-					onRecorded={(project, audioBlob) => replayBar?.replay(project, audioBlob)}
-				/>
+				<CaptureBar {isRecording} bind:regionMode />
 			</div>
 		</div>
 		{#if caps.timeline}
