@@ -2551,14 +2551,32 @@ export class KonvaGame {
 			handle.setAttr('stepId', step.id);
 
 			// Hard-clamp the drag so the path can't exceed MAX_PATH_LENGTH_M.
+			// `pos` arrives in the stage's absolute (content) coordinate space —
+			// the same space as `stage.getPointerPosition()`, NOT the stage-local
+			// space used by `projectPoint`. Konva's `_setDragPosition` passes the
+			// pointer position (content space) to `dragBoundFunc` and then feeds
+			// the return value to `setAbsolutePosition` (which also expects content
+			// space). Without undoing the stage zoom/pan first (as `pointerToPlane`
+			// does), the constraint circle is centred at the wrong point whenever
+			// the stage is zoomed or panned — e.g. after a browser resize triggers
+			// `fitToTrack` or `loadViewSettings`, making handle dragging appear
+			// "completely inconsistent".
 			handle.dragBoundFunc((pos) => {
 				const center = this.getStageCenter();
+				const scale = this.stage.scaleX();
+				// Absolute → stage-local → world metres (mirrors `pointerToPlane`).
+				const localX = (pos.x - this.stage.x()) / scale;
+				const localY = (pos.y - this.stage.y()) / scale;
 				const pM = {
-					x: (pos.x - center.x) / TRACK_SCALE,
-					y: (pos.y - center.y) / TRACK_SCALE
+					x: (localX - center.x) / TRACK_SCALE,
+					y: (localY - center.y) / TRACK_SCALE
 				};
 				const c = clampNodeToBudget(aM, bM, pM, budget);
-				return { x: center.x + c.x * TRACK_SCALE, y: center.y + c.y * TRACK_SCALE };
+				// World metres → stage-local → absolute (inverse of above).
+				return {
+					x: this.stage.x() + (center.x + c.x * TRACK_SCALE) * scale,
+					y: this.stage.y() + (center.y + c.y * TRACK_SCALE) * scale
+				};
 			});
 
 			handle.on('dragmove', () => this.updatePathPreview(step, path));
