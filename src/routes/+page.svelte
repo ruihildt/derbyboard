@@ -17,6 +17,7 @@
 
 	import TopBar from '$lib/components/TopBar.svelte';
 	import StepStrip from '$lib/components/StepStrip.svelte';
+	import BottomStrip from '$lib/components/BottomStrip.svelte';
 	import ZoomControl from '$lib/components/ZoomControl.svelte';
 	import UndoRedoControls from '$lib/components/UndoRedoControls.svelte';
 	import BoardSettings from '$lib/components/BoardSettings.svelte';
@@ -76,14 +77,6 @@
 	// AND open) and never during replay (the sidebar is unmounted then).
 	let docked = $derived(sidebarDocked && !isReplaying);
 
-	// When the canvas box changes (sidebar docked/undocked, or replay), tell
-	// KonvaGame to re-measure its container and re-fit. Svelte runs this effect
-	// after the DOM width class has applied, so the measurement is current.
-	$effect(() => {
-		void docked;
-		game?.resize();
-	});
-
 	// Experience capabilities are derived from the document shape (active
 	// authored clip + its domain). Components gate on these, not on mode
 	// strings. Touch both stores so this re-derives when either changes.
@@ -91,6 +84,38 @@
 		void $boardDoc;
 		void $authoringSession;
 		return getCapabilities($boardDoc);
+	});
+
+	// Bottom strip: merged zone hosting the drill step timeline (StepStrip)
+	// or the replay controls (ReplayBar). Hidden in free play. When visible,
+	// the canvas frame shrinks above it (measured via the strip root since
+	// drill and replay heights differ).
+	let stripEl = $state<HTMLDivElement | undefined>();
+	let stripHeight = $state(0);
+	let stripVisible = $derived(caps.timeline || isReplaying);
+
+	// When the canvas box changes (sidebar docked/undocked, strip shown/hidden
+	// or resized, or replay), tell KonvaGame to re-measure its container and
+	// re-fit. Svelte runs this effect after the DOM box has applied, so the
+	// measurement is current.
+	$effect(() => {
+		void docked;
+		void stripVisible;
+		void stripHeight;
+		game?.resize();
+	});
+
+	$effect(() => {
+		if (!stripEl) {
+			stripHeight = 0;
+			return;
+		}
+		stripHeight = stripEl.clientHeight;
+		const ro = new ResizeObserver(() => {
+			stripHeight = stripEl?.clientHeight ?? 0;
+		});
+		ro.observe(stripEl);
+		return () => ro.disconnect();
 	});
 
 	// Keyboard shortcuts for undo/redo + authored step navigation.
@@ -158,7 +183,8 @@
 </script>
 
 <main
-	class="relative h-[100dvh] {docked ? 'w-[calc(100dvw-24rem)]' : 'w-[100dvw]'} overflow-hidden"
+	class="relative {docked ? 'w-[calc(100dvw-18rem)]' : 'w-[100dvw]'} overflow-hidden"
+	style="height: calc(100dvh - {stripVisible ? stripHeight : 0}px)"
 >
 	<div
 		id="container"
@@ -251,40 +277,47 @@
 	{/if}
 </div>
 
-<ReplayBar
-	bind:this={replayBar}
-	{game}
-	disabled={isRecording}
-	onEnter={() => {
-		isReplaying = true;
-		notice = '';
-	}}
-	onExit={() => (isReplaying = false)}
-	onLoadFrame={(f, s) => {
-		replayFrame = f;
-		replaySource = s;
-	}}
-	onLoadError={(m) => (loadError = m)}
-	onNotice={(m) => (notice = m)}
-/>
+<!-- Bottom strip: a single floating rounded bar (matching the zoom / capture
+     bar aesthetic) merging the drill step timeline and the replay controls.
+     Hidden in free play; reserves real layout space — the canvas frame above
+     shrinks by the shell's measured height (padding included). Zoom + undo/redo
+     stay floating separately, lifted above the strip while it's visible.
+     ReplayBar stays mounted inside even when hidden so its imperative
+     load()/replay() entry points remain callable from TopBar in free play. -->
+<BottomStrip {docked} hidden={!stripVisible} bind:el={stripEl}>
+	<ReplayBar
+		bind:this={replayBar}
+		{game}
+		disabled={isRecording}
+		onEnter={() => {
+			isReplaying = true;
+			notice = '';
+		}}
+		onExit={() => (isReplaying = false)}
+		onLoadFrame={(f, s) => {
+			replayFrame = f;
+			replaySource = s;
+		}}
+		onLoadError={(m) => (loadError = m)}
+		onNotice={(m) => (notice = m)}
+	/>
+	{#if !isReplaying && caps.timeline}
+		<StepStrip {game} />
+	{/if}
+</BottomStrip>
 
 {#if !isReplaying}
-	<!-- Bottom controls tier, stacked over the step timeline when present.
-	     Zoom + undo/redo sit at the left; the capture bar is centered.
-	     The container is pass-through so transparent gaps don't block the
-	     board. Hidden during replay (ReplayBar takes over). -->
+	<!-- Floating zoom + undo/redo, lifted above the strip when visible. -->
 	<div
-		class="pointer-events-none fixed bottom-0 z-40 flex flex-col items-start gap-2 px-[max(1rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1 {docked
-			? 'left-0 right-[24rem]'
-			: 'inset-x-0'}"
+		class="pointer-events-none fixed left-0 z-40 px-[max(1rem,env(safe-area-inset-left))]"
+		style="bottom: calc({stripVisible
+			? stripHeight
+			: 0}px + max(0.5rem, env(safe-area-inset-bottom)))"
 	>
 		<div class="pointer-events-auto flex items-center gap-2">
 			<ZoomControl {game} />
 			<UndoRedoControls />
 		</div>
-		{#if caps.timeline}
-			<StepStrip {game} />
-		{/if}
 	</div>
 	<Hud {game} />
 	<AnnotationHud {game} />

@@ -59,7 +59,7 @@
 	placement="right"
 	modal={false}
 	dismissable={false}
-	class="library-drawer w-96 {pinned ? '' : 'shadow-[-10px_0_15px_-3px_rgba(0,0,0,0.1)]'}"
+	class="library-drawer w-72 {pinned ? '' : 'shadow-[-10px_0_15px_-3px_rgba(0,0,0,0.1)]'}"
 >
 	<div class="mb-2 flex shrink-0 items-center justify-between">
 		<h5 class="pl-5 text-xl font-bold">Library</h5>

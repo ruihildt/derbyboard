@@ -141,9 +141,6 @@ export interface Step {
 	showPackZone?: boolean;
 }
 
-/** Hard cap on the number of steps per authored clip (each step = 1 second). */
-export const MAX_STEPS_PER_CLIP = 8;
-
 export interface AuthoredClip {
 	kind: 'authored';
 	id: string;

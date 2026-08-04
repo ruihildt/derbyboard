@@ -91,7 +91,7 @@
 
 <div
 	class="pointer-events-none fixed top-0 z-30 {docked
-		? 'left-0 right-[24rem]'
+		? 'left-0 right-[18rem]'
 		: 'inset-x-0'} px-[max(0.75rem,env(safe-area-inset-left))] py-[max(0.5rem,env(safe-area-inset-top))]"
 >
 	<!-- Left column: Menu and the contextual settings panel share the same

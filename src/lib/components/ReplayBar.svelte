@@ -257,11 +257,10 @@
 </script>
 
 {#if player}
-	<div
-		class="control-bar fixed bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 flex items-center bg-white shadow-lg shadow-black/10 {$isMobile
-			? 'inset-x-0 gap-2 pl-[max(0.25rem,env(safe-area-inset-left))] pr-[max(0.25rem,env(safe-area-inset-right))]'
-			: 'left-1/2 max-w-[calc(100vw-2rem)] -translate-x-1/2 gap-3 rounded-lg px-2'}"
-	>
+	<!-- Contents render inside the BottomStrip's floating rounded bar, which
+	     owns the pill background/shadow — this row just fills the bar's width.
+	     Keeps the shared `control-bar` class for 44px height + button resting bg. -->
+	<div class="control-bar flex w-full items-center gap-2 px-2">
 		<ToolbarButton
 			class="flex !my-0 min-h-9 min-w-9 items-center justify-center rounded-lg text-gray-700 hover:bg-primary-200"
 			onclick={togglePlay}
@@ -280,9 +279,7 @@
 
 		<div
 			bind:this={trackEl}
-			class="relative flex h-9 cursor-pointer items-center touch-none {$isMobile
-				? 'w-auto min-w-[6rem] flex-1'
-				: 'w-72 flex-none'}"
+			class="relative flex h-9 min-w-[6rem] flex-1 cursor-pointer items-center touch-none"
 			role="slider"
 			aria-label="Seek"
 			aria-valuemin={0}

@@ -12,7 +12,6 @@ import type {
 	Annotation,
 	AnnotationTransform
 } from './types';
-import { MAX_STEPS_PER_CLIP } from './types';
 
 /** Captures the live board's poses (id + x/y/heading) as a step payload. */
 export function snapshotPoses(entities: Entity[]): EntityPose[] {
@@ -106,7 +105,6 @@ export function createAuthoredClipFromBoard(title?: string): string {
 export function addStepFromBoard(title?: string): string | null {
 	const clip = getActiveClip();
 	if (!clip) return null;
-	if (clip.steps.length >= MAX_STEPS_PER_CLIP) return null;
 	const stepId = newId();
 	// The new step starts where the previous step's movement ends — at the
 	// path endpoint, not the previous step's start pose.
@@ -133,7 +131,6 @@ export function duplicateActiveStep(): string | null {
 	const clip = getActiveClip();
 	const idx = activeStepIndex();
 	if (!clip || idx < 0) return null;
-	if (clip.steps.length >= MAX_STEPS_PER_CLIP) return null;
 	const source = clip.steps[idx];
 	const stepId = newId();
 	const insertAt = idx + 1;

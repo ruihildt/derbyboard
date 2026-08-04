@@ -366,9 +366,16 @@ function migrateV6ToV7(doc: BoardDoc): BoardDoc {
 			} as Annotation;
 		}
 		if (ann.kind === 'arrow') {
+			// At v6–v8 arrows carry `from`/`to` (track-space here); the v9
+			// migration below lifts them into `points`. Convert in place so
+			// v9 reads planar values, not stale track-space ones. The cast is
+			// needed because the current `Annotation` arrow variant has
+			// `points`, not `from`/`to`.
+			const oldArrow = ann as unknown as { from: PlanarPoint; to: PlanarPoint };
 			return {
 				...ann,
-				points: [pointToPlanar(ann.from), pointToPlanar(ann.to)]
+				from: pointToPlanar(oldArrow.from),
+				to: pointToPlanar(oldArrow.to)
 			} as Annotation;
 		}
 		if (ann.kind === 'gap') {

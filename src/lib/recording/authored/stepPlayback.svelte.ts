@@ -88,6 +88,18 @@ export class StepPlayback {
 		this.tweenToIdx(Math.min(this.getSteps().length - 1, this.lastNavIdx + 1));
 	}
 
+	/** Jumps to the first step with a tween. */
+	first(): void {
+		if (this.playing || this.player) this.stopPlayback(false);
+		this.tweenToIdx(0);
+	}
+
+	/** Jumps to the last step with a tween. */
+	last(): void {
+		if (this.playing || this.player) this.stopPlayback(false);
+		this.tweenToIdx(this.getSteps().length - 1);
+	}
+
 	private tweenToIdx(targetIdx: number): void {
 		this.lastNavIdx = targetIdx;
 		const targetStep = this.getSteps()[targetIdx];
@@ -117,6 +129,14 @@ export class StepPlayback {
 		}
 		this.player.toggle();
 		this.playing = this.player.isPlaying();
+		// When pausing, sync the active step to where playback stopped so
+		// the chip highlight and doc state match the displayed board position.
+		// navigateToStep(idx, false) updates the session index WITHOUT
+		// reloading the board, so the LIVE-tier paused poses are preserved.
+		if (!this.playing) {
+			this.lastNavIdx = this.playbackStep;
+			navigateToStep(this.playbackStep, false);
+		}
 	}
 
 	private startPlayback(): void {
@@ -274,6 +294,26 @@ export class StepPlayback {
 			this.currentTime = t;
 			this.playbackStep = stepIdx;
 		}
+	}
+
+	/**
+	 * Syncs `currentTime` to the active step's timeline position. Called when
+	 * idle (not playing / scrubbing / in playback mode) so the scrub bar fill
+	 * reflects the selected step. This covers page reload — where the active
+	 * step is restored from persistence but `currentTime` starts at 0 — and
+	 * step-chip selection, which navigates without tweening.
+	 */
+	syncTimeToActiveStep(): void {
+		const idx = this.getActiveIdx();
+		const steps = this.getSteps();
+		if (idx < 0 || steps.length === 0) return;
+		const tl = buildTimeline(steps);
+		let targetTime = 0;
+		for (const seg of tl.segments) {
+			if (seg.fromStep >= idx) break;
+			targetTime = seg.startMs + seg.durationMs;
+		}
+		this.currentTime = targetTime;
 	}
 
 	/** If authoring is closed out from elsewhere, tear down playback. */
