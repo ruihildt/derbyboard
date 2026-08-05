@@ -466,14 +466,16 @@ export class AnnotationRenderer {
 			const { box, corners, rot } = this.selChrome;
 			[box, ...corners, rot].forEach((s) => s.listening(false));
 		}
-		// Disable the hit graph on both layers for the gesture's lifetime.
-		// batchDraw() otherwise repaints the hit canvas of EVERY listening
-		// shape (thick hitStrokeWidth paths are the dominant per-frame cost),
-		// which saturates the main thread during longer drags. Re-enabled by
-		// {@link endGesture}; nothing on these layers needs hit detection
-		// while a gesture is in flight (the stage drives the pointer events).
-		this.annotationLayer.hitGraphEnabled(false);
-		this.controlLayer.hitGraphEnabled(false);
+		// NOTE: do NOT disable listening on the layers themselves (e.g. via
+		// the deprecated hitGraphEnabled, which aliases layer.listening).
+		// Layer.getIntersection() early-returns for non-listening layers
+		// WITHOUT reading their (stale, still-painted) hit canvas, so Konva's
+		// per-pointermove hit detection falls through to the player/path/track
+		// layers and performs several getImageData GPU readbacks + spiral
+		// searches per raw event — saturating the main thread and stuttering
+		// the drag. With only the shapes inerted, hit detection is answered
+		// from the top layers' stale hit canvas in a single readback, exactly
+		// as without a gesture.
 	}
 
 	/**
@@ -541,9 +543,6 @@ export class AnnotationRenderer {
 	/** Ends the live edit; the owner then commits and runs the full render. */
 	endGesture(): void {
 		this.liveAnnId = null;
-		// Re-enable hit detection (disabled by {@link beginGesture}).
-		this.annotationLayer.hitGraphEnabled(true);
-		this.controlLayer.hitGraphEnabled(true);
 	}
 
 	/**

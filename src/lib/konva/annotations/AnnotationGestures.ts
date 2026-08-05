@@ -147,7 +147,7 @@ export class AnnotationGestures {
 			cancelAnimationFrame(this.rafId);
 			this.rafId = null;
 		}
-		// A gesture torn down mid-flight must still re-enable the hit graph.
+		// A gesture torn down mid-flight must still end the renderer's live edit.
 		if (this.gesture) {
 			this.gesture = null;
 			this.renderer.endGesture();
