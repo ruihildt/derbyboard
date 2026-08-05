@@ -51,7 +51,7 @@ describe('capabilities — getCapabilities', () => {
 	it('free: no timeline, view + annotation tools, skater/official admitted', () => {
 		const caps = getCapabilities(boardDoc.current);
 		expect(caps.experience).toBe('free');
-		expect(caps.label).toBe('Free Play');
+		expect(caps.label).toBe('Live');
 		expect(caps.timeline).toBe(false);
 		expect(caps.admittedTools).toEqual(FREE_TOOLS);
 		expect(caps.admittedEntityKinds).toEqual(['skater', 'official']);
@@ -64,7 +64,7 @@ describe('capabilities — getCapabilities', () => {
 		authoringSession.set({ activeClipId: 'c1', activeStepIndex: 0 });
 		const caps = getCapabilities(boardDoc.current);
 		expect(caps.experience).toBe('drill');
-		expect(caps.label).toBe('Drill');
+		expect(caps.label).toBe('Staged');
 		expect(caps.timeline).toBe(true);
 		expect(caps.admittedTools).toEqual(ALL_TOOLS);
 		expect(caps.admittedEntityKinds).toEqual(['skater', 'official']);

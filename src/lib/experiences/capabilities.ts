@@ -18,12 +18,12 @@ export type Experience = 'free' | 'drill';
  */
 export interface Capabilities {
 	experience: Experience;
-	/** User-facing label ("Free Play" / "Drill"). */
+	/** User-facing label ("Live" / "Staged"). */
 	label: string;
 	/** Whether the step timeline (steps, scrub, playback) is available. */
 	timeline: boolean;
-	/** View tools available in this experience. Free Play exposes the
-	 * select/hand pair plus the annotation tools; Drill admits the full
+	/** View tools available in this experience. Live exposes the
+	 * select/hand pair plus the annotation tools; Staged admits the full
 	 * authoring palette (adds the step-scoped `drawPath`/`gap` tools). */
 	admittedTools: DrawTool[];
 	/**
@@ -42,26 +42,26 @@ export const VIEW_TOOLS: DrawTool[] = ['select', 'hand'];
 
 /**
  * Annotation/drawing tools that lay marks directly on the board surface with
- * no step required — admitted in both Free Play and Drill. Includes `erase`,
+ * no step required — admitted in both Live and Staged. Includes `erase`,
  * which removes an annotation by tapping it (annotations only; never players
  * or movement paths).
  */
 export const ANNOTATION_TOOLS: DrawTool[] = ['pen', 'arrow', 'zone', 'label', 'erase'];
 
 /**
- * Step-scoped authoring tools, admitted only by Drill: `drawPath` (movement
+ * Step-scoped authoring tools, admitted only by Staged: `drawPath` (movement
  * paths need a step) and `gap` (the measurement tool).
  */
 export const DRILL_ONLY_TOOLS: DrawTool[] = ['drawPath', 'gap'];
 
 /**
- * The full tool palette admitted by Drill — view tools plus annotations plus
- * the step-scoped authoring tools. Free Play admits `VIEW_TOOLS` plus
+ * The full tool palette admitted by Staged — view tools plus annotations plus
+ * the step-scoped authoring tools. Live admits `VIEW_TOOLS` plus
  * `ANNOTATION_TOOLS`.
  */
 export const ALL_TOOLS: DrawTool[] = [...VIEW_TOOLS, ...ANNOTATION_TOOLS, ...DRILL_ONLY_TOOLS];
 
-/** Free Play's palette: view tools plus the board-level annotation tools. */
+/** Live's palette: view tools plus the board-level annotation tools. */
 export const FREE_TOOLS: DrawTool[] = [...VIEW_TOOLS, ...ANNOTATION_TOOLS];
 
 interface ExperienceEntry {
@@ -84,8 +84,8 @@ const REGISTRY: Record<Experience, ExperienceEntry> = {
 };
 
 const LABELS: Record<Experience, string> = {
-	free: 'Free Play',
-	drill: 'Drill'
+	free: 'Live',
+	drill: 'Staged'
 };
 
 /**

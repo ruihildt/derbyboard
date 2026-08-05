@@ -86,7 +86,7 @@ export function getActiveStep(doc: BoardDoc = boardDoc.current): Step | undefine
  * Creates a new authored clip whose first step is a snapshot of the current
  * board, makes it the active clip, and navigates to step 0. Returns the new
  * clip id. This is the entry point into structured editing — i.e. the
- * **Free → Drill promotion** (non-destructive: the free `entities` survive on
+ * **Live → Staged promotion** (non-destructive: the free `entities` survive on
  * the board so exit restores them, exactly as before).
  */
 export function createAuthoredClipFromBoard(title?: string): string {
@@ -659,7 +659,7 @@ export function exitAuthoring(): void {
 }
 
 /**
- * Alias of {@link exitAuthoring} for the experience switcher's "→ Free Play"
+ * Alias of {@link exitAuthoring} for the experience switcher's "Live"
  * action. Identical behaviour — kept as a separate name so call sites read as
  * the experience transition they perform, not the internal teardown.
  */

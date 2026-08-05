@@ -623,7 +623,7 @@ describe('clipOps — exitAuthoring', () => {
 describe('clipOps — experience transitions (promote / exit)', () => {
 	beforeEach(() => resetBoard([entity('a', 10), entity('b', 20)]));
 
-	it('promotes Free → Drill with step 0 = board snapshot', () => {
+	it('promotes Live → Staged with step 0 = board snapshot', () => {
 		const id = createAuthoredClipFromBoard();
 		const clip = findAuthoredClip(boardDoc.current, id)!;
 		expect(clip.steps).toHaveLength(1);

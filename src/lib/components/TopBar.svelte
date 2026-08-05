@@ -78,9 +78,9 @@
 	];
 
 	// Reset to the neutral tool whenever the current tool isn't admitted by the
-	// active experience (e.g. a drawing tool armed in Drill, then the board
-	// drops back to Free; or the `hand` tool armed in Free, then a clip turns
-	// the board into Drill). Capture tools are always available and exempt.
+	// active experience (e.g. a drawing tool armed in Staged, then the board
+	// drops back to Live; or the `hand` tool armed in Live, then a clip turns
+	// the board into Staged). Capture tools are always available and exempt.
 	$effect(() => {
 		if (isCaptureTool($toolMode)) return;
 		if (!caps.admittedTools.includes($toolMode)) {
@@ -108,8 +108,8 @@
 	</div>
 
 	<!-- Unified control bar (centered): board interactions only. The switcher
-	     is shared across Free Play and Drill; the drawing tools appear only in
-	     Drill (behind a divider). The switcher badge indicates the mode. -->
+	     is shared across Live and Staged; the drawing tools appear only in
+	     Staged (behind a divider). The switcher badge indicates the mode. -->
 	<div
 		class="pointer-events-auto flex absolute left-1/2 top-[max(0.5rem,env(safe-area-inset-top))] -translate-x-1/2 items-center gap-0.5"
 	>

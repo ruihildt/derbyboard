@@ -141,7 +141,7 @@ export class ViewportController {
 		// were just rebuilt around the new center, so re-project these overlays too
 		// — otherwise paths stay floating at their old pixel positions instead of
 		// following the player. (Replay is handled by renderSampleTransform above.)
-		// In Free Play the step is undefined but board-level annotations still need
+		// In Live the step is undefined but board-level annotations still need
 		// re-projecting, so this runs in both experiences.
 		this.hooks.onOverlaysChanged();
 	}

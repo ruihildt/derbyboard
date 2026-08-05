@@ -1015,7 +1015,7 @@ export class KonvaGame {
 	}
 
 	/**
-	 * Renders annotations for a step. With step undefined (Free Play) only
+	 * Renders annotations for a step. With step undefined (Live) only
 	 * board-wide marks are shown; a scoped mark (single step or step range)
 	 * appears only while the active step falls within its scope. The active
 	 * clip's step order is resolved here so callers stay unchanged.

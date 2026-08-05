@@ -223,7 +223,7 @@
 
 {#if !isReplaying}
 	<!-- Consolidated top control shell: Menu + experience switcher + lineup,
-	     tool palette (Drill). Capture + zoom + undo/redo live at the bottom. -->
+	     tool palette (Staged). Capture + zoom + undo/redo live at the bottom. -->
 	<TopBar
 		{game}
 		{docked}

@@ -270,9 +270,9 @@ export class DrawingToolController {
 
 		const step = this.deps.getActiveStep();
 
-		// Commit the gesture. `drawPath` is step-scoped (Free Play never arms
+		// Commit the gesture. `drawPath` is step-scoped (Live never arms
 		// it, and it needs a step to attach the path to); the annotation tools
-		// commit to the active step in Drill or to the board in Free Play.
+		// commit to the active step in Staged or to the board in Live.
 		if (tool === 'drawPath' && step) {
 			const selectedId = get(selectedEntityId);
 			if (selectedId && this.drawingPoints.length >= 2) {

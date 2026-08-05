@@ -34,17 +34,17 @@
 	}
 
 	/**
-	 * The transitions allowed from the current experience. Free → Drill
-	 * snapshots the board as step 0 (non-destructive); → Free Play exits
-	 * authoring and restores the free board. UX plan §7.
+	 * The transitions allowed from the current experience. From Live,
+	 * snapshotting the board as step 0 (non-destructive) enters Staged;
+	 * from Staged, exiting authoring restores the Live board. UX plan §7.
 	 */
 	const transitions = $derived.by<Transition[]>(() => {
 		const exp = caps.experience;
 		void $boardDoc;
 		if (exp === 'free') {
-			return [{ label: '→ Drill', run: () => createAuthoredClipFromBoard() }];
+			return [{ label: 'Staged', run: () => createAuthoredClipFromBoard() }];
 		}
-		return [{ label: '→ Free Play', run: () => exitToFree() }];
+		return [{ label: 'Live', run: () => exitToFree() }];
 	});
 
 	function choose(t: Transition) {
