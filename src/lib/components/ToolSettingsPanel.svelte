@@ -3,6 +3,7 @@
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { captureSettings } from '$lib/stores/captureSettings';
 	import { toolMode } from '$lib/stores/toolMode';
+	import { labelSettings, type LabelSize } from '$lib/stores/labelSettings';
 	import { exportSettings, type ImageScale, type VideoFps } from '$lib/stores/exportSettings';
 	import type { WatermarkSize } from '$lib/konva/Watermark';
 	import type { Quality } from '$lib/utils/codec';
@@ -20,7 +21,12 @@
 	// surface their own settings here. While a capture tool is armed the
 	// capture zone is always resize-able (ZoneOverlay edit mode is derived
 	// from the armed tool — see regionMode store); no manual toggle.
-	let mode = $derived($toolMode === 'video' || $toolMode === 'screenshot' ? $toolMode : null);
+	let captureMode = $derived(
+		$toolMode === 'video' || $toolMode === 'screenshot' ? $toolMode : null
+	);
+	// The label tool surfaces its own Font setting here (size applied live to
+	// the in-progress text and stamped onto committed labels).
+	let isLabel = $derived($toolMode === 'label');
 
 	function pill(active: boolean): string {
 		return `rounded px-2 py-1 text-xs ${active ? 'bg-primary-200 text-gray-900' : 'text-gray-600 hover:bg-gray-100'}`;
@@ -46,9 +52,10 @@
 		medium: 'Medium',
 		large: 'Large'
 	};
+	const FONT_SIZES: LabelSize[] = ['S', 'M', 'L', 'XL'];
 </script>
 
-{#if mode}
+{#if captureMode}
 	<div class="pointer-events-auto w-60 rounded-2xl bg-white p-3 shadow-lg shadow-black/10">
 		<!-- Zone format (shared) -->
 		<section class="mb-4">
@@ -63,7 +70,7 @@
 		</section>
 
 		<!-- Resolution: video qualities or image scale -->
-		{#if mode === 'video'}
+		{#if captureMode === 'video'}
 			<section class="mb-4">
 				<h3
 					class="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"
@@ -128,6 +135,25 @@
 					</button>
 				{/each}
 			</div>
+		</section>
+	</div>
+{:else if isLabel}
+	<div class="pointer-events-auto w-60 rounded-2xl bg-white p-3 shadow-lg shadow-black/10">
+		<section>
+			<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Font size</h3>
+			<div class="flex gap-1">
+				{#each FONT_SIZES as size (size)}
+					<button
+						class={pill($labelSettings.size === size)}
+						onclick={() => ($labelSettings = { ...$labelSettings, size })}
+					>
+						{size}
+					</button>
+				{/each}
+			</div>
+			<p class="mt-2 text-[11px] leading-snug text-gray-400">
+				Tap the board to place a label, then type. Press Enter to finish.
+			</p>
 		</section>
 	</div>
 {/if}

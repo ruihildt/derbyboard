@@ -47,6 +47,16 @@ export interface DrawingToolDeps {
 }
 
 /**
+ * Minimal inline-editor surface the owner wires after construction (same
+ * late-binding pattern as {@link AnnotationRenderer.onGestureStart}). The label
+ * tool delegates placement to it instead of a `prompt()` dialog.
+ */
+export interface LabelEditor {
+	start(planePos: PlanarPoint): void;
+	isActive(): boolean;
+}
+
+/**
  * Input handling for the drawing tools (pen, arrow, zone, gap, label,
  * drawPath): freehand point capture with rAF-coalesced preview, the movement
  * path length budget (amber/red cue near/at MAX_PATH_LENGTH_M), discrete
@@ -65,7 +75,15 @@ export class DrawingToolController {
 	private rafId: number | null = null;
 	private pathLengthAccum = 0; // running arc-length for path cap enforcement
 
+	/** Late-bound by the owner; the label tool starts an inline edit through it. */
+	private labelEditor: LabelEditor | null = null;
+
 	constructor(private deps: DrawingToolDeps) {}
+
+	/** Wires the inline label editor (see {@link LabelEditor}). */
+	setLabelEditor(editor: LabelEditor): void {
+		this.labelEditor = editor;
+	}
 
 	/** Registers the stage pointerdown handler that arms a draw gesture. */
 	attach(): void {
@@ -125,19 +143,13 @@ export class DrawingToolController {
 		} else if (tool === 'gap') {
 			this.firstAnchor = { x: planePos.x, y: planePos.y };
 		} else if (tool === 'label') {
-			const text = prompt('Label text:');
-			if (text && text.trim()) {
-				// Create label annotation
-				this.createAnnotation({
-					id: crypto.randomUUID(),
-					kind: 'label',
-					at: { x: planePos.x, y: planePos.y },
-					text: text.trim(),
-					style: { color: '#e11d48', width: 2 }
-				});
-				// Auto-return to select after discrete tools
-				toolMode.set('select');
-			}
+			// Place a label draft at the tap point and enter inline editing — the
+			// editor owns keystrokes until Enter/click-away commits. If a draft was
+			// already active it has already been committed by the editor's own
+			// capture-phase pointerdown handler (runs before this stage handler),
+			// so this starts a fresh label — the place-multiple flow. Stay in the
+			// label tool so several labels can be placed in sequence.
+			this.labelEditor?.start({ x: planePos.x, y: planePos.y });
 			return;
 		}
 
@@ -323,7 +335,9 @@ export class DrawingToolController {
 		// Auto-return to select after gesture tools so the path's editing
 		// nodes appear immediately — in Select the previous/current/next
 		// paths for the selected entity all show their draggable handles.
-		if (tool === 'gap' || tool === 'label' || tool === 'drawPath') {
+		// The label tool stays armed so several labels can be placed in a row
+		// (inline editing commits on Enter / click-away, not on pointerup).
+		if (tool === 'gap' || tool === 'drawPath') {
 			toolMode.set('select');
 		}
 

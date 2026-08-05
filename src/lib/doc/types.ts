@@ -88,7 +88,7 @@ export type Annotation =
 	| (AnnotationBase & { kind: 'pen'; points: PlanarPoint[] })
 	| (AnnotationBase & { kind: 'arrow'; points: PlanarPoint[] })
 	| (AnnotationBase & { kind: 'zone'; points: PlanarPoint[] })
-	| (AnnotationBase & { kind: 'label'; at: PlanarPoint; text: string })
+	| (AnnotationBase & { kind: 'label'; at: PlanarPoint; text: string; fontSize?: number })
 	| (AnnotationBase & { kind: 'gap'; from: PlanarPoint; to: PlanarPoint });
 
 export interface Entity {

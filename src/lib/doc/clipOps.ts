@@ -363,10 +363,13 @@ export function setAnnotationTransform(
 
 /** Deletes an annotation by id. No-op if absent. */
 export function deleteAnnotation(annId: string): void {
-	boardDoc.applyEdit((draft) => {
-		if (!draft.annotations) return;
-		draft.annotations = draft.annotations.filter((a) => a.id !== annId);
-	}, 'Delete annotation');
+  boardDoc.applyEdit((draft) => {
+    if (!draft.annotations) return;
+    const index = draft.annotations.findIndex(a => a.id === annId);
+    if (index !== -1) {
+      draft.annotations.splice(index, 1);
+    }
+  }, 'Delete annotation');
 }
 
 /** Removes every annotation from the board. */

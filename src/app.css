@@ -4,6 +4,18 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Excalifont: the hand-drawn font used for canvas text labels. Konva renders
+   text through the canvas 2D context, which resolves fonts from the document's
+   registered @font-face set, so registering it here makes it available to both
+   the DOM and the Konva.Text nodes on the annotation layer. */
+@font-face {
+	font-family: 'Excalifont';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url('/font/Excalifont-Regular.woff2') format('woff2');
+}
+
 @custom-variant mobile-portrait (@media (max-width: 639.98px) and (orientation: portrait));
 
 @source '../node_modules/flowbite-svelte/dist';

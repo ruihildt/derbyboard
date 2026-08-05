@@ -47,6 +47,7 @@ import { AnnotationRenderer } from './annotations/AnnotationRenderer';
 import { AnnotationGestures } from './annotations/AnnotationGestures';
 import { RotationHandleController } from './heading/RotationHandleController';
 import { DrawingToolController } from './tools/DrawingToolController';
+import { LabelEditorController } from './tools/LabelEditorController';
 import { SelectionController } from './tools/SelectionController';
 import type { TeamPlayerRole, TeamPlayerTeam } from './KonvaTeamPlayer';
 import type { SkatingOfficialRole } from './KonvaSkatingOfficial';
@@ -92,6 +93,7 @@ export class KonvaGame {
 	private pathEditor!: PathEditor;
 	private rotationHandleController!: RotationHandleController;
 	private drawingTools!: DrawingToolController;
+	private labelEditor!: LabelEditorController;
 	private selectionController!: SelectionController;
 
 	private exporter!: BoardExporter;
@@ -265,6 +267,17 @@ export class KonvaGame {
 			onAfterCommit: (step) => this.renderStepOverlays(step, get(selectedEntityId))
 		});
 		this.drawingTools.attach();
+		// Inline label editor: the label tool delegates placement to it (direct
+		// on-canvas typing instead of a prompt box). Wired after the drawing
+		// tools so they can hand label taps to it.
+		this.labelEditor = new LabelEditorController({
+			stage: this.stage,
+			projection: this.projection,
+			annotationLayer: this.annotationLayer,
+			onCommitted: () => this.renderAnnotations(this.getActiveStep())
+		});
+		this.labelEditor.attach();
+		this.drawingTools.setLabelEditor(this.labelEditor);
 		this.selectionController = new SelectionController({
 			stage: this.stage,
 			isReplayMode: () => this.replay.isActive(),
@@ -491,6 +504,17 @@ export class KonvaGame {
 
 		// If the default view crops the track (e.g. small/mobile portrait), fit it.
 		this.viewport.fitIfOverflowing();
+
+		// Preload the Excalifont (used by canvas labels) and re-render annotations
+		// once it's ready: Konva draws text through the 2D context, which only
+		// resolves an unloaded font to a fallback, so without this the first paint
+		// of any label would use the wrong metrics/font until the next re-render.
+		if ('fonts' in document) {
+			document.fonts
+				.load('40px Excalifont')
+				.then(() => this.renderAnnotations(this.getActiveStep()))
+				.catch(() => {});
+		}
 	}
 
 	destroy() {
@@ -500,6 +524,7 @@ export class KonvaGame {
 		this.viewport.destroy();
 		this.gestureHandler.destroy();
 		this.annotationGestures.destroy();
+		this.labelEditor.destroy();
 		this.selectionUnsubscribe?.();
 		this.annotationSelectionUnsubscribe?.();
 		this.toolModeUnsubscribe?.();
