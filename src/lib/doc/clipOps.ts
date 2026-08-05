@@ -453,6 +453,19 @@ export function setAnnotationFontSize(annId: string, fontSize: number): void {
 }
 
 /**
+ * Replaces a label's text. One undo entry. Only affects `kind: 'label'`
+ * annotations; other kinds are ignored.
+ */
+export function setAnnotationText(annId: string, text: string): void {
+	boardDoc.applyEdit((draft) => {
+		if (!draft.annotations) return;
+		const ann = draft.annotations.find((a) => a.id === annId);
+		if (!ann || ann.kind !== 'label') return;
+		ann.text = text;
+	}, 'Edit label text');
+}
+
+/**
  * Sets an annotation's move/resize/rotate transform. One undo entry. Pass
  * `undefined` to reset to identity (clears the field).
  */

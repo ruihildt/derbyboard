@@ -1,10 +1,12 @@
 import { get, type Unsubscriber } from 'svelte/store';
 import Konva from 'konva';
 
-import { addAnnotation } from '$lib/doc/clipOps';
+import { addAnnotation, setAnnotationText, deleteAnnotation } from '$lib/doc/clipOps';
 import { labelSettings, labelBasePx } from '$lib/stores/labelSettings';
+import { selectedAnnotationId } from '$lib/stores/selection';
 import { toolMode } from '$lib/stores/toolMode';
 import type { Annotation, PlanarPoint } from '$lib/doc/types';
+import { effectiveAnchors, resolvedTransform } from '../annotationTransform';
 import { LABEL_FONT_FAMILY } from '../annotations/AnnotationRenderer';
 import type { BoardProjection } from '../paths/projection';
 
@@ -45,8 +47,22 @@ export interface LabelEditorDeps {
  */
 export class LabelEditorController {
 	private editing = false;
+	/** When set, the draft edits an EXISTING label (commit updates it) instead
+	 * of creating a new one. */
+	private editingId: string | null = null;
+	/** The committed label group hidden while its text is being edited (so the
+	 * draft doesn't double-render, and rotation is respected). */
+	private hiddenGroup: Konva.Group | null = null;
 	private draftPos: PlanarPoint | null = null;
+	/** Rotation (radians) of the draft — matches the edited label's angle. */
+	private draftAngle = 0;
+	/** Caret position within {@link draftText} (0..length). */
+	private caretIdx = 0;
 	private draftText = '';
+	private draftColor = '#e11d48';
+	/** Fixed font size (CSS px) for an existing-label edit; null for new
+	 * labels (which follow the live Font setting). */
+	private draftFontSizeCss: number | null = null;
 	private group: Konva.Group | null = null;
 	private textNode: Konva.Text | null = null;
 	private bgNode: Konva.Rect | null = null;
@@ -91,9 +107,54 @@ export class LabelEditorController {
 	/** Begins an inline edit at the planar (world-metre) anchor point. */
 	start(planePos: PlanarPoint): void {
 		if (this.editing) return;
+		this.editingId = null;
+		this.draftColor = '#e11d48';
+		this.draftFontSizeCss = null;
+		this.beginDraft(planePos, '', 0, 0);
+	}
+
+	/**
+	 * Begins an inline edit of an EXISTING label (double-click in Select): the
+	 * draft is seeded with the label's text at its CURRENT (effective)
+	 * position and angle, the committed label is hidden, and the caret is
+	 * placed where the double-click landed. Commit updates the label (or
+	 * deletes it if emptied); Escape cancels, restoring the original.
+	 */
+	editExisting(
+		ann: Extract<Annotation, { kind: 'label' }>,
+		clickScreen: { x: number; y: number } | null
+	): void {
+		if (this.editing) return;
+		this.editingId = ann.id;
+		this.draftColor = ann.style.color;
+		this.draftFontSizeCss = ann.fontSize ?? null;
+		// Edit at the label's effective (moved/rotated) position + angle, NOT
+		// ann.at, so the draft overlays the label exactly.
+		const pos = effectiveAnchors(ann)[0];
+		const angle = resolvedTransform(ann).angle;
+		// Place the caret where the double-click hit (clamped into the text).
+		const caretIdx = clickScreen
+			? this.caretIndexAt(ann.text, clickScreen, pos, angle)
+			: ann.text.length;
+		// Hide the committed label so the draft is the single source of truth.
+		this.hiddenGroup =
+			Array.from(this.deps.annotationLayer.find<Konva.Group>('.annotation')).find(
+				(g) => g.getAttr('annId') === ann.id
+			) ?? null;
+		this.hiddenGroup?.visible(false);
+		this.deps.annotationLayer.batchDraw();
+		// Drop the selection chrome for the label being edited.
+		selectedAnnotationId.set(null);
+		this.beginDraft(pos, ann.text, angle, caretIdx);
+	}
+
+	/** Shared draft setup: creates the (inert) draft nodes and starts blinking. */
+	private beginDraft(planePos: PlanarPoint, text: string, angle: number, caretIdx: number): void {
 		this.editing = true;
 		this.draftPos = { ...planePos };
-		this.draftText = '';
+		this.draftAngle = angle;
+		this.caretIdx = Math.max(0, Math.min(text.length, caretIdx));
+		this.draftText = text;
 		this.caretVisible = true;
 
 		const group = new Konva.Group({ name: 'labelDraft', listening: false });
@@ -105,10 +166,10 @@ export class LabelEditorController {
 		this.textNode = new Konva.Text({
 			text: '',
 			fontFamily: LABEL_FONT_FAMILY,
-			fill: '#e11d48',
+			fill: this.draftColor,
 			listening: false
 		});
-		this.caretNode = new Konva.Rect({ fill: '#e11d48', listening: false });
+		this.caretNode = new Konva.Rect({ fill: this.draftColor, listening: false });
 		group.add(this.bgNode, this.textNode, this.caretNode);
 		this.group = group;
 		this.deps.annotationLayer.add(group);
@@ -126,7 +187,9 @@ export class LabelEditorController {
 		this.renderDraft();
 	}
 
-	/** Re-positions / re-sizes the draft nodes from the current state. */
+	/** Re-positions / re-sizes the draft nodes from the current state. The
+	 * draft mirrors the committed label's centre-based, rotated geometry so it
+	 * overlays it exactly; the caret sits at {@link caretIdx}. */
 	private renderDraft(): void {
 		if (
 			!this.editing ||
@@ -139,36 +202,88 @@ export class LabelEditorController {
 			return;
 		}
 		const scale = this.deps.stage.scaleX() || 1;
-		const basePx = labelBasePx(get(labelSettings).size);
+		const basePx = this.draftFontSizeCss ?? labelBasePx(get(labelSettings).size);
 		const fontSize = Math.max(12, basePx / scale);
-		const atPx = this.deps.projection.projectPoint(this.draftPos.x, this.draftPos.y);
+		const placementPx = this.deps.projection.projectPoint(this.draftPos.x, this.draftPos.y);
 		const pad = 4;
 		const textWidth = measureWidth(this.draftText, fontSize);
-		const bgHeight = fontSize * 1.4;
+		const bgW = textWidth + pad * 2;
+		const bgH = fontSize * 1.4;
+		// Centre of the text box (the rotate pivot), matching AnnotationRenderer.
+		const centerPx = { x: placementPx.x + textWidth / 2, y: placementPx.y + fontSize * 0.45 };
+		const deg = (this.draftAngle * 180) / Math.PI;
 
+		// Text: drawn centred on centerPx (offset = half text box) then rotated.
 		this.textNode.setAttrs({
-			x: atPx.x,
-			y: atPx.y,
+			x: centerPx.x,
+			y: centerPx.y,
+			offsetX: textWidth / 2,
+			offsetY: fontSize * 0.45,
+			rotation: deg,
 			text: this.draftText,
-			fontSize
+			fontSize,
+			fill: this.draftColor
 		});
 		// Background only once there is text to frame.
 		this.bgNode.setAttrs({
-			x: atPx.x - pad,
-			y: atPx.y - fontSize * 0.25,
-			width: textWidth + pad * 2,
-			height: bgHeight,
+			x: centerPx.x,
+			y: centerPx.y,
+			offsetX: bgW / 2,
+			offsetY: bgH / 2,
+			rotation: deg,
+			width: bgW,
+			height: bgH,
 			visible: this.draftText.length > 0
 		});
+		// Caret at caretIdx: its left edge sits at (textLeft + width-up-to-idx).
+		// As a centred node that means offsetX = textWidth/2 - widthUpToCaret.
+		const widthUpToCaret = measureWidth(this.draftText.slice(0, this.caretIdx), fontSize);
 		this.caretNode.setAttrs({
-			x: atPx.x + textWidth + 1,
-			y: atPx.y,
+			x: centerPx.x,
+			y: centerPx.y,
+			offsetX: textWidth / 2 - widthUpToCaret,
+			offsetY: fontSize * 0.45,
+			rotation: deg,
 			width: Math.max(1, 2 / scale),
 			height: fontSize,
 			visible: this.caretVisible
 		});
 
 		this.deps.annotationLayer.batchDraw();
+	}
+
+	/**
+	 * Resolves the caret index for a double-click at `clickScreen` (stage
+	 * coords) by transforming the click into the label's local (unrotated)
+	 * frame and finding the nearest character boundary.
+	 */
+	private caretIndexAt(
+		text: string,
+		clickScreen: { x: number; y: number },
+		planePos: PlanarPoint,
+		angle: number
+	): number {
+		const scale = this.deps.stage.scaleX() || 1;
+		const basePx = this.draftFontSizeCss ?? labelBasePx(get(labelSettings).size);
+		const fontSize = Math.max(12, basePx / scale);
+		const textWidth = measureWidth(text, fontSize);
+		const placementPx = this.deps.projection.projectPoint(planePos.x, planePos.y);
+		const center = { x: placementPx.x + textWidth / 2, y: placementPx.y + fontSize * 0.45 };
+		// Click → local frame (translate to centre, un-rotate).
+		const dx = clickScreen.x - center.x;
+		const dy = clickScreen.y - center.y;
+		const cos = Math.cos(-angle);
+		const sin = Math.sin(-angle);
+		const localX = dx * cos - dy * sin;
+		// Text left is at local -textWidth/2; clickRelX is relative to it.
+		const clickRelX = localX + textWidth / 2;
+		// First character whose midpoint is past the click → caret before it.
+		for (let i = 0; i < text.length; i++) {
+			const before = measureWidth(text.slice(0, i), fontSize);
+			const charW = measureWidth(text[i], fontSize);
+			if (clickRelX < before + charW / 2) return i;
+		}
+		return text.length;
 	}
 
 	private handleKey(e: KeyboardEvent): void {
@@ -187,10 +302,30 @@ export class LabelEditorController {
 			this.cancel();
 			return;
 		}
+		if (e.key === 'ArrowLeft') {
+			e.preventDefault();
+			if (this.caretIdx > 0) {
+				this.caretIdx--;
+				this.caretVisible = true;
+				this.renderDraft();
+			}
+			return;
+		}
+		if (e.key === 'ArrowRight') {
+			e.preventDefault();
+			if (this.caretIdx < this.draftText.length) {
+				this.caretIdx++;
+				this.caretVisible = true;
+				this.renderDraft();
+			}
+			return;
+		}
 		if (e.key === 'Backspace') {
 			e.preventDefault();
-			if (this.draftText.length > 0) {
-				this.draftText = this.draftText.slice(0, -1);
+			if (this.caretIdx > 0) {
+				this.draftText =
+					this.draftText.slice(0, this.caretIdx - 1) + this.draftText.slice(this.caretIdx);
+				this.caretIdx--;
 				this.caretVisible = true;
 				this.renderDraft();
 			}
@@ -198,23 +333,38 @@ export class LabelEditorController {
 		}
 		// Printable characters (length 1 covers letters/digits/punctuation/space).
 		// Ignore pure-modifier and key combinations (Ctrl/Cmd/Meta) so OS shortcuts
-		// are unaffected; also skip non-printing keys (Arrow*, Tab, Home, …).
+		// are unaffected; also skip non-printing keys (Tab, Home, …).
 		if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
 			e.preventDefault();
-			this.draftText += e.key;
+			this.draftText =
+				this.draftText.slice(0, this.caretIdx) + e.key + this.draftText.slice(this.caretIdx);
+			this.caretIdx++;
 			this.caretVisible = true;
 			this.renderDraft();
 		}
 	}
 
-	/** Commits the draft as a label annotation (or discards it if empty). */
+	/** Commits the draft — creating a new label, or updating (or deleting, if
+	 * emptied) the edited existing one. */
 	commit(): void {
 		if (!this.editing) return;
 		const pos = this.draftPos;
 		const text = this.draftText;
-		const size = labelBasePx(get(labelSettings).size);
+		const editingId = this.editingId;
+		const size = this.draftFontSizeCss ?? labelBasePx(get(labelSettings).size);
 		this.teardown();
 
+		if (editingId) {
+			// Editing an existing label: update its text, or delete if emptied.
+			// The doc change rebuilds the (hidden) committed group visible.
+			if (text.trim().length > 0) {
+				setAnnotationText(editingId, text);
+			} else {
+				deleteAnnotation(editingId);
+			}
+			this.deps.onCommitted();
+			return;
+		}
 		if (pos && text.trim().length > 0) {
 			// Typed as the label member (sans id) so it satisfies addAnnotation's
 			// (non-distributive) Omit<Annotation,'id'> param — a fresh object
@@ -236,7 +386,7 @@ export class LabelEditorController {
 		}
 	}
 
-	/** Discards the draft without creating an annotation. */
+	/** Discards the draft without changing the document. */
 	cancel(): void {
 		if (!this.editing) return;
 		this.teardown();
@@ -246,7 +396,14 @@ export class LabelEditorController {
 	/** Clears edit state and tears down draft nodes + listeners. */
 	private teardown(): void {
 		this.editing = false;
+		this.editingId = null;
+		// Restore the committed label that was hidden during an existing-label
+		// edit (on commit the doc re-render then updates its text in place).
+		this.hiddenGroup?.visible(true);
+		this.hiddenGroup = null;
 		this.draftPos = null;
+		this.draftAngle = 0;
+		this.caretIdx = 0;
 		this.draftText = '';
 		if (this.blinkId) {
 			clearInterval(this.blinkId);

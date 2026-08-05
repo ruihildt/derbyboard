@@ -240,6 +240,7 @@ export class KonvaGame {
 		);
 		this.annotationRenderer.onGestureStart = (type, ann, e, su, sv) =>
 			this.annotationGestures.start(type, ann, e, su, sv);
+		this.annotationGestures.onEditLabel = (ann, click) => this.labelEditor.editExisting(ann, click);
 		this.pathRenderer = new PathRenderer(
 			this.pathLayer,
 			this.controlLayer,

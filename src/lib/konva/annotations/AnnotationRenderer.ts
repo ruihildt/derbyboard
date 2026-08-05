@@ -187,27 +187,7 @@ export class AnnotationRenderer {
 					this.rebuildAnnotationGroup(group, ann, eff);
 					return;
 				}
-				const [rect, text] = children as [Konva.Rect, Konva.Text];
-				const atPx = this.projection.projectPoint(eff[0].x, eff[0].y);
-				const fontSize = Math.max(12, labelScreenPx(ann) / this.stage.scaleX());
-				const pad = 4;
-				const textWidth = measureLabelWidth(ann.text, fontSize);
-				const bgHeight = fontSize * 1.4;
-				// Update rect
-				rect.x(atPx.x - pad);
-				rect.y(atPx.y - fontSize * 0.25);
-				rect.width(textWidth + pad * 2);
-				rect.height(bgHeight);
-				rect.cornerRadius(4);
-				// Update text
-				text.x(atPx.x);
-				text.y(atPx.y);
-				text.text(ann.text);
-				text.fontSize(fontSize);
-				text.fontFamily(LABEL_FONT_FAMILY);
-				text.fill(ann.style.color);
-				// Update visual properties (cheap)
-				rect.fill('rgba(255,255,255,0.8)');
+				this.applyLabelNodes(group, this.labelMetrics(ann), ann);
 				break;
 			}
 			case 'pen':
@@ -301,33 +281,11 @@ export class AnnotationRenderer {
 	 */
 	private appendShapes(group: Konva.Group, ann: Annotation, eff: PlanarPoint[]): void {
 		if (ann.kind === 'label') {
-			const atPx = this.projection.projectPoint(eff[0].x, eff[0].y);
-			const fontSize = Math.max(12, labelScreenPx(ann) / this.stage.scaleX());
-			const pad = 4;
-			const textWidth = measureLabelWidth(ann.text, fontSize);
-			const bgHeight = fontSize * 1.4;
-			group.add(
-				new Konva.Rect({
-					x: atPx.x - pad,
-					y: atPx.y - fontSize * 0.25,
-					width: textWidth + pad * 2,
-					height: bgHeight,
-					cornerRadius: 4,
-					fill: 'rgba(255,255,255,0.8)',
-					listening: true
-				})
-			);
-			group.add(
-				new Konva.Text({
-					x: atPx.x,
-					y: atPx.y,
-					text: ann.text,
-					fontSize,
-					fontFamily: LABEL_FONT_FAMILY,
-					fill: ann.style.color,
-					listening: false
-				})
-			);
+			// bg is hittable (the move/selection target); text is inert so taps
+			// fall through to the bg. Geometry is applied via applyLabelNodes.
+			group.add(new Konva.Rect({ listening: true }));
+			group.add(new Konva.Text({ listening: false }));
+			this.applyLabelNodes(group, this.labelMetrics(ann), ann);
 			return;
 		}
 		for (const spec of this.lineSpecs(ann, eff)) {
@@ -575,12 +533,164 @@ export class AnnotationRenderer {
 		this.liveAnnId = null;
 	}
 
+	// --- label geometry (screen-space; text dims come from canvas measurement,
+	//     so this lives in the renderer rather than the pure transform module) --
+
+	/**
+	 * Screen-space metrics for a label's text box: the placement point (the
+	 * moved anchor), the box centre (the rotate/resize pivot), half-sizes and
+	 * the rotation angle. `fontSize`/`angle` overrides drive the live resize/
+	 * rotate gestures without touching the document.
+	 */
+	labelMetrics(
+		ann: Extract<Annotation, { kind: 'label' }>,
+		fontSizeOverride?: number,
+		angleOverride?: number
+	): {
+		placementPx: PlanarPoint;
+		centerPx: PlanarPoint;
+		fontSize: number;
+		textWidth: number;
+		hw: number;
+		hh: number;
+		angle: number;
+	} {
+		const scale = this.stage.scaleX() || 1;
+		const eff = effectiveAnchors(ann);
+		const placementPx = this.projection.projectPoint(eff[0].x, eff[0].y);
+		const fontSize = fontSizeOverride ?? Math.max(12, labelScreenPx(ann) / scale);
+		const textWidth = measureLabelWidth(ann.text, fontSize);
+		const pad = 4;
+		return {
+			placementPx,
+			centerPx: { x: placementPx.x + textWidth / 2, y: placementPx.y + fontSize * 0.45 },
+			fontSize,
+			textWidth,
+			hw: textWidth / 2 + pad,
+			hh: fontSize * 0.7,
+			angle: angleOverride ?? resolvedTransform(ann).angle
+		};
+	}
+
+	/** The label's committed (CSS-px) font size — the unit stored on the doc. */
+	labelFontSizeCss(ann: Extract<Annotation, { kind: 'label' }>): number {
+		return labelScreenPx(ann);
+	}
+
+	/** Rotates the four local box corners (±hw, ±hh) around `center` by `angle`. */
+	private rotatedBoxCorners(
+		center: PlanarPoint,
+		hw: number,
+		hh: number,
+		angle: number
+	): PlanarPoint[] {
+		const c = Math.cos(angle);
+		const s = Math.sin(angle);
+		const rot = (lx: number, ly: number) => ({
+			x: center.x + lx * c - ly * s,
+			y: center.y + lx * s + ly * c
+		});
+		return [rot(hw, hh), rot(-hw, hh), rot(-hw, -hh), rot(hw, -hh)];
+	}
+
+	/** Applies label metrics to the bg + text nodes (centre-based, rotated). */
+	private applyLabelNodes(
+		group: Konva.Group,
+		m: ReturnType<AnnotationRenderer['labelMetrics']>,
+		ann: Extract<Annotation, { kind: 'label' }>
+	): void {
+		const children = group.getChildren();
+		const [bg, text] = children as [Konva.Rect, Konva.Text];
+		const deg = (m.angle * 180) / Math.PI;
+		bg.setAttrs({
+			x: m.centerPx.x,
+			y: m.centerPx.y,
+			width: m.hw * 2,
+			height: m.hh * 2,
+			offsetX: m.hw,
+			offsetY: m.hh,
+			rotation: deg,
+			cornerRadius: 4,
+			fill: 'rgba(255,255,255,0.8)'
+		});
+		text.setAttrs({
+			x: m.centerPx.x,
+			y: m.centerPx.y,
+			offsetX: m.textWidth / 2,
+			offsetY: m.fontSize * 0.45,
+			rotation: deg,
+			text: ann.text,
+			fontSize: m.fontSize,
+			fontFamily: LABEL_FONT_FAMILY,
+			fill: ann.style.color
+		});
+	}
+
+	/** Live in-place update of a label's text box AND its selection chrome from
+	 *  working font-size / angle values (resize / rotate gestures). */
+	liveLabel(ann: Extract<Annotation, { kind: 'label' }>, fontSize?: number, angle?: number): void {
+		if (this.liveAnnId !== ann.id) return;
+		const group = this.groupFor(ann.id);
+		if (!group) return;
+		const m = this.labelMetrics(ann, fontSize, angle);
+		this.applyLabelNodes(group, m, ann);
+		this.applyLabelChrome(m);
+		this.annotationLayer.batchDraw();
+	}
+
+	/** Repositions the cached selection chrome for a label from its metrics. */
+	private applyLabelChrome(m: ReturnType<AnnotationRenderer['labelMetrics']>): void {
+		const chrome = this.selChrome;
+		if (!chrome) return;
+		const scale = this.stage.scaleX() || 1;
+		const deg = (m.angle * 180) / Math.PI;
+		const boxW = m.hw * 2;
+		const boxH = m.hh * 2;
+		chrome.box.position({ x: m.centerPx.x, y: m.centerPx.y });
+		chrome.box.size({ width: boxW, height: boxH });
+		chrome.box.offsetX(boxW / 2);
+		chrome.box.offsetY(boxH / 2);
+		chrome.box.rotation(deg);
+		const corners = this.rotatedBoxCorners(m.centerPx, m.hw, m.hh, m.angle);
+		for (let i = 0; i < chrome.corners.length; i++) {
+			chrome.corners[i].position(corners[i] ?? { x: 0, y: 0 });
+		}
+		if (chrome.edges.length === 4 && corners.length === 4) {
+			const mid = (a: PlanarPoint, b: PlanarPoint) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+			const edgeMids = [
+				mid(corners[2], corners[3]),
+				mid(corners[0], corners[1]),
+				mid(corners[1], corners[2]),
+				mid(corners[0], corners[3])
+			];
+			for (let i = 0; i < 4; i++) {
+				chrome.edges[i].position(edgeMids[i]);
+				if (i < 2) {
+					chrome.edges[i].width(boxW);
+					chrome.edges[i].offsetX(boxW / 2);
+				} else {
+					chrome.edges[i].height(boxH);
+					chrome.edges[i].offsetY(boxH / 2);
+				}
+			}
+		}
+		if (chrome.rot) {
+			const off = 22 / scale;
+			chrome.rot.position({
+				x: m.centerPx.x + (m.hh + off) * Math.sin(m.angle),
+				y: m.centerPx.y - (m.hh + off) * Math.cos(m.angle)
+			});
+		}
+		this.controlLayer.batchDraw();
+	}
+
 	/**
 	 * Draws the selection affordance for an annotation on the control layer:
-	 * an oriented thin-line box (also the move grab) with four corner resize
-	 * handles and one rotation handle above the top edge. Select-tool only;
-	 * labels get a simple non-interactive ring (they are move-only via the
-	 * annotation body, not yet transformable).
+	 * an oriented thin-line box (also the move grab) with four edge + four
+	 * corner resize handles and one rotation handle above the top edge. Labels
+	 * use the SAME chrome (sized to their text box, rotated by their angle);
+	 * their resize preserves the text's aspect ratio (a single font size), so
+	 * every handle shows a uniform resize cursor.
 	 */
 	renderSelection(ann: Annotation | undefined): void {
 		this.controlLayer.find('.annotationSelection').forEach((n) => n.destroy());
@@ -594,42 +704,41 @@ export class AnnotationRenderer {
 		this.controlLayer.add(sel);
 		this.selGroup = sel;
 
-		if (ann.kind === 'label') {
-			const atPx = this.projection.projectPoint(
-				effectiveAnchors(ann)[0].x,
-				effectiveAnchors(ann)[0].y
+		// Resolve the box geometry (screen) for either kind into a common shape.
+		// Labels compute their box from text metrics; others from the transform.
+		const isLabel = ann.kind === 'label';
+		let centerPx: PlanarPoint;
+		let boxW: number;
+		let boxH: number;
+		let angleDeg: number;
+		let rotPx: PlanarPoint;
+		let corners: PlanarPoint[];
+		if (isLabel) {
+			const m = this.labelMetrics(ann);
+			centerPx = m.centerPx;
+			boxW = m.hw * 2;
+			boxH = m.hh * 2;
+			angleDeg = (m.angle * 180) / Math.PI;
+			corners = this.rotatedBoxCorners(m.centerPx, m.hw, m.hh, m.angle);
+			const off = 22 / scale;
+			rotPx = {
+				x: m.centerPx.x + (m.hh + off) * Math.sin(m.angle),
+				y: m.centerPx.y - (m.hh + off) * Math.cos(m.angle)
+			};
+		} else {
+			const xform = resolvedTransform(ann);
+			corners = boxCorners(ann, xform).map((p) => this.projection.projectPoint(p.x, p.y));
+			const { hw, hh } = halfSizes(ann, xform);
+			centerPx = this.projection.projectPoint(xform.cx, xform.cy);
+			boxW = Math.max(hw, MIN_HALF) * 2 * TRACK_SCALE;
+			boxH = Math.max(hh, MIN_HALF) * 2 * TRACK_SCALE;
+			angleDeg = (xform.angle * 180) / Math.PI;
+			const rotOffsetPlane = 22 / (TRACK_SCALE * scale);
+			rotPx = this.projection.projectPoint(
+				rotateHandlePos(ann, rotOffsetPlane, xform).x,
+				rotateHandlePos(ann, rotOffsetPlane, xform).y
 			);
-			const fontSize = Math.max(12, labelScreenPx(ann) / scale);
-			const pad = 4;
-			const textWidth = measureLabelWidth(ann.text, fontSize);
-			// Dashed ring that is ALSO the move grab: a transparent fill keeps
-			// the region hittable so the label can be dragged (labels are
-			// move-only — no resize/rotate handles).
-			const box = new Konva.Rect({
-				x: atPx.x - pad,
-				y: atPx.y - fontSize * 0.25,
-				width: textWidth + pad * 2,
-				height: fontSize * 1.4,
-				stroke: '#0ea5e9',
-				strokeWidth: 2 / scale,
-				dash: [4, 4],
-				fill: 'rgba(0,0,0,0)',
-				listening: true
-			});
-			box.setAttr('cursorHint', 'grabbing');
-			sel.add(box);
-			box.on('pointerdown', (e) => this.onGestureStart?.('move', ann, e));
-			this.selChrome = { box, edges: [], corners: [], rot: null };
-			this.controlLayer.batchDraw();
-			return;
 		}
-
-		const xform = resolvedTransform(ann);
-		const corners = boxCorners(ann, xform).map((p) => this.projection.projectPoint(p.x, p.y));
-		const { hw, hh } = halfSizes(ann, xform);
-		const centerPx = this.projection.projectPoint(xform.cx, xform.cy);
-		const boxW = Math.max(hw, MIN_HALF) * 2 * TRACK_SCALE;
-		const boxH = Math.max(hh, MIN_HALF) * 2 * TRACK_SCALE;
 
 		// Continuous thin-line box, also the move grab. The fill is fully
 		// transparent (not coloured) yet still hittable — Konva's hit canvas
@@ -642,7 +751,7 @@ export class AnnotationRenderer {
 			height: boxH,
 			offsetX: boxW / 2,
 			offsetY: boxH / 2,
-			rotation: (xform.angle * 180) / Math.PI,
+			rotation: angleDeg,
 			stroke: '#0ea5e9',
 			strokeWidth: 2 / scale,
 			fill: 'rgba(0,0,0,0)',
@@ -654,10 +763,10 @@ export class AnnotationRenderer {
 
 		// Four edge resize handles: thin transparent strips along each box edge
 		// (added above the box so the perimeter resizes while the interior
-		// stays the move grab). Each freezes the perpendicular axis. The long
-		// axis follows the edge (boxW for top/bottom, boxH for left/right); the
-		// short axis is a constant hit thickness. Corners are added last, so
-		// they win hit detection at the corners.
+		// stays the move grab). The long axis follows the edge (boxW for
+		// top/bottom, boxH for left/right); the short axis is a constant hit
+		// thickness. Corners are added last, so they win hit detection at the
+		// corners.
 		const edgeT = Math.max(8, 10 / scale);
 		const edgeDefs: Array<{ su: number; sv: number; a: number; b: number }> = [
 			{ su: 0, sv: -1, a: 2, b: 3 }, // top    (-- , +-)
@@ -682,10 +791,14 @@ export class AnnotationRenderer {
 				height: h,
 				offsetX: w / 2,
 				offsetY: h / 2,
-				rotation: (xform.angle * 180) / Math.PI,
+				rotation: angleDeg,
 				listening: true
 			});
-			edge.setAttr('cursorHint', resizeCursorFor(def.su, def.sv, xform.angle));
+			// Labels resize uniformly (aspect locked) → a single resize cursor.
+			edge.setAttr(
+				'cursorHint',
+				isLabel ? 'nwse-resize' : resizeCursorFor(def.su, def.sv, (angleDeg * Math.PI) / 180)
+			);
 			sel.add(edge);
 			edgeHandles.push(edge);
 			edge.on('pointerdown', (e) => this.onGestureStart?.('resize', ann, e, def.su, def.sv));
@@ -710,21 +823,19 @@ export class AnnotationRenderer {
 				listening: true
 			});
 			const [su, sv] = signs[i];
-			handle.setAttr('cursorHint', resizeCursorFor(su, sv, xform.angle));
+			handle.setAttr(
+				'cursorHint',
+				isLabel ? 'nwse-resize' : resizeCursorFor(su, sv, (angleDeg * Math.PI) / 180)
+			);
 			sel.add(handle);
 			cornerHandles.push(handle);
 			handle.on('pointerdown', (e) => this.onGestureStart?.('resize', ann, e, su, sv));
 		});
 
 		// Rotation handle: centred above the top edge.
-		const rotOffsetPlane = 22 / (TRACK_SCALE * scale);
-		const rot = this.projection.projectPoint(
-			rotateHandlePos(ann, rotOffsetPlane, xform).x,
-			rotateHandlePos(ann, rotOffsetPlane, xform).y
-		);
 		const rotHandle = new Konva.Circle({
-			x: rot.x,
-			y: rot.y,
+			x: rotPx.x,
+			y: rotPx.y,
 			radius: Math.max(6, 8 / scale),
 			fill: 'white',
 			stroke: '#0ea5e9',
