@@ -124,9 +124,30 @@ export function moveTransform(t: AnnotationTransform, delta: PlanarPoint): Annot
 }
 
 /**
- * Resize from a dragged corner. The opposite corner stays fixed. `su,sv` are
- * the dragged corner's local signs (±1). `pointer` is the live pointer in
- * planar metres. Per-axis scale; stroke width is unaffected (geometry only).
+ * The directional CSS resize cursor for a corner handle. `su,sv` are the
+ * corner's local signs (±1); `angle` is the box rotation (radians, clockwise
+ * on screen). Rotates the local diagonal into screen space and maps it to the
+ * nearest axis (ew / ns / nwse / nesw).
+ */
+export function resizeCursorFor(su: number, sv: number, angle: number): string {
+	const c = Math.cos(angle);
+	const s = Math.sin(angle);
+	const dx = su * c - sv * s;
+	const dy = su * s + sv * c;
+	let deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+	if (deg < 0) deg += 360;
+	const a = deg % 180; // cursor axes are bidirectional
+	if (a < 22.5 || a >= 157.5) return 'ew-resize';
+	if (a < 67.5) return 'nwse-resize';
+	if (a < 112.5) return 'ns-resize';
+	return 'nesw-resize';
+}
+
+/**
+ * Resize from a dragged corner OR edge. `su,sv` are the dragged handle's local
+ * signs: ±1 for an active axis, 0 for a frozen one (an edge handle freezes the
+ * perpendicular axis). The opposite side/corner stays fixed; `pointer` is the
+ * live pointer in planar metres. Per-axis scale; stroke width is unaffected.
  */
 export function resizeTransform(
 	t: AnnotationTransform,
@@ -137,23 +158,33 @@ export function resizeTransform(
 	pointer: PlanarPoint
 ): AnnotationTransform {
 	const { u, v } = axes(t.angle);
-	// Fixed (opposite) corner from the current transform.
 	const hw = baseHw * t.sx;
 	const hh = baseHh * t.sy;
-	const fixed = {
-		x: t.cx - su * hw * u.x - sv * hh * v.x,
-		y: t.cy - su * hw * u.y - sv * hh * v.y
-	};
-	// Project (fixed -> pointer) onto the box axes.
-	const d = { x: pointer.x - fixed.x, y: pointer.y - fixed.y };
-	const du = d.x * u.x + d.y * u.y;
-	const dv = d.x * v.x + d.y * v.y;
-	// New half-sizes, clamped to a minimum so the box can't invert.
-	const newHw = Math.max(MIN_HALF, Math.abs(du) / 2);
-	const newHh = Math.max(MIN_HALF, Math.abs(dv) / 2);
-	// Centre sits one half-size in from the fixed corner toward the dragged one.
-	const cx = fixed.x + su * newHw * u.x + sv * newHh * v.x;
-	const cy = fixed.y + su * newHw * u.y + sv * newHh * v.y;
+
+	// For each active axis, the opposite side is fixed and the dragged side
+	// tracks the pointer (clamped to a minimum so the box can't invert).
+	let newHw = hw;
+	let newHh = hh;
+	if (su !== 0) {
+		const du = (pointer.x - t.cx) * u.x + (pointer.y - t.cy) * u.y + su * hw;
+		newHw = Math.max(MIN_HALF, Math.abs(du) / 2);
+	}
+	if (sv !== 0) {
+		const dv = (pointer.x - t.cx) * v.x + (pointer.y - t.cy) * v.y + sv * hh;
+		newHh = Math.max(MIN_HALF, Math.abs(dv) / 2);
+	}
+
+	// Centre shifts by half the size change along each active axis.
+	let cx = t.cx;
+	let cy = t.cy;
+	if (su !== 0) {
+		cx += su * (newHw - hw) * u.x;
+		cy += su * (newHw - hw) * u.y;
+	}
+	if (sv !== 0) {
+		cx += sv * (newHh - hh) * v.x;
+		cy += sv * (newHh - hh) * v.y;
+	}
 	return {
 		cx,
 		cy,

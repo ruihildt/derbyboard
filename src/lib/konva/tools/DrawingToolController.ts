@@ -11,8 +11,8 @@ import { entityColorFor } from '../entityColors';
 import type { BoardProjection } from '../paths/projection';
 
 // Thin, elongated crosshair cursor for drawing tools (pen, arrow, zone, label, gap, drawPath).
-// 32x32 SVG with 28px arms, 1px stroke, centered hotspot at (16,16).
-const CROSSHAIR_CURSOR = `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><line x1="2" y1="16" x2="30" y2="16" stroke="%230f172a" stroke-width="1"/><line x1="16" y1="2" x2="16" y2="30" stroke="%230f172a" stroke-width="1"/></svg>') 16 16, crosshair`;
+// 32x32 SVG with 21px arms, 1px stroke, centered hotspot at (16,16).
+const CROSSHAIR_CURSOR = `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><line x1="5.5" y1="16" x2="26.5" y2="16" stroke="%230f172a" stroke-width="1"/><line x1="16" y1="5.5" x2="16" y2="26.5" stroke="%230f172a" stroke-width="1"/></svg>') 16 16, crosshair`;
 
 // Eraser cursor: small circle matching the canvas background color.
 // 16x16 SVG with 7px diameter circle, 1px stroke, centered hotspot at (8,8).

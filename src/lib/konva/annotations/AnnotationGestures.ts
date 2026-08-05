@@ -3,6 +3,12 @@ import type Konva from 'konva';
 
 import { TRACK_SCALE } from '$lib/constants';
 import { toolMode } from '$lib/stores/toolMode';
+import {
+	selectedAnnotationId,
+	selectedEntityId,
+	directionControlActive
+} from '$lib/stores/selection';
+import { boardDoc } from '$lib/doc/store';
 import { setAnnotationTransform } from '$lib/doc/clipOps';
 import type { Annotation, AnnotationTransform, PlanarPoint } from '$lib/doc/types';
 import {
@@ -12,6 +18,7 @@ import {
 	resizeTransform,
 	rotateTransform
 } from '../annotationTransform';
+import { annotationIdFromEvent } from '../tools/hitTest';
 import type { BoardProjection } from '../paths/projection';
 import type { AnnotationRenderer, AnnotationGestureType } from './AnnotationRenderer';
 
@@ -44,6 +51,13 @@ export class AnnotationGestures {
 	 * Timestamp (not a flag) so a touch drag — which fires no click — can't
 	 * leave a lingering flag that swallows the next genuine tap. */
 	private lastGestureEnd = 0;
+	/** An armed direct grab: a pointerdown landed on an (unselected)
+	 * annotation shape. A move beyond {@link GRAB_THRESHOLD_PX} promotes it to
+	 * a real move gesture AND auto-selects the mark; a plain click (release
+	 * under threshold) leaves selection to the click handler. */
+	private pendingMove: { annId: string; startX: number; startY: number } | null = null;
+	/** Drag threshold (px) before a press on an annotation becomes a move. */
+	private static readonly GRAB_THRESHOLD_PX = 4;
 
 	constructor(
 		private stage: Konva.Stage,
@@ -70,11 +84,63 @@ export class AnnotationGestures {
 		return false;
 	}
 
-	/** Begins a move/resize/rotate gesture for an annotation. */
+	/**
+	 * Arms a direct grab from a stage `pointerdown` on an annotation shape
+	 * (the selection chrome's own pointerdown cancels bubbling, so it never
+	 * reaches here). Only annotations are armed — players drag via Konva and
+	 * auto-select on their own `dragstart`. Call from the owner's pointerdown.
+	 */
+	armDirectMove(e: Konva.KonvaEventObject<unknown>): void {
+		this.pendingMove = null;
+		if (get(toolMode) !== 'select') return;
+		const target = e.target as Konva.Node;
+		// Skip chrome nodes (they carry a cursorHint and start gestures directly).
+		if (target.getAttr('cursorHint')) return;
+		const annId = annotationIdFromEvent(e);
+		if (!annId) return;
+		const pos = this.stage.getPointerPosition();
+		if (!pos) return;
+		this.pendingMove = { annId, startX: pos.x, startY: pos.y };
+	}
+
+	/**
+	 * Promotes an armed direct grab to a real move gesture once the pointer
+	 * crosses the drag threshold, auto-selecting the mark first. Returns true
+	 * when a gesture just began (so the owner can drive its first update).
+	 * Call from the owner's pointermove when no gesture is active yet.
+	 */
+	maybeBeginDirectMove(): boolean {
+		const p = this.pendingMove;
+		if (!p) return false;
+		const pos = this.stage.getPointerPosition();
+		if (!pos) return false;
+		const dx = pos.x - p.startX;
+		const dy = pos.y - p.startY;
+		if (dx * dx + dy * dy < AnnotationGestures.GRAB_THRESHOLD_PX ** 2) return false;
+		this.pendingMove = null;
+		const ann = boardDoc.current.annotations?.find((a) => a.id === p.annId);
+		if (!ann) return false;
+		// Auto-select first (rebuilds the chrome), then start the move from the
+		// current pointer so there's no jump. Mutual exclusion clears the entity.
+		selectedAnnotationId.set(p.annId);
+		selectedEntityId.set(null);
+		directionControlActive.set(false);
+		this.start('move', ann);
+		return true;
+	}
+
+	/** Clears an armed direct grab (pointerup without a drag → it was a click). */
+	clearArmed(): void {
+		this.pendingMove = null;
+	}
+
+	/** Begins a move/resize/rotate gesture for an annotation. `e` is optional:
+	 * the selection chrome passes its pointerdown event (to stop the click that
+	 * follows), while a direct grab started from pointermove supplies none. */
 	start(
 		type: AnnotationGestureType,
 		ann: Annotation,
-		e: Konva.KonvaEventObject<unknown>,
+		e?: Konva.KonvaEventObject<unknown>,
 		su = 0,
 		sv = 0
 	): void {
@@ -93,7 +159,7 @@ export class AnnotationGestures {
 			su,
 			sv
 		};
-		e.cancelBubble = true;
+		if (e) e.cancelBubble = true;
 		// Every gesture marks the mark's shapes and the selection chrome
 		// non-listening so batchDraw skips the hit-canvas repaint each frame —
 		// otherwise a move drag of a many-point stroke repaints its entire

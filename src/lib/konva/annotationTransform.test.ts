@@ -7,6 +7,7 @@ import {
 	effectiveAnchors,
 	moveTransform,
 	resizeTransform,
+	resizeCursorFor,
 	rotateTransform,
 	boxCorners,
 	rotateHandlePos,
@@ -17,7 +18,10 @@ import {
 const arrow = {
 	id: 'a',
 	kind: 'arrow' as const,
-	points: [{ x: 0, y: 0 }, { x: 2, y: 2 }],
+	points: [
+		{ x: 0, y: 0 },
+		{ x: 2, y: 2 }
+	],
 	style: { color: '#000' }
 } as Annotation;
 
@@ -81,6 +85,36 @@ describe('annotationTransform — resize', () => {
 		const rt = resizeTransform(identityTransform(arrow), 1, 1, 1, 1, { x: 0.01, y: 0.01 });
 		expect(rt.sx).toBeCloseTo(MIN_HALF);
 		expect(rt.sy).toBeCloseTo(MIN_HALF);
+	});
+	it('single-axis (edge) resize scales only the dragged axis', () => {
+		// Drag the right edge (su=1, sv=0) outward to x=5; the left end stays.
+		const rt = resizeTransform(identityTransform(arrow), 1, 1, 1, 0, { x: 5, y: 1 });
+		expect(rt.sx).toBeCloseTo(2.5);
+		expect(rt.sy).toBeCloseTo(1); // height frozen
+		expect(effectiveAnchors(arrow, rt)).toEqual([
+			{ x: 0, y: 0 },
+			{ x: 5, y: 2 }
+		]);
+	});
+	it('left edge resize keeps the right end fixed', () => {
+		const rt = resizeTransform(identityTransform(arrow), 1, 1, -1, 0, { x: -1, y: 1 });
+		expect(rt.sx).toBeCloseTo(1.5);
+		expect(effectiveAnchors(arrow, rt)).toEqual([
+			{ x: -1, y: 0 },
+			{ x: 2, y: 2 }
+		]);
+	});
+});
+
+describe('annotationTransform — resize cursor', () => {
+	it('maps corners and edges to directional cursors at zero rotation', () => {
+		expect(resizeCursorFor(1, 1, 0)).toBe('nwse-resize');
+		expect(resizeCursorFor(1, 0, 0)).toBe('ew-resize');
+		expect(resizeCursorFor(0, 1, 0)).toBe('ns-resize');
+	});
+	it('rotates the cursor with the box angle', () => {
+		// A horizontal edge rotated 90deg becomes vertical → ns-resize.
+		expect(resizeCursorFor(1, 0, Math.PI / 2)).toBe('ns-resize');
 	});
 });
 

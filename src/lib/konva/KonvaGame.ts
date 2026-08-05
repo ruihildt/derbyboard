@@ -411,6 +411,20 @@ export class KonvaGame {
 		// always dispatches to the current playerManager/packManager instances.
 		this.playersLayer.on('dragstart touchstart', (e) => {
 			this.playerManager.handleDragStart(e);
+			// Auto-select a skater the moment it is grabbed (dragstart only — a
+			// bare tap still selects via the click handler). Players are only
+			// draggable in the Select tool, so this is implicitly tool-gated.
+			if (e.type === 'dragstart' && !this.replay.isActive()) {
+				const target = e.target as Konva.Node;
+				if (target.hasName('playerGroup')) {
+					const player = target.getAttr('player') as { id?: string } | undefined;
+					if (player?.id && player.id !== get(selectedEntityId)) {
+						selectedEntityId.set(player.id);
+						directionControlActive.set(false);
+						selectedAnnotationId.set(null);
+					}
+				}
+			}
 		});
 
 		this.playersLayer.on('dragmove touchmove', (e) => {
@@ -461,9 +475,20 @@ export class KonvaGame {
 		});
 
 		// Combined stage move/up dispatch: an active annotation move/resize/
-		// rotate gesture always wins over freehand drawing.
+		// rotate gesture always wins over freehand drawing. A press on an
+		// unselected annotation arms a direct grab that promotes to a move
+		// gesture (with auto-select) once the pointer crosses the threshold.
+		this.stage.on('pointerdown', (e) => {
+			if (this.replay.isActive()) return;
+			this.annotationGestures.armDirectMove(e);
+		});
+
 		this.stage.on('pointermove', () => {
 			if (this.annotationGestures.isActive()) {
+				this.annotationGestures.scheduleUpdate();
+				return;
+			}
+			if (this.annotationGestures.maybeBeginDirectMove()) {
 				this.annotationGestures.scheduleUpdate();
 				return;
 			}
@@ -475,7 +500,19 @@ export class KonvaGame {
 				this.annotationGestures.commit();
 				return;
 			}
+			this.annotationGestures.clearArmed();
 			this.drawingTools.handlePointerUp();
+		});
+
+		// Hover affordances in the Select tool: grabbing over a hittable
+		// annotation, a directional resize cursor over corner handles, and an
+		// open-hand grab over the rotation handle. Skipped during a live
+		// gesture so the cursor captured at gesture start stays put.
+		this.stage.on('mousemove', (e) => {
+			if (this.replay.isActive()) return;
+			if (get(toolMode) !== 'select') return;
+			if (this.annotationGestures.isActive()) return;
+			this.annotationRenderer.updateHoverCursor(e);
 		});
 
 		this.playersLayer.on('collision', (e) => {

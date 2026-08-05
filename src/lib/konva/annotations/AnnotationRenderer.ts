@@ -12,10 +12,12 @@ import {
 	effectiveAnchors,
 	boxCorners,
 	halfSizes,
+	resizeCursorFor,
 	rotateHandlePos,
 	resolvedTransform,
 	MIN_HALF
 } from '../annotationTransform';
+import { annotationIdFromEvent } from '../tools/hitTest';
 import type { BoardProjection } from '../paths/projection';
 
 /** Gesture kinds the selection chrome can start; handled by AnnotationGestures. */
@@ -88,8 +90,9 @@ export class AnnotationRenderer {
 	/** Cached selection-chrome nodes, updated in place during a gesture. */
 	private selChrome: {
 		box: Konva.Rect;
+		edges: Konva.Rect[];
 		corners: Konva.Circle[];
-		rot: Konva.Circle;
+		rot: Konva.Circle | null;
 	} | null = null;
 	/** The selection-chrome group on the control layer (cached so the move
 	 * gesture's per-frame offset skips a `.findOne` tree traversal). */
@@ -466,8 +469,8 @@ export class AnnotationRenderer {
 			.forEach((s) => s.listening(false));
 		// Selection chrome inert: skip the control hit-canvas repaint too.
 		if (this.selChrome) {
-			const { box, corners, rot } = this.selChrome;
-			[box, ...corners, rot].forEach((s) => s.listening(false));
+			const { box, edges, corners, rot } = this.selChrome;
+			[box, ...edges, ...corners, rot].forEach((s) => s?.listening(false));
 		}
 		// NOTE: do NOT disable listening on the layers themselves (e.g. via
 		// the deprecated hitGraphEnabled, which aliases layer.listening).
@@ -533,12 +536,36 @@ export class AnnotationRenderer {
 		for (let i = 0; i < chrome.corners.length; i++) {
 			chrome.corners[i].position(corners[i] ?? { x: 0, y: 0 });
 		}
+		// Edge handles track the box midpoints. Order matches renderSelection:
+		// top, bottom (horizontal — width tracks boxW); left, right (vertical —
+		// height tracks boxH).
+		if (chrome.edges.length === 4 && corners.length === 4) {
+			const mid = (a: PlanarPoint, b: PlanarPoint) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+			const edgeMids = [
+				mid(corners[2], corners[3]), // top
+				mid(corners[0], corners[1]), // bottom
+				mid(corners[1], corners[2]), // left
+				mid(corners[0], corners[3]) // right
+			];
+			for (let i = 0; i < 4; i++) {
+				chrome.edges[i].position(edgeMids[i]);
+				if (i < 2) {
+					// horizontal edges: long axis is width
+					chrome.edges[i].width(boxW);
+					chrome.edges[i].offsetX(boxW / 2);
+				} else {
+					// vertical edges: long axis is height
+					chrome.edges[i].height(boxH);
+					chrome.edges[i].offsetY(boxH / 2);
+				}
+			}
+		}
 		const rotOffsetPlane = 22 / (TRACK_SCALE * scale);
 		const rot = this.projection.projectPoint(
 			rotateHandlePos(ann, rotOffsetPlane, t).x,
 			rotateHandlePos(ann, rotOffsetPlane, t).y
 		);
-		chrome.rot.position(rot);
+		chrome.rot?.position(rot);
 
 		this.controlLayer.batchDraw();
 	}
@@ -575,18 +602,24 @@ export class AnnotationRenderer {
 			const fontSize = Math.max(12, labelScreenPx(ann) / scale);
 			const pad = 4;
 			const textWidth = measureLabelWidth(ann.text, fontSize);
-			sel.add(
-				new Konva.Rect({
-					x: atPx.x - pad,
-					y: atPx.y - fontSize * 0.25,
-					width: textWidth + pad * 2,
-					height: fontSize * 1.4,
-					stroke: '#0ea5e9',
-					strokeWidth: 2 / scale,
-					dash: [4, 4],
-					listening: false
-				})
-			);
+			// Dashed ring that is ALSO the move grab: a transparent fill keeps
+			// the region hittable so the label can be dragged (labels are
+			// move-only — no resize/rotate handles).
+			const box = new Konva.Rect({
+				x: atPx.x - pad,
+				y: atPx.y - fontSize * 0.25,
+				width: textWidth + pad * 2,
+				height: fontSize * 1.4,
+				stroke: '#0ea5e9',
+				strokeWidth: 2 / scale,
+				dash: [4, 4],
+				fill: 'rgba(0,0,0,0)',
+				listening: true
+			});
+			box.setAttr('cursorHint', 'grabbing');
+			sel.add(box);
+			box.on('pointerdown', (e) => this.onGestureStart?.('move', ann, e));
+			this.selChrome = { box, edges: [], corners: [], rot: null };
 			this.controlLayer.batchDraw();
 			return;
 		}
@@ -616,7 +649,47 @@ export class AnnotationRenderer {
 			listening: true
 		});
 		sel.add(box);
+		box.setAttr('cursorHint', 'grabbing');
 		box.on('pointerdown', (e) => this.onGestureStart?.('move', ann, e));
+
+		// Four edge resize handles: thin transparent strips along each box edge
+		// (added above the box so the perimeter resizes while the interior
+		// stays the move grab). Each freezes the perpendicular axis. The long
+		// axis follows the edge (boxW for top/bottom, boxH for left/right); the
+		// short axis is a constant hit thickness. Corners are added last, so
+		// they win hit detection at the corners.
+		const edgeT = Math.max(8, 10 / scale);
+		const edgeDefs: Array<{ su: number; sv: number; a: number; b: number }> = [
+			{ su: 0, sv: -1, a: 2, b: 3 }, // top    (-- , +-)
+			{ su: 0, sv: 1, a: 0, b: 1 }, // bottom (++ , -+)
+			{ su: -1, sv: 0, a: 1, b: 2 }, // left   (-+ , --)
+			{ su: 1, sv: 0, a: 0, b: 3 } // right  (++ , +-)
+		];
+		const edgeHandles: Konva.Rect[] = [];
+		for (const def of edgeDefs) {
+			const cA = corners[def.a] ?? { x: 0, y: 0 };
+			const cB = corners[def.b] ?? { x: 0, y: 0 };
+			const mid = { x: (cA.x + cB.x) / 2, y: (cA.y + cB.y) / 2 };
+			// sv != 0 → top/bottom, a horizontal edge (long axis = width).
+			// su != 0 → left/right, a vertical edge (long axis = height).
+			const horizontal = def.sv !== 0;
+			const w = horizontal ? boxW : edgeT;
+			const h = horizontal ? edgeT : boxH;
+			const edge = new Konva.Rect({
+				x: mid.x,
+				y: mid.y,
+				width: w,
+				height: h,
+				offsetX: w / 2,
+				offsetY: h / 2,
+				rotation: (xform.angle * 180) / Math.PI,
+				listening: true
+			});
+			edge.setAttr('cursorHint', resizeCursorFor(def.su, def.sv, xform.angle));
+			sel.add(edge);
+			edgeHandles.push(edge);
+			edge.on('pointerdown', (e) => this.onGestureStart?.('resize', ann, e, def.su, def.sv));
+		}
 
 		// Four corner resize handles (circles). boxCorners order: ++, -+, --, +-.
 		const signs: Array<[number, number]> = [
@@ -636,9 +709,10 @@ export class AnnotationRenderer {
 				strokeWidth: 2 / scale,
 				listening: true
 			});
+			const [su, sv] = signs[i];
+			handle.setAttr('cursorHint', resizeCursorFor(su, sv, xform.angle));
 			sel.add(handle);
 			cornerHandles.push(handle);
-			const [su, sv] = signs[i];
 			handle.on('pointerdown', (e) => this.onGestureStart?.('resize', ann, e, su, sv));
 		});
 
@@ -657,12 +731,36 @@ export class AnnotationRenderer {
 			strokeWidth: 2 / scale,
 			listening: true
 		});
+		rotHandle.setAttr('cursorHint', 'grab');
 		sel.add(rotHandle);
 		rotHandle.on('pointerdown', (e) => this.onGestureStart?.('rotate', ann, e));
 
 		// Cache the chrome nodes so a live gesture can update them in place
 		// instead of tearing down and rebuilding them every frame.
-		this.selChrome = { box, corners: cornerHandles, rot: rotHandle };
+		this.selChrome = { box, edges: edgeHandles, corners: cornerHandles, rot: rotHandle };
 		this.controlLayer.batchDraw();
+	}
+
+	/**
+	 * Sets the stage container cursor for hover affordances in the Select tool.
+	 * Selection-chrome nodes carry a `cursorHint` attr (set at build time); a
+	 * hovered unselected annotation shows a grab cursor; anything else resets
+	 * to the default. Called from the owner's stage `mousemove` handler.
+	 */
+	updateHoverCursor(e: Konva.KonvaEventObject<unknown>): void {
+		const el = this.stage.container();
+		if (!el) return;
+		const target = e.target as Konva.Node;
+		const hint = target.getAttr('cursorHint') as string | undefined;
+		if (hint) {
+			el.style.cursor = hint;
+			return;
+		}
+		const annId = annotationIdFromEvent(e);
+		if (annId && annId !== get(selectedAnnotationId)) {
+			el.style.cursor = 'grabbing';
+			return;
+		}
+		el.style.cursor = '';
 	}
 }
