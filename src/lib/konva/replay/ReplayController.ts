@@ -96,7 +96,10 @@ export class ReplayController {
 		const { panEnabled, entitiesEnabled } = get(interaction);
 		stage.draggable(!enabled && panEnabled);
 		playersLayer.draggable(!enabled && entitiesEnabled);
-		playerManager.setPlayersDraggable(!enabled);
+		// Match the layer flag on each player node: without this, exiting replay
+		// in hand mode would re-enable per-player dragging (children ignore the
+		// layer's `draggable(false)`).
+		playerManager.setPlayersDraggable(!enabled && entitiesEnabled);
 		if (enabled) {
 			// Belt-and-braces: tear down any authoring residue (focus/dim,
 			// trails, live-tier overrides) so replay starts from a clean slate

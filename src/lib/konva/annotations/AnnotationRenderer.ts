@@ -47,6 +47,21 @@ export class AnnotationRenderer {
 	) {}
 
 	/**
+	 * Live-gesture state for rotate/resize. While set, the annotation's shapes
+	 * and the selection chrome are updated IN PLACE each frame (no node churn,
+	 * no hit-canvas repaint) instead of being destroyed and rebuilt. Cleared by
+	 * {@link endGesture}; the commit path's full {@link render} then rebuilds
+	 * the canonical, hittable scene.
+	 */
+	private liveAnnId: string | null = null;
+	/** Cached selection-chrome nodes, updated in place during a gesture. */
+	private selChrome: {
+		box: Konva.Rect;
+		corners: Konva.Circle[];
+		rot: Konva.Circle;
+	} | null = null;
+
+	/**
 	 * Renders annotations for a step. With step undefined (Free Play) only
 	 * board-wide marks are shown; a step-scoped mark (scope.stepId) appears only
 	 * on its own step (decision #6: visible iff `!scope || scope.stepId ===
@@ -80,156 +95,143 @@ export class AnnotationRenderer {
 		this.controlLayer.batchDraw();
 	}
 
-	/** Draws one annotation's shapes into `group` from effective (transformed)
-	 * anchor points. Shared by render and the live gesture redraw. */
+	/**
+	 * Draws one annotation's shapes into `group` from effective (transformed)
+	 * anchor points. The per-kind geometry lives in {@link lineSpecs} so the
+	 * live gesture path can sync the SAME shapes in place instead of destroying
+	 * and recreating them every frame.
+	 */
 	private appendShapes(group: Konva.Group, ann: Annotation, eff: PlanarPoint[]): void {
+		if (ann.kind === 'label') {
+			const atPx = this.projection.projectPoint(eff[0].x, eff[0].y);
+			const fontSize = Math.max(12, 14 / this.stage.scaleX());
+			const estimatedWidth = Math.max(100, ann.text.length * fontSize * 0.6);
+			group.add(
+				new Konva.Rect({
+					x: atPx.x - 4,
+					y: atPx.y - fontSize + 4,
+					width: estimatedWidth + 8,
+					height: fontSize + 8,
+					fill: 'rgba(255,255,255,0.8)',
+					listening: true
+				})
+			);
+			group.add(
+				new Konva.Text({
+					x: atPx.x,
+					y: atPx.y,
+					text: ann.text,
+					fontSize,
+					fontFamily: 'Arial',
+					fill: ann.style.color,
+					listening: false
+				})
+			);
+			return;
+		}
+		for (const spec of this.lineSpecs(ann, eff)) {
+			group.add(new Konva.Line({ points: spec.points, ...spec.config }));
+		}
+	}
+
+	/**
+	 * Per-kind Line specs (pixel point arrays + configs) in a stable order.
+	 * Shared by {@link appendShapes} (create) and the live gesture sync
+	 * (update `.points()` in place). Only stroke/fill/dash configs are set
+	 * here — they never change during a gesture, only the geometry does.
+	 */
+	private lineSpecs(
+		ann: Annotation,
+		eff: PlanarPoint[]
+	): Array<{ points: number[]; config: Konva.LineConfig }> {
 		const stroke = ann.style.color;
 		const width = ann.style.width ?? 2;
+		const base: Konva.LineConfig = {
+			stroke,
+			strokeWidth: width,
+			tension: 0,
+			hitStrokeWidth: 12,
+			listening: true
+		};
+		const line: Konva.LineConfig = { ...base, lineCap: 'round', lineJoin: 'round' };
 		switch (ann.kind) {
-			case 'pen': {
-				const points = this.projection.projectSmoothed(eff, false).flatMap((p) => [p.x, p.y]);
-				group.add(
-					new Konva.Line({
-						points,
-						stroke,
-						strokeWidth: width,
-						lineCap: 'round',
-						lineJoin: 'round',
-						tension: 0,
-						hitStrokeWidth: 12,
-						listening: true
-					})
-				);
-				break;
-			}
+			case 'pen':
+				return [
+					{
+						points: this.projection.projectSmoothed(eff, false).flatMap((p) => [p.x, p.y]),
+						config: line
+					}
+				];
 			case 'arrow': {
-				const points = this.projection.projectSmoothed(eff, false).flatMap((p) => [p.x, p.y]);
-				group.add(
-					new Konva.Line({
-						points,
-						stroke,
-						strokeWidth: width,
-						lineCap: 'round',
-						lineJoin: 'round',
-						tension: 0,
-						hitStrokeWidth: 12,
-						listening: true
-					})
-				);
-				// Draw arrowhead at the end, pointing in the direction of the last segment
+				const specs = [
+					{
+						points: this.projection.projectSmoothed(eff, false).flatMap((p) => [p.x, p.y]),
+						config: line
+					}
+				];
 				if (eff.length >= 2) {
-					const last = this.projection.projectPoint(eff[eff.length - 1].x, eff[eff.length - 1].y);
-					const prev = this.projection.projectPoint(eff[eff.length - 2].x, eff[eff.length - 2].y);
-					const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
-					const headLength = 15;
-					const base1 = {
-						x: last.x - headLength * Math.cos(angle - 0.5),
-						y: last.y - headLength * Math.sin(angle - 0.5)
-					};
-					const base2 = {
-						x: last.x - headLength * Math.cos(angle + 0.5),
-						y: last.y - headLength * Math.sin(angle + 0.5)
-					};
-					group.add(
-						new Konva.Line({
-							points: [last.x, last.y, base1.x, base1.y, base2.x, base2.y, last.x, last.y],
-							fill: stroke,
-							stroke,
-							strokeWidth: width,
-							closed: true,
-							tension: 0,
-							hitStrokeWidth: 12,
-							listening: true
-						})
-					);
+					specs.push({
+						points: this.arrowHeadPoints(eff),
+						config: { ...base, fill: stroke, closed: true }
+					});
 				}
-				break;
+				return specs;
 			}
-			case 'zone': {
-				const points = this.projection.projectSmoothed(eff, true).flatMap((p) => [p.x, p.y]);
-				group.add(
-					new Konva.Line({
-						points,
-						stroke,
-						strokeWidth: width,
-						lineCap: 'round',
-						lineJoin: 'round',
-						tension: 0,
-						closed: true,
-						fill: stroke,
-						opacity: 0.15,
-						hitStrokeWidth: 12,
-						listening: true
-					})
-				);
-				break;
-			}
-			case 'label': {
-				const atPx = this.projection.projectPoint(eff[0].x, eff[0].y);
-				const fontSize = Math.max(12, 14 / this.stage.scaleX());
-				const estimatedWidth = Math.max(100, ann.text.length * fontSize * 0.6);
-				group.add(
-					new Konva.Rect({
-						x: atPx.x - 4,
-						y: atPx.y - fontSize + 4,
-						width: estimatedWidth + 8,
-						height: fontSize + 8,
-						fill: 'rgba(255,255,255,0.8)',
-						listening: true
-					})
-				);
-				group.add(
-					new Konva.Text({
-						x: atPx.x,
-						y: atPx.y,
-						text: ann.text,
-						fontSize,
-						fontFamily: 'Arial',
-						fill: stroke,
-						listening: false
-					})
-				);
-				break;
-			}
-			case 'gap': {
-				const fromPx = this.projection.projectPoint(eff[0].x, eff[0].y);
-				const toPx = this.projection.projectPoint(eff[1].x, eff[1].y);
-				const angle = Math.atan2(toPx.y - fromPx.y, toPx.x - fromPx.x);
-				const tickOffset = 8;
-				group.add(
-					new Konva.Line({
-						points: [fromPx.x, fromPx.y, toPx.x, toPx.y],
-						stroke,
-						strokeWidth: width,
-						dash: [8, 8],
-						tension: 0,
-						hitStrokeWidth: 12,
-						listening: true
-					})
-				);
-				for (const t of [fromPx, toPx]) {
-					const t1 = {
-						x: t.x + tickOffset * Math.cos(angle + Math.PI / 2),
-						y: t.y + tickOffset * Math.sin(angle + Math.PI / 2)
-					};
-					const t2 = {
-						x: t.x + tickOffset * Math.cos(angle - Math.PI / 2),
-						y: t.y + tickOffset * Math.sin(angle - Math.PI / 2)
-					};
-					group.add(
-						new Konva.Line({
-							points: [t1.x, t1.y, t2.x, t2.y],
-							stroke,
-							strokeWidth: width,
-							tension: 0,
-							hitStrokeWidth: 12,
-							listening: true
-						})
-					);
-				}
-				break;
-			}
+			case 'zone':
+				return [
+					{
+						points: this.projection.projectSmoothed(eff, true).flatMap((p) => [p.x, p.y]),
+						config: { ...line, closed: true, fill: stroke, opacity: 0.15 }
+					}
+				];
+			case 'gap':
+				return this.gapLineSpecs(eff, base);
+			case 'label':
+				return [];
 		}
+	}
+
+	/** Arrowhead polyline (pixel) from the last two effective anchors. */
+	private arrowHeadPoints(eff: PlanarPoint[]): number[] {
+		const last = this.projection.projectPoint(eff[eff.length - 1].x, eff[eff.length - 1].y);
+		const prev = this.projection.projectPoint(eff[eff.length - 2].x, eff[eff.length - 2].y);
+		const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+		const headLength = 15;
+		const base1 = {
+			x: last.x - headLength * Math.cos(angle - 0.5),
+			y: last.y - headLength * Math.sin(angle - 0.5)
+		};
+		const base2 = {
+			x: last.x - headLength * Math.cos(angle + 0.5),
+			y: last.y - headLength * Math.sin(angle + 0.5)
+		};
+		return [last.x, last.y, base1.x, base1.y, base2.x, base2.y, last.x, last.y];
+	}
+
+	/** Gap specs: the dashed span + two perpendicular end ticks (pixel). */
+	private gapLineSpecs(
+		eff: PlanarPoint[],
+		base: Konva.LineConfig
+	): Array<{ points: number[]; config: Konva.LineConfig }> {
+		const fromPx = this.projection.projectPoint(eff[0].x, eff[0].y);
+		const toPx = this.projection.projectPoint(eff[1].x, eff[1].y);
+		const angle = Math.atan2(toPx.y - fromPx.y, toPx.x - fromPx.x);
+		const tickOffset = 8;
+		const specs: Array<{ points: number[]; config: Konva.LineConfig }> = [
+			{ points: [fromPx.x, fromPx.y, toPx.x, toPx.y], config: { ...base, dash: [8, 8] } }
+		];
+		for (const t of [fromPx, toPx]) {
+			const t1 = {
+				x: t.x + tickOffset * Math.cos(angle + Math.PI / 2),
+				y: t.y + tickOffset * Math.sin(angle + Math.PI / 2)
+			};
+			const t2 = {
+				x: t.x + tickOffset * Math.cos(angle - Math.PI / 2),
+				y: t.y + tickOffset * Math.sin(angle - Math.PI / 2)
+			};
+			specs.push({ points: [t1.x, t1.y, t2.x, t2.y], config: { ...base } });
+		}
+		return specs;
 	}
 
 	/** The annotation group on the annotation layer for a given id, if present. */
@@ -250,13 +252,91 @@ export class AnnotationRenderer {
 		this.controlLayer.batchDraw();
 	}
 
-	/** Live redraw of a single annotation from a working transform (gesture). */
-	redrawOnly(annId: string, ann: Annotation, t: AnnotationTransform): void {
-		const group = this.groupFor(annId);
+	/**
+	 * Begins a rotate/resize live edit for an annotation. Marks the mark's
+	 * shapes and the selection chrome non-listening so the hit canvas isn't
+	 * repainted each frame (the gesture is already in flight, so neither needs
+	 * to be hittable mid-edit). The canonical, hittable scene is rebuilt by the
+	 * full {@link render} on commit.
+	 */
+	beginGesture(ann: Annotation): void {
+		this.liveAnnId = ann.id;
+		// Shapes inert: skip the annotation hit-canvas repaint during the drag.
+		this.groupFor(ann.id)
+			?.getChildren()
+			.forEach((s) => s.listening(false));
+		// Selection chrome inert: skip the control hit-canvas repaint too.
+		if (this.selChrome) {
+			const { box, corners, rot } = this.selChrome;
+			[box, ...corners, rot].forEach((s) => s.listening(false));
+		}
+	}
+
+	/**
+	 * Live in-place redraw of the gesture annotation from a working transform.
+	 * Syncs each Line's `.points()` on the existing nodes (no destroy/create,
+	 * no listener churn, no hit-canvas key reallocation); rebuilds only if the
+	 * shape structure changed (it shouldn't during a single gesture, but the
+	 * guard keeps it correct if the group was empty at gesture start).
+	 */
+	liveUpdate(ann: Annotation, t: AnnotationTransform): void {
+		if (this.liveAnnId !== ann.id) return;
+		const group = this.groupFor(ann.id);
 		if (!group) return;
-		group.destroyChildren();
-		this.appendShapes(group, ann, effectiveAnchors(ann, t));
+		const eff = effectiveAnchors(ann, t);
+		const specs = this.lineSpecs(ann, eff);
+		const lines = group.getChildren().filter((c): c is Konva.Line => c instanceof Konva.Line);
+		if (lines.length === specs.length) {
+			for (let i = 0; i < lines.length; i++) lines[i].points(specs[i].points);
+		} else {
+			group.destroyChildren();
+			this.appendShapes(group, ann, eff);
+			// Re-apply inert listening after a rebuild (see beginGesture).
+			group.getChildren().forEach((s) => s.listening(false));
+		}
 		this.annotationLayer.batchDraw();
+	}
+
+	/**
+	 * Live in-place update of the selection chrome geometry (box centre/size/
+	 * rotation, the four corner handles, the rotation handle) from a working
+	 * transform. No destroy/recreate, no listener re-attach. Falls back to a
+	 * full {@link renderSelection} if the chrome refs aren't present.
+	 */
+	updateSelectionGeometry(ann: Annotation, t: AnnotationTransform): void {
+		const chrome = this.selChrome;
+		if (!chrome) {
+			this.renderSelection({ ...ann, transform: t });
+			return;
+		}
+		const scale = this.stage.scaleX() || 1;
+		const corners = boxCorners(ann, t).map((p) => this.projection.projectPoint(p.x, p.y));
+		const { hw, hh } = halfSizes(ann, t);
+		const centerPx = this.projection.projectPoint(t.cx, t.cy);
+		const boxW = Math.max(hw, MIN_HALF) * 2 * TRACK_SCALE;
+		const boxH = Math.max(hh, MIN_HALF) * 2 * TRACK_SCALE;
+
+		chrome.box.position({ x: centerPx.x, y: centerPx.y });
+		chrome.box.size({ width: boxW, height: boxH });
+		chrome.box.offsetX(boxW / 2);
+		chrome.box.offsetY(boxH / 2);
+		chrome.box.rotation((t.angle * 180) / Math.PI);
+		for (let i = 0; i < chrome.corners.length; i++) {
+			chrome.corners[i].position(corners[i] ?? { x: 0, y: 0 });
+		}
+		const rotOffsetPlane = 22 / (TRACK_SCALE * scale);
+		const rot = this.projection.projectPoint(
+			rotateHandlePos(ann, rotOffsetPlane, t).x,
+			rotateHandlePos(ann, rotOffsetPlane, t).y
+		);
+		chrome.rot.position(rot);
+
+		this.controlLayer.batchDraw();
+	}
+
+	/** Ends the live edit; the owner then commits and runs the full render. */
+	endGesture(): void {
+		this.liveAnnId = null;
 	}
 
 	/**
@@ -268,6 +348,8 @@ export class AnnotationRenderer {
 	 */
 	renderSelection(ann: Annotation | undefined): void {
 		this.controlLayer.find('.annotationSelection').forEach((n) => n.destroy());
+		// Cached chrome refs are invalidated whenever the chrome is rebuilt.
+		this.selChrome = null;
 		if (!ann || get(toolMode) !== 'select') return;
 
 		const scale = this.stage.scaleX() || 1;
@@ -332,6 +414,7 @@ export class AnnotationRenderer {
 			[-1, -1],
 			[1, -1]
 		];
+		const cornerHandles: Konva.Circle[] = [];
 		corners.forEach((c, i) => {
 			const handle = new Konva.Circle({
 				x: c.x,
@@ -343,6 +426,7 @@ export class AnnotationRenderer {
 				listening: true
 			});
 			sel.add(handle);
+			cornerHandles.push(handle);
 			const [su, sv] = signs[i];
 			handle.on('pointerdown', (e) => this.onGestureStart?.('resize', ann, e, su, sv));
 		});
@@ -365,6 +449,9 @@ export class AnnotationRenderer {
 		sel.add(rotHandle);
 		rotHandle.on('pointerdown', (e) => this.onGestureStart?.('rotate', ann, e));
 
+		// Cache the chrome nodes so a live gesture can update them in place
+		// instead of tearing down and rebuilding them every frame.
+		this.selChrome = { box, corners: cornerHandles, rot: rotHandle };
 		this.controlLayer.batchDraw();
 	}
 }

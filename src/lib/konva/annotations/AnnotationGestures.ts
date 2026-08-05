@@ -92,6 +92,13 @@ export class AnnotationGestures {
 			sv
 		};
 		e.cancelBubble = true;
+		// Rotate/resize enter the renderer's live in-place edit mode: shapes
+		// and selection chrome are marked non-listening (no hit-canvas
+		// repaint) and then synced in place each frame instead of being
+		// destroyed and recreated. Move stays on its own cheap offset path.
+		if (type === 'rotate' || type === 'resize') {
+			this.renderer.beginGesture(ann);
+		}
 	}
 
 	/** rAF-coalesced live update; call from the owner's stage pointermove. */
@@ -115,6 +122,11 @@ export class AnnotationGestures {
 		const g = this.gesture;
 		this.gesture = null;
 		this.lastGestureEnd = Date.now();
+		// Exit the live in-place edit; onSettled runs the full render which
+		// rebuilds the canonical, hittable scene (listening restored).
+		if (g && (g.type === 'rotate' || g.type === 'resize')) {
+			this.renderer.endGesture();
+		}
 		if (!g) return;
 		const pos = this.stage.getPointerPosition();
 		const t = pos ? this.gestureTransform(g, this.projection.pointerToPlane(pos)) : g.start;
@@ -153,9 +165,12 @@ export class AnnotationGestures {
 			return;
 		}
 
-		// Resize/rotate change the geometry: rebuild the mark and box.
-		this.renderer.redrawOnly(g.annId, g.ann, t);
-		this.renderer.renderSelection({ ...g.ann, transform: t });
+		// Resize/rotate: sync the existing shapes and selection chrome IN
+		// PLACE (no destroy/create churn, no hit-canvas repaint). Previously
+		// this destroyed and rebuilt the whole mark + box + 6 handles every
+		// frame, whose allocation churn drove multi-hundred-ms GC spikes.
+		this.renderer.liveUpdate(g.ann, t);
+		this.renderer.updateSelectionGeometry(g.ann, t);
 	}
 
 	/** Computes the transform for the active gesture from the live pointer. */

@@ -380,7 +380,13 @@ export class KonvaGame {
 		this.interactionUnsubscribe = interaction.subscribe(({ panEnabled, entitiesEnabled }) => {
 			const ok = !this.replay.isActive() && !this.authored.isActive();
 			this.stage.draggable(panEnabled && ok);
-			this.playersLayer.draggable(entitiesEnabled && ok);
+			// Gate both the layer and every player node: Konva's layer-level
+			// `draggable(false)` does NOT disable dragging on child groups (each
+			// player is created `draggable: true`), so without this the hand tool
+			// would still let you drag skaters around while panning.
+			const entitiesDraggable = entitiesEnabled && ok;
+			this.playersLayer.draggable(entitiesDraggable);
+			this.playerManager.setPlayersDraggable(entitiesDraggable);
 		});
 
 		// Apply the persisted direction-marker visibility on first paint.

@@ -56,8 +56,12 @@ export class AuthoredPlaybackController {
 	end(): void {
 		this.active = false;
 		poseStore.abortGesture();
-		this.deps.playerManager.setPlayersDraggable(true);
-		this.deps.playersLayer.draggable(get(interaction).entitiesEnabled);
+		// Restore dragging only when the current tool actually allows entity
+		// editing; hand mode keeps players inert (children ignore the layer's
+		// `draggable(false)`, so the per-node flag must match).
+		const entitiesEnabled = get(interaction).entitiesEnabled;
+		this.deps.playerManager.setPlayersDraggable(entitiesEnabled);
+		this.deps.playersLayer.draggable(entitiesEnabled);
 		this.deps.trailRenderer.clear();
 		this.deps.updateRotationHandle();
 	}

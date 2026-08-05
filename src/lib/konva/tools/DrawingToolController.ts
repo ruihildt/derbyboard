@@ -42,6 +42,8 @@ export class DrawingToolController {
 	private drawingPoints: PlanarPoint[] = [];
 	private firstAnchor: PlanarPoint | null = null;
 	private previewLine: Konva.Line | null = null;
+	/** The gap tool's first-anchor→pointer preview, reused in place each frame. */
+	private gapPreview: Konva.Line | null = null;
 	private rafId: number | null = null;
 	private pathLengthAccum = 0; // running arc-length for path cap enforcement
 
@@ -189,16 +191,18 @@ export class DrawingToolController {
 					this.deps.pathLayer.batchDraw();
 				}
 			} else if (tool === 'gap' && this.firstAnchor) {
-				// Update preview line from first anchor to current. Remove only the
-				// previous preview — destroyChildren() would wipe committed annotations.
+				// Update preview line from first anchor to current. Reuse the node
+				// and update its points in place — destroying + recreating it (and
+				// the find() tree walk) every frame is the same churn that stalled
+				// the rotate gesture.
 				const layer = this.deps.annotationLayer;
-				layer.find('.arrowPreview').forEach((n) => n.destroy());
-
 				const firstPx = projection.projectPoint(this.firstAnchor.x, this.firstAnchor.y);
 				const currentPx = { x: pos.x, y: pos.y };
 
-				layer.add(
-					new Konva.Line({
+				if (this.gapPreview) {
+					this.gapPreview.points([firstPx.x, firstPx.y, currentPx.x, currentPx.y]);
+				} else {
+					this.gapPreview = new Konva.Line({
 						name: 'arrowPreview',
 						points: [firstPx.x, firstPx.y, currentPx.x, currentPx.y],
 						stroke: '#e11d48',
@@ -206,8 +210,9 @@ export class DrawingToolController {
 						opacity: 0.5,
 						dash: [8, 8],
 						listening: false
-					})
-				);
+					});
+					layer.add(this.gapPreview);
+				}
 				layer.batchDraw();
 			}
 
@@ -230,8 +235,10 @@ export class DrawingToolController {
 		if (this.previewLine) {
 			this.previewLine.destroy();
 			this.previewLine = null;
-		} else if (tool === 'arrow' || tool === 'gap') {
-			this.deps.annotationLayer.find('.arrowPreview').forEach((n) => n.destroy());
+		}
+		if (this.gapPreview) {
+			this.gapPreview.destroy();
+			this.gapPreview = null;
 		}
 
 		const step = this.deps.getActiveStep();
