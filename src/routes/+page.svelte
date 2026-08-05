@@ -28,7 +28,6 @@
 	import ZoneOverlay from '$lib/components/ZoneOverlay.svelte';
 	import WatermarkPreview from '$lib/components/WatermarkPreview.svelte';
 	import Hud from '$lib/components/Hud.svelte';
-	import AnnotationHud from '$lib/components/AnnotationHud.svelte';
 	import { captureSettings } from '$lib/stores/captureSettings';
 	import { exportSettings } from '$lib/stores/exportSettings';
 	import { regionMode } from '$lib/stores/regionMode';
@@ -320,5 +319,4 @@
 		</div>
 	</div>
 	<Hud {game} />
-	<AnnotationHud {game} />
 {/if}

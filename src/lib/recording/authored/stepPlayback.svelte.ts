@@ -63,9 +63,9 @@ export class StepPlayback {
 	}
 
 	/**
-	 * Renders path overlays for a step index, computing prev/next steps
-	 * directly from the steps array (not from the session, which may be
-	 * stale during playback).
+	 * Renders step overlays (paths + annotations) for a step index, computing
+	 * prev/next steps directly from the steps array (not from the session,
+	 * which may be stale during playback).
 	 */
 	renderPathsForStep(stepIdx: number): void {
 		const steps = this.getSteps();
@@ -73,7 +73,9 @@ export class StepPlayback {
 		if (!step) return;
 		const prevStep = stepIdx > 0 ? steps[stepIdx - 1] : undefined;
 		const nextStep = stepIdx < steps.length - 1 ? steps[stepIdx + 1] : undefined;
-		this.getGame().renderPaths(step, get(selectedEntityId), prevStep, nextStep);
+		const game = this.getGame();
+		game.renderPaths(step, get(selectedEntityId), prevStep, nextStep);
+		game.renderAnnotations(step);
 	}
 
 	/** Steps back one step with a tween (duration scaled by playback speed). */

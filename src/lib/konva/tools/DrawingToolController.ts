@@ -147,8 +147,8 @@ export class DrawingToolController {
 			// editor owns keystrokes until Enter/click-away commits. If a draft was
 			// already active it has already been committed by the editor's own
 			// capture-phase pointerdown handler (runs before this stage handler),
-			// so this starts a fresh label — the place-multiple flow. Stay in the
-			// label tool so several labels can be placed in sequence.
+			// so this starts a fresh label. The tool returns to Select on commit
+			// (handled in LabelEditorController), not here.
 			this.labelEditor?.start({ x: planePos.x, y: planePos.y });
 			return;
 		}
@@ -332,12 +332,12 @@ export class DrawingToolController {
 		this.firstAnchor = null;
 		this.pathLengthAccum = 0;
 
-		// Auto-return to select after gesture tools so the path's editing
-		// nodes appear immediately — in Select the previous/current/next
-		// paths for the selected entity all show their draggable handles.
-		// The label tool stays armed so several labels can be placed in a row
-		// (inline editing commits on Enter / click-away, not on pointerup).
-		if (tool === 'gap' || tool === 'drawPath') {
+		// Discrete annotation tools (arrow / zone / gap) auto-return to Select
+		// so their editing handles appear immediately. The freehand tools
+		// (pen / drawPath) stay armed for repeated strokes, and the label tool
+		// stays armed during typing — it returns to Select on commit inside its
+		// inline editor (see LabelEditorController).
+		if (tool === 'arrow' || tool === 'zone' || tool === 'gap') {
 			toolMode.set('select');
 		}
 

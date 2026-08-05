@@ -3,6 +3,7 @@ import Konva from 'konva';
 
 import { addAnnotation } from '$lib/doc/clipOps';
 import { labelSettings, labelBasePx } from '$lib/stores/labelSettings';
+import { toolMode } from '$lib/stores/toolMode';
 import type { Annotation, PlanarPoint } from '$lib/doc/types';
 import { LABEL_FONT_FAMILY } from '../annotations/AnnotationRenderer';
 import type { BoardProjection } from '../paths/projection';
@@ -215,20 +216,23 @@ export class LabelEditorController {
 		this.teardown();
 
 		if (pos && text.trim().length > 0) {
-		// Typed as the label member (sans id) so it satisfies addAnnotation's
-		// (non-distributive) Omit<Annotation,'id'> param — a fresh object
-		// literal with at/text would otherwise trip excess-property checking.
-		const label: Omit<Extract<Annotation, { kind: 'label' }>, 'id'> = {
-			kind: 'label',
-			at: { x: pos.x, y: pos.y },
-			text,
-			fontSize: size,
-			style: { color: '#e11d48', width: 2 }
-		};
+			// Typed as the label member (sans id) so it satisfies addAnnotation's
+			// (non-distributive) Omit<Annotation,'id'> param — a fresh object
+			// literal with at/text would otherwise trip excess-property checking.
+			const label: Omit<Extract<Annotation, { kind: 'label' }>, 'id'> = {
+				kind: 'label',
+				at: { x: pos.x, y: pos.y },
+				text,
+				fontSize: size,
+				style: { color: '#e11d48', width: 2 }
+			};
 			// addAnnotation triggers a doc → layer rebuild that destroys the draft
 			// group synchronously; refs are already cleared by teardown.
 			addAnnotation(label);
 			this.deps.onCommitted();
+			// A label has been placed — return to Select (matches the other
+			// discrete annotation tools; the freehand tools stay armed).
+			toolMode.set('select');
 		}
 	}
 

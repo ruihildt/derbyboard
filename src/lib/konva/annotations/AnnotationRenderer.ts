@@ -58,223 +58,234 @@ function labelScreenPx(ann: Extract<Annotation, { kind: 'label' }>): number {
  * reports handle pointerdowns through {@link onGestureStart}.
  */
 export class AnnotationRenderer {
-  /** Wired by the owner once the gesture controller exists. */
-  onGestureStart:
-  | ((
-      type: AnnotationGestureType,
-      ann: Annotation,
-      e: Konva.KonvaEventObject<unknown>,
-      su?: number,
-      sv?: number
-    ) => void)
-  | null = null;
+	/** Wired by the owner once the gesture controller exists. */
+	onGestureStart:
+		| ((
+				type: AnnotationGestureType,
+				ann: Annotation,
+				e: Konva.KonvaEventObject<unknown>,
+				su?: number,
+				sv?: number
+		  ) => void)
+		| null = null;
 
-  constructor(
-    private annotationLayer: Konva.Layer,
-    private controlLayer: Konva.Layer,
-    private stage: Konva.Stage,
-    private projection: BoardProjection
-  ) {}
+	constructor(
+		private annotationLayer: Konva.Layer,
+		private controlLayer: Konva.Layer,
+		private stage: Konva.Stage,
+		private projection: BoardProjection
+	) {}
 
-  /**
-   * Live-gesture state for rotate/resize. While set, the annotation's shapes
-   * and the selection chrome are updated IN PLACE each frame (no node churn,
-   * no hit-canvas repaint) instead of being destroyed and rebuilt. Cleared by
-   * {@link endGesture}; the commit path's full {@link render} then rebuilds
-   * the canonical, hittable scene.
-   */
-  private liveAnnId: string | null = null;
-  /** Cached selection-chrome nodes, updated in place during a gesture. */
-  private selChrome: {
-    box: Konva.Rect;
-    corners: Konva.Circle[];
-    rot: Konva.Circle;
-  } | null = null;
-  /** Map of annotation ID to its group node for efficient updates. */
-  private groups: Map<string, Konva.Group> = new Map();
+	/**
+	 * Live-gesture state for rotate/resize. While set, the annotation's shapes
+	 * and the selection chrome are updated IN PLACE each frame (no node churn,
+	 * no hit-canvas repaint) instead of being destroyed and rebuilt. Cleared by
+	 * {@link endGesture}; the commit path's full {@link render} then rebuilds
+	 * the canonical, hittable scene.
+	 */
+	private liveAnnId: string | null = null;
+	/** Cached selection-chrome nodes, updated in place during a gesture. */
+	private selChrome: {
+		box: Konva.Rect;
+		corners: Konva.Circle[];
+		rot: Konva.Circle;
+	} | null = null;
+	/** The selection-chrome group on the control layer (cached so the move
+	 * gesture's per-frame offset skips a `.findOne` tree traversal). */
+	private selGroup: Konva.Group | null = null;
+	/** Map of annotation ID to its group node for efficient updates. */
+	private groups: Map<string, Konva.Group> = new Map();
 
-  /**
-   * Renders annotations for a step. With step undefined (Free Play) only
-   * board-wide marks are shown; a step-scoped mark (scope.stepId) appears only
-   * on its own step (decision #6: visible iff `!scope || scope.stepId ===
-   * activeStep?.id`). Each visible mark is wrapped in a hittable Group (name
-   * `annotation`, attr `annId`) so Select can target it; a dashed selection
-   * ring for the currently selected mark is drawn on the top control layer.
-   */
-  render(step: Step | undefined): void {
-    const activeStepId = step?.id;
-    const selectedId = get(selectedAnnotationId);
-    let selectedAnn: Annotation | undefined;
+	/**
+	 * Renders annotations for a step. With step undefined (Free Play) only
+	 * board-wide marks are shown; a step-scoped mark (scope.stepId) appears only
+	 * on its own step (decision #6: visible iff `!scope || scope.stepId ===
+	 * activeStep?.id`). Each visible mark is wrapped in a hittable Group (name
+	 * `annotation`, attr `annId`) so Select can target it; a dashed selection
+	 * ring for the currently selected mark is drawn on the top control layer.
+	 */
+	render(step: Step | undefined): void {
+		const activeStepId = step?.id;
+		const selectedId = get(selectedAnnotationId);
+		let selectedAnn: Annotation | undefined;
 
-    // Process all annotations in a single pass
-    const visibleIds = new Set<string>();
-    const allAnnotations = boardDoc.current.annotations ?? [];
-    
-    for (const ann of allAnnotations) {
-      // Check if annotation is visible for current step
-      if (!ann.scope || ann.scope.stepId === activeStepId) {
-        visibleIds.add(ann.id);
-        const existingGroup = this.groups.get(ann.id);
-        if (existingGroup) {
-          // Update existing group in place
-          this.updateAnnotationGroup(existingGroup, ann, effectiveAnchors(ann));
-        } else {
-          // Create new group
-          const group = new Konva.Group({ name: 'annotation', listening: true });
-          group.setAttr('annId', ann.id);
-          this.appendShapes(group, ann, effectiveAnchors(ann));
-          this.annotationLayer.add(group);
-          this.groups.set(ann.id, group);
-        }
-        if (ann.id === selectedId) selectedAnn = ann;
-      }
-    }
+		// Process all annotations in a single pass
+		const visibleIds = new Set<string>();
+		const allAnnotations = boardDoc.current.annotations ?? [];
 
-    // Remove groups for annotations that are no longer visible
-    for (const [annId, group] of this.groups) {
-      if (!visibleIds.has(annId)) {
-        group.destroy();
-        this.groups.delete(annId);
-      }
-    }
+		for (const ann of allAnnotations) {
+			// Check if annotation is visible for current step
+			if (!ann.scope || ann.scope.stepId === activeStepId) {
+				visibleIds.add(ann.id);
+				const existingGroup = this.groups.get(ann.id);
+				if (existingGroup) {
+					// Update existing group in place
+					this.updateAnnotationGroup(existingGroup, ann, effectiveAnchors(ann));
+				} else {
+					// Create new group
+					const group = new Konva.Group({ name: 'annotation', listening: true });
+					group.setAttr('annId', ann.id);
+					this.appendShapes(group, ann, effectiveAnchors(ann));
+					this.annotationLayer.add(group);
+					this.groups.set(ann.id, group);
+				}
+				if (ann.id === selectedId) selectedAnn = ann;
+			}
+		}
 
-    // Selection box + handles on the top control layer — Select tool only.
-    this.renderSelection(selectedAnn);
+		// Remove groups for annotations that are no longer visible
+		for (const [annId, group] of this.groups) {
+			if (!visibleIds.has(annId)) {
+				group.destroy();
+				this.groups.delete(annId);
+			}
+		}
 
-    this.annotationLayer.batchDraw();
-    this.controlLayer.batchDraw();
-  }
+		// Selection box + handles on the top control layer — Select tool only.
+		this.renderSelection(selectedAnn);
 
-  /**
-   * Updates an existing annotation group to match the annotation and its
-   * effective anchors. This avoids destroying and recreating nodes.
-   */
-  private updateAnnotationGroup(
-    group: Konva.Group,
-    ann: Annotation,
-    eff: PlanarPoint[]
-  ): void {
-    // Update the annotation ID attribute (should be same, but just in case)
-    group.setAttr('annId', ann.id);
+		this.annotationLayer.batchDraw();
+		this.controlLayer.batchDraw();
+	}
 
-    // Update children based on annotation kind
-    const children = group.getChildren();
-    switch (ann.kind) {
-      case 'label': {
-        if (children.length !== 2) {
-          // Unexpected structure, fallback to full rebuild
-          this.rebuildAnnotationGroup(group, ann, eff);
-          return;
-        }
-        const [rect, text] = children as [Konva.Rect, Konva.Text];
-        const atPx = this.projection.projectPoint(eff[0].x, eff[0].y);
-        const fontSize = Math.max(12, labelScreenPx(ann) / this.stage.scaleX());
-        const pad = 4;
-        const textWidth = measureLabelWidth(ann.text, fontSize);
-        const bgHeight = fontSize * 1.4;
-        // Update rect
-        rect.x(atPx.x - pad);
-        rect.y(atPx.y - fontSize * 0.25);
-        rect.width(textWidth + pad * 2);
-        rect.height(bgHeight);
-        rect.cornerRadius(4);
-        // Update text
-        text.x(atPx.x);
-        text.y(atPx.y);
-        text.text(ann.text);
-        text.fontSize(fontSize);
-        text.fontFamily(LABEL_FONT_FAMILY);
-        text.fill(ann.style.color);
-        // Update visual properties (cheap)
-        rect.fill('rgba(255,255,255,0.8)');
-        break;
-      }
-      case 'pen':
-      case 'arrow':
-      case 'zone': {
-        // These have one or two lines; the first child is always the main line
-        // For arrow, there is a second child for the head
-        const line = children[0] as Konva.Line;
-        const points = this.projection.projectSmoothed(eff, ann.kind === 'zone').flatMap(
-          (p) => [p.x, p.y]
-        );
-        line.points(points);
-        // Update visual properties
-        line.stroke(ann.style.color);
-        line.strokeWidth(ann.style.width ?? 2);
-        if (ann.kind === 'arrow' && children.length === 2) {
-          const headLine = children[1] as Konva.Line;
-          if (eff.length >= 2) {
-            const headPoints = this.arrowHeadPoints(eff);
-            headLine.points(headPoints);
-            headLine.fill(ann.style.color);
-          } else {
-            // Not enough points to draw head, hide it?
-            headLine.points([]);
-          }
-        }
-        break;
-      }
-      case 'gap': {
-        if (children.length !== 3) {
-          // Unexpected structure, fallback to full rebuild
-          this.rebuildAnnotationGroup(group, ann, eff);
-          return;
-        }
-        const [mainLine, tick1, tick2] = children as [Konva.Line, Konva.Line, Konva.Line];
-        const fromPx = this.projection.projectPoint(eff[0].x, eff[0].y);
-        const toPx = this.projection.projectPoint(eff[1].x, eff[1].y);
-        const angle = Math.atan2(toPx.y - fromPx.y, toPx.x - fromPx.x);
-        const tickOffset = 8;
-        // Update main line
-        mainLine.points([fromPx.x, fromPx.y, toPx.x, toPx.y]);
-        mainLine.stroke(ann.style.color);
-        mainLine.strokeWidth(ann.style.width ?? 2);
-        mainLine.dash([8, 8]);
-        // Update tick 1 (at from)
-        const t1 = {
-          x: fromPx.x + tickOffset * Math.cos(angle + Math.PI / 2),
-          y: fromPx.y + tickOffset * Math.sin(angle + Math.PI / 2)
-        };
-        const t2 = {
-          x: fromPx.x + tickOffset * Math.cos(angle - Math.PI / 2),
-          y: fromPx.y + tickOffset * Math.sin(angle - Math.PI / 2)
-        };
-        tick1.points([t1.x, t1.y, t2.x, t2.y]);
-        tick1.stroke(ann.style.color);
-        tick1.strokeWidth(ann.style.width ?? 2);
-        // Update tick 2 (at to)
-        const t3 = {
-          x: toPx.x + tickOffset * Math.cos(angle + Math.PI / 2),
-          y: toPx.y + tickOffset * Math.sin(angle + Math.PI / 2)
-        };
-        const t4 = {
-          x: toPx.x + tickOffset * Math.cos(angle - Math.PI / 2),
-          y: toPx.y + tickOffset * Math.sin(angle - Math.PI / 2)
-        };
-        tick2.points([t3.x, t3.y, t4.x, t4.y]);
-        tick2.stroke(ann.style.color);
-        tick2.strokeWidth(ann.style.width ?? 2);
-        break;
-      }
-      default:
-        // Unknown kind, fallback to full rebuild
-        this.rebuildAnnotationGroup(group, ann, eff);
-    }
-  }
+	/**
+	 * Updates an existing annotation group to match the annotation and its
+	 * effective anchors. This avoids destroying and recreating nodes.
+	 */
+	private updateAnnotationGroup(group: Konva.Group, ann: Annotation, eff: PlanarPoint[]): void {
+		// Children hold absolute stage-local coordinates, so the group must sit
+		// at the origin. The move gesture's cheap path offsets the group by the
+		// drag delta (AnnotationGestures) — without resetting it here the next
+		// render would double-apply the translation, leaving the mark offset
+		// from its selection frame in the drag direction.
+		group.position({ x: 0, y: 0 });
+		// Update the annotation ID attribute (should be same, but just in case)
+		group.setAttr('annId', ann.id);
 
-  /**
-   * Fallback to destroy and rebuild the group's children. Used when the
-   * structure is unexpected or we need to reset.
-   */
-  private rebuildAnnotationGroup(
-    group: Konva.Group,
-    ann: Annotation,
-    eff: PlanarPoint[]
-  ): void {
-    group.destroyChildren();
-    this.appendShapes(group, ann, eff);
-  }
+		// Update children based on annotation kind
+		const children = group.getChildren();
+		// A finished gesture left the shapes non-listening (beginGesture
+		// inerts them so drags skip the hit-canvas repaint). Restore the
+		// authored hit state here — this is the only path that re-renders an
+		// existing group, so without it the mark would stay unselectable
+		// forever after its first drag. Label text stays inert (authored
+		// listening:false in appendShapes so clicks fall through to the bg).
+		children.forEach((c, i) => {
+			const inert = ann.kind === 'label' && i === 1;
+			c.listening(!inert);
+		});
+		switch (ann.kind) {
+			case 'label': {
+				if (children.length !== 2) {
+					// Unexpected structure, fallback to full rebuild
+					this.rebuildAnnotationGroup(group, ann, eff);
+					return;
+				}
+				const [rect, text] = children as [Konva.Rect, Konva.Text];
+				const atPx = this.projection.projectPoint(eff[0].x, eff[0].y);
+				const fontSize = Math.max(12, labelScreenPx(ann) / this.stage.scaleX());
+				const pad = 4;
+				const textWidth = measureLabelWidth(ann.text, fontSize);
+				const bgHeight = fontSize * 1.4;
+				// Update rect
+				rect.x(atPx.x - pad);
+				rect.y(atPx.y - fontSize * 0.25);
+				rect.width(textWidth + pad * 2);
+				rect.height(bgHeight);
+				rect.cornerRadius(4);
+				// Update text
+				text.x(atPx.x);
+				text.y(atPx.y);
+				text.text(ann.text);
+				text.fontSize(fontSize);
+				text.fontFamily(LABEL_FONT_FAMILY);
+				text.fill(ann.style.color);
+				// Update visual properties (cheap)
+				rect.fill('rgba(255,255,255,0.8)');
+				break;
+			}
+			case 'pen':
+			case 'arrow':
+			case 'zone': {
+				// These have one or two lines; the first child is always the main line
+				// For arrow, there is a second child for the head
+				const line = children[0] as Konva.Line;
+				const points = this.projection
+					.projectSmoothed(eff, ann.kind === 'zone')
+					.flatMap((p) => [p.x, p.y]);
+				line.points(points);
+				// Update visual properties
+				line.stroke(ann.style.color);
+				line.strokeWidth(ann.style.width ?? 2);
+				if (ann.kind === 'arrow' && children.length === 2) {
+					const headLine = children[1] as Konva.Line;
+					if (eff.length >= 2) {
+						const headPoints = this.arrowHeadPoints(eff);
+						headLine.points(headPoints);
+						headLine.fill(ann.style.color);
+					} else {
+						// Not enough points to draw head, hide it?
+						headLine.points([]);
+					}
+				}
+				break;
+			}
+			case 'gap': {
+				if (children.length !== 3) {
+					// Unexpected structure, fallback to full rebuild
+					this.rebuildAnnotationGroup(group, ann, eff);
+					return;
+				}
+				const [mainLine, tick1, tick2] = children as [Konva.Line, Konva.Line, Konva.Line];
+				const fromPx = this.projection.projectPoint(eff[0].x, eff[0].y);
+				const toPx = this.projection.projectPoint(eff[1].x, eff[1].y);
+				const angle = Math.atan2(toPx.y - fromPx.y, toPx.x - fromPx.x);
+				const tickOffset = 8;
+				// Update main line
+				mainLine.points([fromPx.x, fromPx.y, toPx.x, toPx.y]);
+				mainLine.stroke(ann.style.color);
+				mainLine.strokeWidth(ann.style.width ?? 2);
+				mainLine.dash([8, 8]);
+				// Update tick 1 (at from)
+				const t1 = {
+					x: fromPx.x + tickOffset * Math.cos(angle + Math.PI / 2),
+					y: fromPx.y + tickOffset * Math.sin(angle + Math.PI / 2)
+				};
+				const t2 = {
+					x: fromPx.x + tickOffset * Math.cos(angle - Math.PI / 2),
+					y: fromPx.y + tickOffset * Math.sin(angle - Math.PI / 2)
+				};
+				tick1.points([t1.x, t1.y, t2.x, t2.y]);
+				tick1.stroke(ann.style.color);
+				tick1.strokeWidth(ann.style.width ?? 2);
+				// Update tick 2 (at to)
+				const t3 = {
+					x: toPx.x + tickOffset * Math.cos(angle + Math.PI / 2),
+					y: toPx.y + tickOffset * Math.sin(angle + Math.PI / 2)
+				};
+				const t4 = {
+					x: toPx.x + tickOffset * Math.cos(angle - Math.PI / 2),
+					y: toPx.y + tickOffset * Math.sin(angle - Math.PI / 2)
+				};
+				tick2.points([t3.x, t3.y, t4.x, t4.y]);
+				tick2.stroke(ann.style.color);
+				tick2.strokeWidth(ann.style.width ?? 2);
+				break;
+			}
+			default:
+				// Unknown kind, fallback to full rebuild
+				this.rebuildAnnotationGroup(group, ann, eff);
+		}
+	}
+
+	/**
+	 * Fallback to destroy and rebuild the group's children. Used when the
+	 * structure is unexpected or we need to reset.
+	 */
+	private rebuildAnnotationGroup(group: Konva.Group, ann: Annotation, eff: PlanarPoint[]): void {
+		group.destroyChildren();
+		this.appendShapes(group, ann, eff);
+	}
 
 	/**
 	 * Draws one annotation's shapes into `group` from effective (transformed)
@@ -425,9 +436,10 @@ export class AnnotationRenderer {
 		);
 	}
 
-	/** Offsets the selection chrome (cheap move-gesture path). */
+	/** Offsets the selection chrome (cheap move-gesture path). Uses the
+	 * cached group ref so a per-frame call skips the `.findOne` traversal. */
 	moveSelectionBy(dx: number, dy: number): void {
-		this.controlLayer.findOne('.annotationSelection')?.position({ x: dx, y: dy });
+		this.selGroup?.position({ x: dx, y: dy });
 	}
 
 	/** Repaints both layers (cheap move-gesture path). */
@@ -454,6 +466,14 @@ export class AnnotationRenderer {
 			const { box, corners, rot } = this.selChrome;
 			[box, ...corners, rot].forEach((s) => s.listening(false));
 		}
+		// Disable the hit graph on both layers for the gesture's lifetime.
+		// batchDraw() otherwise repaints the hit canvas of EVERY listening
+		// shape (thick hitStrokeWidth paths are the dominant per-frame cost),
+		// which saturates the main thread during longer drags. Re-enabled by
+		// {@link endGesture}; nothing on these layers needs hit detection
+		// while a gesture is in flight (the stage drives the pointer events).
+		this.annotationLayer.hitGraphEnabled(false);
+		this.controlLayer.hitGraphEnabled(false);
 	}
 
 	/**
@@ -521,6 +541,9 @@ export class AnnotationRenderer {
 	/** Ends the live edit; the owner then commits and runs the full render. */
 	endGesture(): void {
 		this.liveAnnId = null;
+		// Re-enable hit detection (disabled by {@link beginGesture}).
+		this.annotationLayer.hitGraphEnabled(true);
+		this.controlLayer.hitGraphEnabled(true);
 	}
 
 	/**
@@ -534,11 +557,13 @@ export class AnnotationRenderer {
 		this.controlLayer.find('.annotationSelection').forEach((n) => n.destroy());
 		// Cached chrome refs are invalidated whenever the chrome is rebuilt.
 		this.selChrome = null;
+		this.selGroup = null;
 		if (!ann || get(toolMode) !== 'select') return;
 
 		const scale = this.stage.scaleX() || 1;
 		const sel = new Konva.Group({ name: 'annotationSelection', listening: true });
 		this.controlLayer.add(sel);
+		this.selGroup = sel;
 
 		if (ann.kind === 'label') {
 			const atPx = this.projection.projectPoint(

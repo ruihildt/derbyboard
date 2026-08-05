@@ -342,6 +342,19 @@ export function setAnnotationScope(annId: string, stepId: string | null): void {
 }
 
 /**
+ * Sets a label annotation's font size (in base on-screen pixels). One undo
+ * entry. Only affects `kind: 'label'` annotations; other kinds are ignored.
+ */
+export function setAnnotationFontSize(annId: string, fontSize: number): void {
+	boardDoc.applyEdit((draft) => {
+		if (!draft.annotations) return;
+		const ann = draft.annotations.find((a) => a.id === annId);
+		if (!ann || ann.kind !== 'label') return;
+		ann.fontSize = fontSize;
+	}, 'Set label size');
+}
+
+/**
  * Sets an annotation's move/resize/rotate transform. One undo entry. Pass
  * `undefined` to reset to identity (clears the field).
  */
@@ -363,13 +376,13 @@ export function setAnnotationTransform(
 
 /** Deletes an annotation by id. No-op if absent. */
 export function deleteAnnotation(annId: string): void {
-  boardDoc.applyEdit((draft) => {
-    if (!draft.annotations) return;
-    const index = draft.annotations.findIndex(a => a.id === annId);
-    if (index !== -1) {
-      draft.annotations.splice(index, 1);
-    }
-  }, 'Delete annotation');
+	boardDoc.applyEdit((draft) => {
+		if (!draft.annotations) return;
+		const index = draft.annotations.findIndex((a) => a.id === annId);
+		if (index !== -1) {
+			draft.annotations.splice(index, 1);
+		}
+	}, 'Delete annotation');
 }
 
 /** Removes every annotation from the board. */

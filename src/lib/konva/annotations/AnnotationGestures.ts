@@ -26,6 +26,8 @@ interface AnnotationGestureState {
 	startPointer: PlanarPoint;
 	su: number;
 	sv: number;
+	/** Cached group ref for the move path (avoids a per-frame `.find`). */
+	moveGroup?: Konva.Group;
 }
 
 /**
@@ -92,12 +94,17 @@ export class AnnotationGestures {
 			sv
 		};
 		e.cancelBubble = true;
-		// Rotate/resize enter the renderer's live in-place edit mode: shapes
-		// and selection chrome are marked non-listening (no hit-canvas
-		// repaint) and then synced in place each frame instead of being
-		// destroyed and recreated. Move stays on its own cheap offset path.
-		if (type === 'rotate' || type === 'resize') {
-			this.renderer.beginGesture(ann);
+		// Every gesture marks the mark's shapes and the selection chrome
+		// non-listening so batchDraw skips the hit-canvas repaint each frame —
+		// otherwise a move drag of a many-point stroke repaints its entire
+		// (thick hitStrokeWidth) hit path per frame and saturates the main
+		// thread. Listening is restored by the commit render
+		// (updateAnnotationGroup / fresh selection chrome).
+		this.renderer.beginGesture(ann);
+		if (type === 'move') {
+			// Cache the dragged group's ref once so the per-frame move path
+			// skips the `.find('.annotation')` tree traversal.
+			this.gesture.moveGroup = this.renderer.groupFor(ann.id);
 		}
 	}
 
@@ -124,9 +131,7 @@ export class AnnotationGestures {
 		this.lastGestureEnd = Date.now();
 		// Exit the live in-place edit; onSettled runs the full render which
 		// rebuilds the canonical, hittable scene (listening restored).
-		if (g && (g.type === 'rotate' || g.type === 'resize')) {
-			this.renderer.endGesture();
-		}
+		if (g) this.renderer.endGesture();
 		if (!g) return;
 		const pos = this.stage.getPointerPosition();
 		const t = pos ? this.gestureTransform(g, this.projection.pointerToPlane(pos)) : g.start;
@@ -142,6 +147,11 @@ export class AnnotationGestures {
 			cancelAnimationFrame(this.rafId);
 			this.rafId = null;
 		}
+		// A gesture torn down mid-flight must still re-enable the hit graph.
+		if (this.gesture) {
+			this.gesture = null;
+			this.renderer.endGesture();
+		}
 	}
 
 	/** Applies the live transform during a drag and redraws the mark + box. */
@@ -156,10 +166,11 @@ export class AnnotationGestures {
 			// Cheap path: a move is a uniform translation, so just offset the
 			// existing nodes (they're built at origin) instead of destroying
 			// and rebuilding every shape — and the selection box with its five
-			// handles — on every frame of the drag.
+			// handles — on every frame of the drag. Both node refs are cached
+			// at gesture start to skip the per-frame `.find` traversals.
 			const dx = (t.cx - g.start.cx) * TRACK_SCALE;
 			const dy = (t.cy - g.start.cy) * TRACK_SCALE;
-			this.renderer.groupFor(g.annId)?.position({ x: dx, y: dy });
+			g.moveGroup?.position({ x: dx, y: dy });
 			this.renderer.moveSelectionBy(dx, dy);
 			this.renderer.batchDraw();
 			return;
