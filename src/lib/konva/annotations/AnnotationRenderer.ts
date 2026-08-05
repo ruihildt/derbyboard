@@ -3,6 +3,7 @@ import Konva from 'konva';
 
 import { TRACK_SCALE } from '$lib/constants';
 import { boardDoc } from '$lib/doc/store';
+import { annotationVisibleOnStep } from '$lib/doc/annotationScope';
 import { selectedAnnotationId } from '$lib/stores/selection';
 import { toolMode } from '$lib/stores/toolMode';
 import { LEGACY_LABEL_PX } from '$lib/stores/labelSettings';
@@ -98,13 +99,15 @@ export class AnnotationRenderer {
 
 	/**
 	 * Renders annotations for a step. With step undefined (Free Play) only
-	 * board-wide marks are shown; a step-scoped mark (scope.stepId) appears only
-	 * on its own step (decision #6: visible iff `!scope || scope.stepId ===
-	 * activeStep?.id`). Each visible mark is wrapped in a hittable Group (name
-	 * `annotation`, attr `annId`) so Select can target it; a dashed selection
-	 * ring for the currently selected mark is drawn on the top control layer.
+	 * board-wide marks are shown; a scoped mark (single step or step range)
+	 * appears only while the active step falls within its scope (see
+	 * `annotationVisibleOnStep`). Each visible mark is wrapped in a hittable
+	 * Group (name `annotation`, attr `annId`) so Select can target it; a dashed
+	 * selection ring for the currently selected mark is drawn on the top
+	 * control layer. `steps` is the active clip's ordered step array, used to
+	 * resolve range bounds.
 	 */
-	render(step: Step | undefined): void {
+	render(step: Step | undefined, steps: Step[]): void {
 		const activeStepId = step?.id;
 		const selectedId = get(selectedAnnotationId);
 		let selectedAnn: Annotation | undefined;
@@ -115,7 +118,7 @@ export class AnnotationRenderer {
 
 		for (const ann of allAnnotations) {
 			// Check if annotation is visible for current step
-			if (!ann.scope || ann.scope.stepId === activeStepId) {
+			if (annotationVisibleOnStep(ann, activeStepId, steps)) {
 				visibleIds.add(ann.id);
 				const existingGroup = this.groups.get(ann.id);
 				if (existingGroup) {

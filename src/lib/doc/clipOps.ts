@@ -2,6 +2,9 @@ import { get } from 'svelte/store';
 import { boardDoc } from './store';
 import { poseStore, type Pose, type CommitGestureOptions, applyHeadingModeOpts } from './poses';
 import { authoringSession } from '$lib/stores/session';
+import { selectedAnnotationId } from '$lib/stores/selection';
+import { resolvedTransform } from '$lib/konva/annotationTransform';
+import { annotationVisibleOnStep, scopeBounds } from './annotationScope';
 import type {
 	AuthoredClip,
 	BoardDoc,
@@ -162,15 +165,51 @@ export function deleteStep(stepId: string): void {
 	const idx = clip.steps.findIndex((s) => s.id === stepId);
 	if (idx < 0) return;
 	const wasActive = idx === activeStepIndex();
+
+	// Compute each scoped annotation's fate from the PRE-deletion step order:
+	// if the deleted step falls inside the annotation's range, re-anchor the
+	// range to the surviving in-range steps; if none survive, drop the
+	// annotation. Steps outside a range are untouched. (Done outside the draft
+	// because bounds/survivors must be resolved against the pre-delete order.)
+	type Reanchor = { startId: string; endId?: string };
+	const outcomes = new Map<string, { reanchor?: Reanchor; drop?: boolean }>();
+	for (const ann of boardDoc.current.annotations ?? []) {
+		if (!ann.scope) continue;
+		const bounds = scopeBounds(ann.scope, clip.steps);
+		if (!bounds) continue; // stale boundary id — leave as-is
+		if (idx < bounds.lo || idx > bounds.hi) continue; // outside the range
+		const survivors = clip.steps.slice(bounds.lo, bounds.hi + 1).filter((s) => s.id !== stepId);
+		if (survivors.length === 0) {
+			outcomes.set(ann.id, { drop: true });
+		} else {
+			outcomes.set(ann.id, {
+				reanchor: {
+					startId: survivors[0].id,
+					endId: survivors.length > 1 ? survivors[survivors.length - 1].id : undefined
+				}
+			});
+		}
+	}
+
 	boardDoc.applyEdit((draft) => {
 		const c = findAuthoredClip(draft, get(authoringSession).activeClipId);
 		if (!c) return;
 		c.steps = c.steps.filter((s) => s.id !== stepId);
-		// Promote annotations scoped to the deleted step to board-wide so they
-		// don't vanish permanently — they become visible on every step.
-		if (draft.annotations) {
-			for (const ann of draft.annotations) {
-				if (ann.scope?.stepId === stepId) delete ann.scope;
+		// Apply the pre-computed scope outcomes: re-anchor or drop annotations
+		// whose range included the deleted step.
+		if (draft.annotations && outcomes.size > 0) {
+			for (let i = draft.annotations.length - 1; i >= 0; i--) {
+				const ann = draft.annotations[i];
+				const o = outcomes.get(ann.id);
+				if (!o) continue;
+				if (o.drop) {
+					draft.annotations.splice(i, 1);
+				} else if (o.reanchor) {
+					ann.scope =
+						o.reanchor.endId === undefined
+							? { stepId: o.reanchor.startId }
+							: { stepId: o.reanchor.startId, endStepId: o.reanchor.endId };
+				}
 			}
 		}
 	}, 'Delete step');
@@ -321,6 +360,41 @@ export function addAnnotation(ann: Omit<Annotation, 'id'> & { id?: string }): st
 	return id;
 }
 
+/** Deep-copies an annotation's geometry so a duplicate shares no references
+ * with its source (immer freezes state, but points/from/to/at would otherwise
+ * alias across the two marks). */
+function cloneAnnotationGeometry(source: Annotation): Annotation {
+	switch (source.kind) {
+		case 'pen':
+		case 'arrow':
+		case 'zone':
+			return { ...source, points: source.points.map((p) => ({ ...p })) };
+		case 'gap':
+			return { ...source, from: { ...source.from }, to: { ...source.to } };
+		case 'label':
+			return { ...source, at: { ...source.at } };
+	}
+}
+
+/**
+ * Duplicates an annotation, offsetting its resolved transform centre by
+ * `delta` (planar metres) so the copy lands beside the original. Preserves the
+ * source's style, scope and transform (rotation/scale); geometry is cloned.
+ * One undo entry. Returns the new id (or null if the source is gone).
+ */
+export function duplicateAnnotation(annId: string, delta: PlanarPoint): string | null {
+	const source = boardDoc.current.annotations?.find((a) => a.id === annId);
+	if (!source) return null;
+	const resolved = resolvedTransform(source);
+	const { id: _omit, ...rest } = cloneAnnotationGeometry(source);
+	void _omit;
+	const copy: Omit<Annotation, 'id'> = {
+		...rest,
+		transform: { ...resolved, cx: resolved.cx + delta.x, cy: resolved.cy + delta.y }
+	};
+	return addAnnotation(copy);
+}
+
 /**
  * Pins an annotation to a step (`stepId` set) or makes it board-wide
  * (`stepId === null` clears the scope). One undo entry.
@@ -339,6 +413,30 @@ export function setAnnotationScope(annId: string, stepId: string | null): void {
 		},
 		stepId === null ? 'Show on all steps' : 'Pin to step'
 	);
+}
+
+/**
+ * Scopes an annotation to an inclusive range of steps First..Last. The two ids
+ * are normalised to the active clip's step order (min/max by index), so passing
+ * them in either order yields the same range. When both resolve to the same
+ * step the range is stored as a single-step scope. One undo entry.
+ */
+export function setAnnotationScopeRange(annId: string, fromStepId: string, toStepId: string): void {
+	const clip = getActiveClip();
+	if (!clip) return;
+	const fromIdx = clip.steps.findIndex((s) => s.id === fromStepId);
+	const toIdx = clip.steps.findIndex((s) => s.id === toStepId);
+	if (fromIdx < 0 || toIdx < 0) return;
+	const lo = Math.min(fromIdx, toIdx);
+	const hi = Math.max(fromIdx, toIdx);
+	const startId = clip.steps[lo].id;
+	const endId = clip.steps[hi].id;
+	boardDoc.applyEdit((draft) => {
+		if (!draft.annotations) return;
+		const ann = draft.annotations.find((a) => a.id === annId);
+		if (!ann) return;
+		ann.scope = startId === endId ? { stepId: startId } : { stepId: startId, endStepId: endId };
+	}, 'Scope to step range');
 }
 
 /**
@@ -534,6 +632,18 @@ export function navigateToStep(index: number, reloadBoard = true): void {
 	});
 	if (reloadBoard && idx >= 0) {
 		loadStepOntoBoard(idx);
+	}
+	// Deselect any annotation that is no longer visible on the new step. This
+	// runs ONLY on step navigation, never on scope edits, so the user can
+	// freely set a Custom range that excludes the current step while the panel
+	// is still open.
+	const selId = get(selectedAnnotationId);
+	if (selId && clip && idx >= 0) {
+		const stepId = clip.steps[idx]?.id;
+		const ann = boardDoc.current.annotations?.find((a) => a.id === selId);
+		if (ann && stepId && !annotationVisibleOnStep(ann, stepId, clip.steps)) {
+			selectedAnnotationId.set(null);
+		}
 	}
 }
 

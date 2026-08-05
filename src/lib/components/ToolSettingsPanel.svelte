@@ -1,5 +1,10 @@
 <script lang="ts">
-	import { ImageOutline, VideoCameraOutline } from 'flowbite-svelte-icons';
+	import {
+		FileCopyAltOutline,
+		TrashBinOutline,
+		ImageOutline,
+		VideoCameraOutline
+	} from 'flowbite-svelte-icons';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import { captureSettings } from '$lib/stores/captureSettings';
 	import { toolMode } from '$lib/stores/toolMode';
@@ -13,7 +18,15 @@
 	import { selectedAnnotationId } from '$lib/stores/selection';
 	import { boardDoc } from '$lib/doc/store';
 	import { authoringSession } from '$lib/stores/session';
-	import { setAnnotationScope, setAnnotationFontSize } from '$lib/doc/clipOps';
+	import {
+		deleteAnnotation,
+		duplicateAnnotation,
+		setAnnotationScope,
+		setAnnotationScopeRange,
+		setAnnotationFontSize
+	} from '$lib/doc/clipOps';
+	import { scopeBounds, scopeModeOf } from '$lib/doc/annotationScope';
+	import type { PlanarPoint } from '$lib/doc/types';
 	import type { WatermarkSize } from '$lib/konva/Watermark';
 	import type { Quality } from '$lib/utils/codec';
 	import {
@@ -40,20 +53,29 @@
 
 	// Active step context for the scope toggle.
 	let clip = $derived($boardDoc.clips.find((c) => c.id === $boardDoc.activeClipId));
+	let steps = $derived(clip && clip.kind === 'authored' ? clip.steps : []);
 	let activeStep = $derived(
 		clip && clip.kind === 'authored'
 			? clip.steps[Math.max(0, Math.min($authoringSession.activeStepIndex, clip.steps.length - 1))]
 			: undefined
 	);
-	let isStepScoped = $derived(!!selectedAnn?.scope);
 	let hasStep = $derived(!!activeStep);
-	let stepLabel = $derived.by(() => {
-		if (!activeStep) return 'This step';
-		const title = activeStep.title?.trim();
-		if (title) return title;
-		const idx =
-			clip && clip.kind === 'authored' ? clip.steps.findIndex((s) => s.id === activeStep.id) : -1;
-		return idx >= 0 ? `Step ${idx + 1}` : 'This step';
+	let canRange = $derived(steps.length >= 2);
+	// Current scope mode + resolved range bounds (inclusive step indices).
+	let scopeMode = $derived(selectedAnn ? scopeModeOf(selectedAnn) : 'all');
+	let rangeBounds = $derived(selectedAnn ? scopeBounds(selectedAnn.scope, steps) : null);
+	// Step number for the "Current (Step N)" pill: the pinned step when
+	// scoped to a single step, otherwise the active step as a preview.
+	let currentStepNum = $derived.by(() => {
+		if (selectedAnn?.scope && !selectedAnn.scope.endStepId) {
+			const idx = steps.findIndex((s) => s.id === selectedAnn.scope!.stepId);
+			return idx >= 0 ? idx + 1 : null;
+		}
+		if (activeStep) {
+			const idx = steps.findIndex((s) => s.id === activeStep.id);
+			return idx >= 0 ? idx + 1 : null;
+		}
+		return null;
 	});
 
 	// Reverse-map a label's pixel fontSize to the nearest LabelSize token so
@@ -91,14 +113,71 @@
 		if ($selectedAnnotationId) setAnnotationFontSize($selectedAnnotationId, labelBasePx(size));
 	}
 
-	function toggleScope() {
+	// Scope mode handlers for the segmented control + From/To selects.
+	function setScopeAll() {
+		const id = $selectedAnnotationId;
+		if (id) setAnnotationScope(id, null);
+	}
+	function setScopeCurrent() {
+		const id = $selectedAnnotationId;
+		if (id && activeStep) setAnnotationScope(id, activeStep.id);
+	}
+	function setScopeRange() {
+		const id = $selectedAnnotationId;
+		if (!id || steps.length < 2) return;
+		// Already in range mode — keep the existing range untouched.
+		if (scopeMode === 'range' && rangeBounds) return;
+		// Default From to the current step, To to the last step. If the
+		// current step IS the last step this would collapse to a single step,
+		// so fall back From to the first step.
+		let fromId = activeStep ? activeStep.id : steps[0].id;
+		const toId = steps[steps.length - 1].id;
+		if (fromId === toId) fromId = steps[0].id;
+		setAnnotationScopeRange(id, fromId, toId);
+	}
+	function setRangeFrom(fromId: string) {
 		const id = $selectedAnnotationId;
 		if (!id) return;
-		if (isStepScoped) {
-			setAnnotationScope(id, null);
-		} else if (activeStep) {
-			setAnnotationScope(id, activeStep.id);
-		}
+		const toId = rangeBounds ? steps[rangeBounds.hi].id : steps[steps.length - 1].id;
+		setAnnotationScopeRange(id, fromId, toId);
+	}
+	function setRangeTo(toId: string) {
+		const id = $selectedAnnotationId;
+		if (!id) return;
+		const fromId = rangeBounds ? steps[rangeBounds.lo].id : steps[0].id;
+		setAnnotationScopeRange(id, fromId, toId);
+	}
+
+	// Label for a step in the From/To dropdowns: "Step N" (+ " — title").
+	function stepOptionLabel(i: number): string {
+		const s = steps[i];
+		const title = s?.title?.trim();
+		return title ? `Step ${i + 1} — ${title}` : `Step ${i + 1}`;
+	}
+
+	// Converts a desired SCREEN-space pixel offset into planar metres via two
+	// planeToScreen probes, so the nudge looks like "a bit" at any zoom level.
+	function planarOffsetFromScreen(dxPx: number, dyPx: number): PlanarPoint {
+		const o = game.planeToScreen({ x: 0, y: 0 });
+		const pxPerMetreX = game.planeToScreen({ x: 1, y: 0 }).x - o.x;
+		const pxPerMetreY = game.planeToScreen({ x: 0, y: 1 }).y - o.y;
+		return { x: dxPx / pxPerMetreX, y: dyPx / pxPerMetreY };
+	}
+
+	function duplicateSelected() {
+		const id = $selectedAnnotationId;
+		if (!id) return;
+		// Nudge right (+x) and down (+y) by ~24 screen pixels.
+		const delta = planarOffsetFromScreen(24, 24);
+		const newId = duplicateAnnotation(id, delta);
+		if (newId) selectedAnnotationId.set(newId);
+	}
+
+	function deleteSelected() {
+		const id = $selectedAnnotationId;
+		if (!id) return;
+		deleteAnnotation(id);
+		selectedAnnotationId.set(null);
 	}
 
 	const QUALITIES: Quality[] = ['720p', '1080p', '1440p', '2160p'];
@@ -118,7 +197,9 @@
 	<div class="pointer-events-auto w-60 rounded-2xl bg-white p-3 shadow-lg shadow-black/10">
 		<!-- Zone format (shared) -->
 		<section class="mb-4">
-			<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Zone format</h3>
+			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+				Zone format
+			</h3>
 			<div class="flex flex-wrap gap-1">
 				{#each CAPTURE_FORMATS as f (f)}
 					<button class={pill($captureSettings.format === f)} onclick={() => setFormat(f)}>
@@ -132,7 +213,7 @@
 		{#if captureMode === 'video'}
 			<section class="mb-4">
 				<h3
-					class="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"
+					class="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
 				>
 					<VideoCameraOutline class="h-3.5 w-3.5" />
 					Resolution
@@ -150,7 +231,9 @@
 
 			<!-- Frame rate (video only) -->
 			<section class="mb-4">
-				<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Frame rate</h3>
+				<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+					Frame rate
+				</h3>
 				<div class="flex gap-1">
 					{#each FPS_OPTIONS as f (f)}
 						<button
@@ -164,7 +247,7 @@
 		{:else}
 			<section class="mb-4">
 				<h3
-					class="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"
+					class="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500"
 				>
 					<ImageOutline class="h-3.5 w-3.5" />
 					Resolution
@@ -183,7 +266,9 @@
 
 		<!-- Watermark (shared) -->
 		<section>
-			<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Watermark</h3>
+			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+				Watermark
+			</h3>
 			<div class="flex flex-wrap gap-1">
 				{#each WATERMARK_SIZES as size (size)}
 					<button
@@ -199,7 +284,9 @@
 {:else if isLabel}
 	<div class="pointer-events-auto w-60 rounded-2xl bg-white p-3 shadow-lg shadow-black/10">
 		<section>
-			<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Font size</h3>
+			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+				Font size
+			</h3>
 			<div class="flex gap-1">
 				{#each FONT_SIZES as size (size)}
 					<button
@@ -219,7 +306,9 @@
 	<div class="pointer-events-auto w-60 rounded-2xl bg-white p-3 shadow-lg shadow-black/10">
 		{#if selectedAnn.kind === 'label'}
 			<section class="mb-4">
-				<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Font size</h3>
+				<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+					Font size
+				</h3>
 				<div class="flex gap-1">
 					{#each FONT_SIZES as size (size)}
 						<button
@@ -233,13 +322,69 @@
 			</section>
 		{/if}
 
-		<!-- Scope toggle at the bottom -->
+		<!-- Scope: All | Current (Step N) | Custom -->
+		<section class="mb-4">
+			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Scope</h3>
+			<div class="flex flex-wrap gap-1">
+				<button class={pill(scopeMode === 'all')} onclick={setScopeAll}>All</button>
+				<button class={pill(scopeMode === 'current')} onclick={setScopeCurrent} disabled={!hasStep}>
+					{currentStepNum ? `Current (Step ${currentStepNum})` : 'Current'}
+				</button>
+				<button class={pill(scopeMode === 'range')} onclick={setScopeRange} disabled={!canRange}>
+					Custom
+				</button>
+			</div>
+			{#if scopeMode === 'range' && rangeBounds}
+				<div class="mt-2 flex flex-col gap-1.5">
+					<label class="flex items-center gap-2 text-[11px] text-gray-500">
+						<span class="w-10 shrink-0">From</span>
+						<select
+							class="min-w-0 flex-1 rounded border border-gray-200 bg-white px-1.5 py-1 text-xs text-gray-700"
+							value={steps[rangeBounds.lo].id}
+							onchange={(e) => setRangeFrom(e.currentTarget.value)}
+						>
+							{#each steps as s, i (s.id)}
+								<option value={s.id}>{stepOptionLabel(i)}</option>
+							{/each}
+						</select>
+					</label>
+					<label class="flex items-center gap-2 text-[11px] text-gray-500">
+						<span class="w-10 shrink-0">To</span>
+						<select
+							class="min-w-0 flex-1 rounded border border-gray-200 bg-white px-1.5 py-1 text-xs text-gray-700"
+							value={steps[rangeBounds.hi].id}
+							onchange={(e) => setRangeTo(e.currentTarget.value)}
+						>
+							{#each steps as s, i (s.id)}
+								<option value={s.id}>{stepOptionLabel(i)}</option>
+							{/each}
+						</select>
+					</label>
+				</div>
+			{/if}
+		</section>
+
+		<!-- Actions: duplicate / delete the selected annotation -->
 		<section>
-			<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Scope</h3>
+			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Actions</h3>
 			<div class="flex gap-1">
-				<button class={pill(!isStepScoped)} onclick={toggleScope}>All steps</button>
-				<button class={pill(isStepScoped)} onclick={toggleScope} disabled={!hasStep}>
-					{stepLabel}
+				<button
+					type="button"
+					class="flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100"
+					onclick={duplicateSelected}
+					title="Duplicate"
+				>
+					<FileCopyAltOutline class="h-4 w-4" />
+					<span>Duplicate</span>
+				</button>
+				<button
+					type="button"
+					class="flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+					onclick={deleteSelected}
+					title="Delete"
+				>
+					<TrashBinOutline class="h-4 w-4" />
+					<span>Delete</span>
 				</button>
 			</div>
 		</section>

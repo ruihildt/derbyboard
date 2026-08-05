@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { get } from 'svelte/store';
 import { boardDoc } from './store';
 import { poseStore } from './poses';
 import { createEmptyDoc } from './types';
-import type { Entity, Annotation } from './types';
+import type { Entity, Annotation, Step } from './types';
 import { authoringSession } from '$lib/stores/session';
+import { selectedAnnotationId } from '$lib/stores/selection';
 import {
 	createAuthoredClipFromBoard,
 	addStepFromBoard,
@@ -26,7 +28,8 @@ import {
 	addAnnotation,
 	deleteAnnotation,
 	clearAnnotations,
-	setAnnotationScope
+	setAnnotationScope,
+	setAnnotationScopeRange
 } from './clipOps';
 
 function entity(id: string, x: number, y = 0.5, heading = 0): Entity {
@@ -428,6 +431,111 @@ describe('clipOps — paths and annotations', () => {
 				{ x: 3, y: 0.5 }
 			]);
 		}
+	});
+});
+
+describe('clipOps — annotation step-range scope', () => {
+	beforeEach(() => resetBoard([entity('a', 0)]));
+
+	function penAnnotation(): string {
+		return addAnnotation({
+			kind: 'pen',
+			points: [
+				{ x: 0, y: 0.5 },
+				{ x: 1, y: 0.5 }
+			],
+			style: { color: '#ff0000' }
+		} as Omit<Annotation, 'id'>);
+	}
+
+	/** Builds a 4-step clip and returns its (stable) step ids in order. */
+	function fourStepClip(): Step[] {
+		createAuthoredClipFromBoard();
+		addStepFromBoard();
+		addStepFromBoard();
+		addStepFromBoard();
+		return getActiveClip()!.steps;
+	}
+
+	it('setAnnotationScopeRange stores an inclusive range', () => {
+		const steps = fourStepClip();
+		const id = penAnnotation();
+		setAnnotationScopeRange(id, steps[0].id, steps[2].id);
+		expect(boardDoc.current.annotations![0].scope).toEqual({
+			stepId: steps[0].id,
+			endStepId: steps[2].id
+		});
+	});
+
+	it('setAnnotationScopeRange normalises a reversed selection (auto-swap)', () => {
+		const steps = fourStepClip();
+		const id = penAnnotation();
+		setAnnotationScopeRange(id, steps[2].id, steps[0].id);
+		expect(boardDoc.current.annotations![0].scope).toEqual({
+			stepId: steps[0].id,
+			endStepId: steps[2].id
+		});
+	});
+
+	it('setAnnotationScopeRange collapses From == To to a single-step scope', () => {
+		const steps = fourStepClip();
+		const id = penAnnotation();
+		setAnnotationScopeRange(id, steps[1].id, steps[1].id);
+		expect(boardDoc.current.annotations![0].scope).toEqual({ stepId: steps[1].id });
+	});
+
+	it('deleting an interior step leaves the range boundaries intact', () => {
+		const steps = fourStepClip();
+		const id = penAnnotation();
+		setAnnotationScopeRange(id, steps[1].id, steps[3].id); // range over 1..3
+		deleteStep(steps[2].id); // interior deletion
+		const ann = boardDoc.current.annotations!.find((a) => a.id === id)!;
+		expect(ann.scope).toEqual({ stepId: steps[1].id, endStepId: steps[3].id });
+	});
+
+	it('deleting a boundary step shrinks the range to survivors', () => {
+		const steps = fourStepClip();
+		const id = penAnnotation();
+		setAnnotationScopeRange(id, steps[1].id, steps[3].id); // range over 1..3
+		deleteStep(steps[1].id); // delete the start boundary
+		const ann = boardDoc.current.annotations!.find((a) => a.id === id)!;
+		expect(ann.scope).toEqual({ stepId: steps[2].id, endStepId: steps[3].id });
+	});
+
+	it('deleting a step outside the range leaves the scope untouched', () => {
+		const steps = fourStepClip();
+		const id = penAnnotation();
+		setAnnotationScopeRange(id, steps[1].id, steps[3].id); // range over 1..3
+		deleteStep(steps[0].id); // outside the range
+		const ann = boardDoc.current.annotations!.find((a) => a.id === id)!;
+		expect(ann.scope).toEqual({ stepId: steps[1].id, endStepId: steps[3].id });
+	});
+
+	it('deleting the only in-range step removes the annotation', () => {
+		const steps = fourStepClip();
+		const id = penAnnotation();
+		setAnnotationScope(id, steps[1].id); // single-step scope
+		deleteStep(steps[1].id);
+		expect(boardDoc.current.annotations!.find((a) => a.id === id)).toBeUndefined();
+	});
+
+	it('navigateToStep deselects annotations no longer visible on the new step', () => {
+		const steps = fourStepClip();
+		const id = penAnnotation();
+		setAnnotationScope(id, steps[1].id); // scoped to step 1
+		selectedAnnotationId.set(id);
+		expect(get(selectedAnnotationId)).toBe(id);
+		navigateToStep(0); // step 0 — annotation not visible
+		expect(get(selectedAnnotationId)).toBeNull();
+	});
+
+	it('navigateToStep keeps selection when the annotation is visible on the new step', () => {
+		const steps = fourStepClip();
+		const id = penAnnotation();
+		setAnnotationScopeRange(id, steps[1].id, steps[3].id); // range 1-3
+		selectedAnnotationId.set(id);
+		navigateToStep(2); // within range — stays selected
+		expect(get(selectedAnnotationId)).toBe(id);
 	});
 });
 

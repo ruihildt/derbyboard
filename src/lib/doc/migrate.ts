@@ -138,6 +138,11 @@ export function entityToPixelRelative(entity: Entity): { x: number; y: number } 
  *    `scope: { stepId }` (shown only on its originating step; absent scope ⇒
  *    board-wide). The `Step.annotations` field is removed. No coordinate work:
  *    planar is already canonical.
+ *  - v8 → v9: arrow annotations moved from `{ from, to }` to
+ *    `{ points: [from, to] }` to support freehand arrow drawing.
+ *  - v9 → v10: added optional `endStepId` to `AnnotationScope` for inclusive
+ *    step-range visibility. Purely additive (absent ⇒ single step, as before),
+ *    so no transform is required; existing single-step scopes read identically.
  */
 export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 	let next = doc;
@@ -307,6 +312,14 @@ export function migrateBoardDoc(doc: BoardDoc): BoardDoc {
 			});
 		}
 		next.version = 9;
+	}
+
+	if (next.version < 10) {
+		// v9 → v10 added optional `endStepId` to `AnnotationScope` for inclusive
+		// step-range visibility. It is purely additive: an absent `endStepId`
+		// still means a single step, exactly as before. No data transform is
+		// needed — this block exists only to record the schema bump.
+		next.version = 10;
 	}
 
 	next.version = CURRENT_VERSION;

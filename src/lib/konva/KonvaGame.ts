@@ -1016,14 +1016,20 @@ export class KonvaGame {
 
 	/**
 	 * Renders annotations for a step. With step undefined (Free Play) only
-	 * board-wide marks are shown; a step-scoped mark (scope.stepId) appears only
-	 * on its own step (decision #6: visible iff `!scope || scope.stepId ===
-	 * activeStep?.id`). Each visible mark is wrapped in a hittable Group (name
-	 * `annotation`, attr `annId`) so Select can target it; a dashed selection
-	 * ring for the currently selected mark is drawn on the top control layer.
+	 * board-wide marks are shown; a scoped mark (single step or step range)
+	 * appears only while the active step falls within its scope. The active
+	 * clip's step order is resolved here so callers stay unchanged.
 	 */
 	renderAnnotations(step: Step | undefined): void {
-		this.annotationRenderer.render(step);
+		this.annotationRenderer.render(step, this.getActiveSteps());
+	}
+
+	/** The active authored clip's ordered steps (empty when not authoring). */
+	private getActiveSteps(): Step[] {
+		const clipId = boardDoc.current.activeClipId;
+		if (!clipId) return [];
+		const clip = boardDoc.current.clips.find((c) => c.id === clipId);
+		return clip && clip.kind === 'authored' ? clip.steps : [];
 	}
 
 	/**

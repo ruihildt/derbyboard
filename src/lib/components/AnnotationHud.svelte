@@ -4,6 +4,7 @@
 	import { boardDoc } from '$lib/doc/store';
 	import { authoringSession } from '$lib/stores/session';
 	import { effectiveAnchors } from '$lib/konva/annotationTransform';
+	import { annotationVisibleOnStep, scopeLabel } from '$lib/doc/annotationScope';
 	import type { KonvaGame } from '$lib/konva/KonvaGame';
 	import type { PlanarPoint } from '$lib/doc/types';
 
@@ -21,24 +22,18 @@
 	// doc reads, clip/step finds, anchor transform, label strings) at 60fps.
 	let ann = $derived($boardDoc.annotations?.find((a) => a.id === $selectedAnnotationId));
 	let clip = $derived($boardDoc.clips.find((c) => c.id === $boardDoc.activeClipId));
+	let steps = $derived(clip && clip.kind === 'authored' ? clip.steps : []);
 	let step = $derived(
 		clip && clip.kind === 'authored'
 			? clip.steps[Math.max(0, Math.min($authoringSession.activeStepIndex, clip.steps.length - 1))]
 			: undefined
 	);
-	// Hidden when the selected mark isn't visible on this step (step-scoped
-	// mark, but a different/absent step is active).
-	let visible = $derived(!!ann && (!ann.scope || ann.scope.stepId === step?.id));
+	// Hidden when the selected mark isn't visible on this step (a scoped mark
+	// whose range doesn't cover the active step).
+	let visible = $derived(!!ann && annotationVisibleOnStep(ann, step?.id, steps));
 	let isStepScoped = $derived(!!ann?.scope);
+	let scopeText = $derived(ann ? scopeLabel(ann, steps) : 'All');
 	let hasStep = $derived(!!step);
-	let stepLabel = $derived.by(() => {
-		if (!step) return 'this step';
-		const title = step.title?.trim();
-		if (title) return title;
-		const idx =
-			clip && clip.kind === 'authored' ? clip.steps.findIndex((s) => s.id === step.id) : -1;
-		return idx >= 0 ? `Step ${idx + 1}` : 'this step';
-	});
 
 	// Bounding-box centroid in planar metres (after the transform) — changes
 	// only when the document does, not per frame.
@@ -94,14 +89,14 @@
 		<div
 			class="pointer-events-auto flex items-center gap-2 rounded-lg bg-gray-900/85 px-2.5 py-1 text-xs text-white shadow-lg shadow-black/20 backdrop-blur-sm"
 		>
-			<span class="font-semibold">{isStepScoped ? stepLabel : 'All steps'}</span>
+			<span class="font-semibold">{scopeText}</span>
 			{#if hasStep}
 				<button
 					type="button"
 					class="rounded bg-white/10 px-2 py-0.5 font-medium hover:bg-white/20"
 					onclick={toggleScope}
 				>
-					{isStepScoped ? 'Show on all steps' : 'Only this step'}
+					{isStepScoped ? 'All' : 'Current'}
 				</button>
 			{/if}
 		</div>

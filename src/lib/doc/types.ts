@@ -42,11 +42,17 @@ export interface AnnotationStyle {
 }
 
 /**
- * Pins an annotation to a single step. Absent `scope` ⇒ the mark is board-wide
- * (shown on every step and in free play).
+ * Restricts an annotation's visibility to a set of steps. Absent `scope` ⇒ the
+ * mark is board-wide (shown on every step and in free play).
+ *  - `{ stepId }`                 ⇒ a single step.
+ *  - `{ stepId, endStepId }`      ⇒ an inclusive range First..Last (by step
+ *                                  order); `endStepId` may equal `stepId`.
+ * The renderer treats the span as the inclusive interval between the two step
+ * ids (min/max of their indices), so a reorder never inverts the range.
  */
 export interface AnnotationScope {
 	stepId: string;
+	endStepId?: string;
 }
 
 /**
@@ -211,7 +217,7 @@ export interface BoardDoc {
 	annotations?: Annotation[];
 }
 
-export const CURRENT_VERSION = 9;
+export const CURRENT_VERSION = 10;
 
 export function createEmptyDoc(): BoardDoc {
 	return {
