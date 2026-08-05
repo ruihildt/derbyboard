@@ -18,6 +18,24 @@ const CROSSHAIR_CURSOR = `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3
 // 16x16 SVG with 7px diameter circle, 1px stroke, centered hotspot at (8,8).
 const ERASE_CURSOR = `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5.25" fill="%23f0f0f0" stroke="%230f172a" stroke-width="0.75"/></svg>') 12 12, auto`;
 
+/**
+ * Whether a pointerdown whose `target` is `drawTarget` should begin a draw
+ * gesture. Hittable canvas content — annotations (`.annotation`), movement
+ * path lines (`.lineShape`), and players (`.playerGroup`) — is treated like
+ * the empty canvas, as is the stage itself or any direct stage child. Genuine
+ * UI controls (anything else) are rejected.
+ *
+ * Pure predicate (no Konva side effects) so it can be unit-tested without a
+ * canvas — it only reads `findAncestors`, `===`, and `.parent`.
+ */
+export function drawStartsOnTarget(drawTarget: Konva.Node, stage: Konva.Stage): boolean {
+	const passthrough =
+		drawTarget.findAncestors('.annotation', true).length > 0 ||
+		drawTarget.findAncestors('.lineShape', true).length > 0 ||
+		drawTarget.findAncestors('.playerGroup', true).length > 0;
+	return passthrough || drawTarget === stage || drawTarget.parent === stage;
+}
+
 export interface DrawingToolDeps {
 	stage: Konva.Stage;
 	projection: BoardProjection;
@@ -67,15 +85,12 @@ export class DrawingToolController {
 		if (!isDrawingTool(tool)) return;
 
 		// Only handle on stage or overlay layers, not on UI controls.
-		// Annotation shapes and active-step path lines are hittable content
-		// (for selection in Select / targeting in Erase), but a new draw
-		// should still start when the pointer lands on one — treat either
-		// like the empty canvas.
+		// Hittable content (annotations, path lines, AND players) is treated
+		// like empty canvas: players are non-draggable while a drawing tool is
+		// armed (entitiesEnabled=false), so a pointerdown on a skater must
+		// fall through to drawing rather than be silently swallowed.
 		const drawTarget = e.target as Konva.Node;
-		const passthrough =
-			drawTarget.findAncestors('.annotation', true).length > 0 ||
-			drawTarget.findAncestors('.lineShape', true).length > 0;
-		if (!passthrough && drawTarget !== stage && drawTarget.parent !== stage) return;
+		if (!drawStartsOnTarget(drawTarget, stage)) return;
 
 		e.cancelBubble = true;
 
