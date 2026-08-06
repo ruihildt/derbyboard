@@ -2,7 +2,7 @@ import { get } from 'svelte/store';
 import Konva from 'konva';
 import type { Circle } from 'konva/lib/shapes/Circle';
 
-import { PLAYER_RADIUS, TRACK_SCALE } from '$lib/constants';
+import { PLAYER_RADIUS } from '$lib/constants';
 import { boardSettings } from '$lib/stores/boardSettings';
 import { toolMode } from '$lib/stores/toolMode';
 import { MAX_PATH_LENGTH_M } from '$lib/track/tween';
@@ -370,27 +370,16 @@ export class PathRenderer {
 			// space used by `projectPoint`. Konva's `_setDragPosition` passes the
 			// pointer position (content space) to `dragBoundFunc` and then feeds
 			// the return value to `setAbsolutePosition` (which also expects content
-			// space). Without undoing the stage zoom/pan first (as `pointerToPlane`
-			// does), the constraint circle is centred at the wrong point whenever
-			// the stage is zoomed or panned — e.g. after a browser resize triggers
-			// `fitToTrack` or `loadViewSettings`, making handle dragging appear
-			// "completely inconsistent".
+			// space). Both conversions must go through the projection so the board
+			// view rotation is undone on input (pointerToPlane) and re-applied on
+			// output (planeToScreen) — otherwise, at 90°/270°, the budget circle is
+			// anchored in the wrong frame and `setAbsolutePosition` writes the
+			// handle's local position as centre + R⁻¹(c·TRACK_SCALE), breaking the
+			// centre + c·TRACK_SCALE convention every other reader assumes.
 			handle.dragBoundFunc((pos) => {
-				const center = this.projection.stageCenter();
-				const scale = this.stage.scaleX();
-				// Absolute → stage-local → world metres (mirrors `pointerToPlane`).
-				const localX = (pos.x - this.stage.x()) / scale;
-				const localY = (pos.y - this.stage.y()) / scale;
-				const pM = {
-					x: (localX - center.x) / TRACK_SCALE,
-					y: (localY - center.y) / TRACK_SCALE
-				};
+				const pM = this.projection.pointerToPlane(pos);
 				const c = clampNodeToBudget(aM, bM, pM, budget);
-				// World metres → stage-local → absolute (inverse of above).
-				return {
-					x: this.stage.x() + (center.x + c.x * TRACK_SCALE) * scale,
-					y: this.stage.y() + (center.y + c.y * TRACK_SCALE) * scale
-				};
+				return this.projection.planeToScreen(c);
 			});
 
 			handle.on('dragmove', () => this.onDragMove?.(step, path));
