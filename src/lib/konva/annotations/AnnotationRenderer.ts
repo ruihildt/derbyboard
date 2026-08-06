@@ -44,9 +44,10 @@ function measureLabelWidth(text: string, fontSize: number): number {
 }
 
 /**
- * Resolves a label's on-screen (CSS-pixel) font size: the annotation's stamped
- * `fontSize`, else the legacy default so pre-existing boards render unchanged.
- * Callers divide by the stage scale to get the stage-space size used by Konva.
+ * Resolves a label's base font size in stage-space px (the size at zoom 1.0):
+ * the annotation's stamped `fontSize`, else the legacy default so pre-existing
+ * boards render unchanged. Rendered directly by Konva, so the text scales with
+ * the stage zoom like every other annotation (no per-zoom compensation).
  */
 function labelScreenPx(ann: Extract<Annotation, { kind: 'label' }>): number {
 	return ann.fontSize ?? LEGACY_LABEL_PX;
@@ -151,6 +152,117 @@ export class AnnotationRenderer {
 		this.renderSelection(selectedAnn);
 
 		this.annotationLayer.batchDraw();
+		this.controlLayer.batchDraw();
+	}
+
+	/**
+	 * Rebuilds the selection chrome from scratch at the current stage scale.
+	 * Full destroy/create of the chrome nodes — use for selection changes and
+	 * gesture commits, NOT per zoom step (use {@link rescaleSelectionChrome}).
+	 */
+	refreshSelectionChrome(): void {
+		if (get(toolMode) !== 'select') return;
+		const id = get(selectedAnnotationId);
+		const ann = id ? boardDoc.current.annotations?.find((a) => a.id === id) : undefined;
+		this.renderSelection(ann);
+	}
+
+	/**
+	 * Rotation-handle screen position for `ann` at `scale`: a constant 22 CSS px
+	 * above the box's top edge (the offset is stage-space, so it tracks zoom).
+	 * Shared by {@link renderSelection} and {@link rescaleSelectionChrome} so the
+	 * two paths can never drift apart.
+	 */
+	private rotHandlePx(ann: Annotation, scale: number): PlanarPoint {
+		if (ann.kind === 'label') {
+			const m = this.labelMetrics(ann);
+			const off = 22 / scale;
+			return {
+				x: m.centerPx.x + (m.hh + off) * Math.sin(m.angle),
+				y: m.centerPx.y - (m.hh + off) * Math.cos(m.angle)
+			};
+		}
+		const xform = resolvedTransform(ann);
+		const rotOffsetPlane = 22 / (TRACK_SCALE * scale);
+		return this.projection.projectPoint(
+			rotateHandlePos(ann, rotOffsetPlane, xform).x,
+			rotateHandlePos(ann, rotOffsetPlane, xform).y
+		);
+	}
+
+	/**
+	 * Selection-chrome sizing constants in STAGE space at `scale`. Every value
+	 * is `target / scale`, so once the control layer is scaled by the stage the
+	 * chrome renders at a FIXED on-screen size regardless of zoom. There are no
+	 * minimum floors here — a `Math.max(min, x / scale)` floor pins the
+	 * stage-space size and makes the on-screen size grow with zoom, which is
+	 * exactly the drift we must avoid. Shared by {@link renderSelection} and
+	 * {@link rescaleSelectionChrome} so build and live rescale never diverge.
+	 */
+	private chromeSizes(scale: number) {
+		return {
+			boxStroke: 1 / scale,
+			handleStroke: 1.5 / scale,
+			cornerSize: 8 / scale,
+			cornerRadius: 1.5 / scale,
+			edgeT: 10 / scale
+		};
+	}
+
+	/**
+	 * Updates the cached chrome nodes IN PLACE for the current stage scale — no
+	 * node destroy/create, no listener re-attach, no hit-canvas repaint. Called
+	 * on every viewport zoom step (wheel tick / pinch move / button / fit) so
+	 * the box stroke thickness and handle diameters stay constant on screen.
+	 * Falls back to a full {@link refreshSelectionChrome} when no chrome is
+	 * cached (e.g. zooming before/just after a selection).
+	 */
+	rescaleSelectionChrome(): void {
+		const chrome = this.selChrome;
+		if (!chrome) {
+			this.refreshSelectionChrome();
+			return;
+		}
+		if (get(toolMode) !== 'select') return;
+		const id = get(selectedAnnotationId);
+		const ann = id ? boardDoc.current.annotations?.find((a) => a.id === id) : undefined;
+		if (!ann) {
+			this.renderSelection(undefined);
+			return;
+		}
+
+		const scale = this.stage.scaleX() || 1;
+		const cs = this.chromeSizes(scale);
+		// Box outline thickness.
+		chrome.box.strokeWidth(cs.boxStroke);
+		// Corner handles: side + rounding + stroke.
+		for (const c of chrome.corners) {
+			c.width(cs.cornerSize);
+			c.height(cs.cornerSize);
+			c.offsetX(cs.cornerSize / 2);
+			c.offsetY(cs.cornerSize / 2);
+			c.cornerRadius(cs.cornerRadius);
+			c.strokeWidth(cs.handleStroke);
+		}
+		// Rotation handle: radius matches a corner, plus reposition (its 22px
+		// offset above the top edge is stage-space, so it must track the scale).
+		if (chrome.rot) {
+			chrome.rot.radius(cs.cornerSize / 2);
+			chrome.rot.strokeWidth(cs.handleStroke);
+			chrome.rot.position(this.rotHandlePx(ann, scale));
+		}
+		// Edge hit strips. Order matches renderSelection — [0,1] horizontal
+		// (thickness = height), [2,3] vertical (thickness = width); the long
+		// axis is left untouched.
+		chrome.edges.forEach((edge, i) => {
+			if (i < 2) {
+				edge.height(cs.edgeT);
+				edge.offsetY(cs.edgeT / 2);
+			} else {
+				edge.width(cs.edgeT);
+				edge.offsetX(cs.edgeT / 2);
+			}
+		});
 		this.controlLayer.batchDraw();
 	}
 
@@ -555,10 +667,9 @@ export class AnnotationRenderer {
 		hh: number;
 		angle: number;
 	} {
-		const scale = this.stage.scaleX() || 1;
 		const eff = effectiveAnchors(ann);
 		const placementPx = this.projection.projectPoint(eff[0].x, eff[0].y);
-		const fontSize = fontSizeOverride ?? Math.max(12, labelScreenPx(ann) / scale);
+		const fontSize = fontSizeOverride ?? Math.max(12, labelScreenPx(ann));
 		const textWidth = measureLabelWidth(ann.text, fontSize);
 		const pad = 4;
 		return {
@@ -572,7 +683,7 @@ export class AnnotationRenderer {
 		};
 	}
 
-	/** The label's committed (CSS-px) font size — the unit stored on the doc. */
+	/** The label's committed base font size in stage-space px (the unit stored on the doc). */
 	labelFontSizeCss(ann: Extract<Annotation, { kind: 'label' }>): number {
 		return labelScreenPx(ann);
 	}
@@ -711,7 +822,6 @@ export class AnnotationRenderer {
 		let boxW: number;
 		let boxH: number;
 		let angleDeg: number;
-		let rotPx: PlanarPoint;
 		let corners: PlanarPoint[];
 		if (isLabel) {
 			const m = this.labelMetrics(ann);
@@ -720,11 +830,6 @@ export class AnnotationRenderer {
 			boxH = m.hh * 2;
 			angleDeg = (m.angle * 180) / Math.PI;
 			corners = this.rotatedBoxCorners(m.centerPx, m.hw, m.hh, m.angle);
-			const off = 22 / scale;
-			rotPx = {
-				x: m.centerPx.x + (m.hh + off) * Math.sin(m.angle),
-				y: m.centerPx.y - (m.hh + off) * Math.cos(m.angle)
-			};
 		} else {
 			const xform = resolvedTransform(ann);
 			corners = boxCorners(ann, xform).map((p) => this.projection.projectPoint(p.x, p.y));
@@ -733,12 +838,12 @@ export class AnnotationRenderer {
 			boxW = Math.max(hw, MIN_HALF) * 2 * TRACK_SCALE;
 			boxH = Math.max(hh, MIN_HALF) * 2 * TRACK_SCALE;
 			angleDeg = (xform.angle * 180) / Math.PI;
-			const rotOffsetPlane = 22 / (TRACK_SCALE * scale);
-			rotPx = this.projection.projectPoint(
-				rotateHandlePos(ann, rotOffsetPlane, xform).x,
-				rotateHandlePos(ann, rotOffsetPlane, xform).y
-			);
 		}
+		// Rotation handle sits a constant on-screen distance (22px) above the
+		// top edge; the offset scales with zoom, so resolve it via the shared
+		// helper (also used by the in-place zoom rescale below).
+		const rotPx = this.rotHandlePx(ann, scale);
+		const cs = this.chromeSizes(scale);
 
 		// Continuous thin-line box, also the move grab. The fill is fully
 		// transparent (not coloured) yet still hittable — Konva's hit canvas
@@ -753,7 +858,7 @@ export class AnnotationRenderer {
 			offsetY: boxH / 2,
 			rotation: angleDeg,
 			stroke: '#ef562f',
-			strokeWidth: 1 / scale,
+			strokeWidth: cs.boxStroke,
 			fill: 'rgba(0,0,0,0)',
 			listening: true
 		});
@@ -767,7 +872,6 @@ export class AnnotationRenderer {
 		// top/bottom, boxH for left/right); the short axis is a constant hit
 		// thickness. Corners are added last, so they win hit detection at the
 		// corners.
-		const edgeT = Math.max(8, 10 / scale);
 		const edgeDefs: Array<{ su: number; sv: number; a: number; b: number }> = [
 			{ su: 0, sv: -1, a: 2, b: 3 }, // top    (-- , +-)
 			{ su: 0, sv: 1, a: 0, b: 1 }, // bottom (++ , -+)
@@ -782,8 +886,8 @@ export class AnnotationRenderer {
 			// sv != 0 → top/bottom, a horizontal edge (long axis = width).
 			// su != 0 → left/right, a vertical edge (long axis = height).
 			const horizontal = def.sv !== 0;
-			const w = horizontal ? boxW : edgeT;
-			const h = horizontal ? edgeT : boxH;
+			const w = horizontal ? boxW : cs.edgeT;
+			const h = horizontal ? cs.edgeT : boxH;
 			const edge = new Konva.Rect({
 				x: mid.x,
 				y: mid.y,
@@ -812,22 +916,20 @@ export class AnnotationRenderer {
 			[-1, -1],
 			[1, -1]
 		];
-		const cornerSize = Math.max(7, 8 / scale);
-		const cornerRadius = Math.min(1.5, cornerSize * 0.2);
 		const cornerHandles: Konva.Rect[] = [];
 		corners.forEach((c, i) => {
 			const handle = new Konva.Rect({
 				x: c.x,
 				y: c.y,
-				width: cornerSize,
-				height: cornerSize,
-				offsetX: cornerSize / 2,
-				offsetY: cornerSize / 2,
+				width: cs.cornerSize,
+				height: cs.cornerSize,
+				offsetX: cs.cornerSize / 2,
+				offsetY: cs.cornerSize / 2,
 				rotation: angleDeg,
-				cornerRadius,
+				cornerRadius: cs.cornerRadius,
 				fill: 'white',
 				stroke: '#ef562f',
-				strokeWidth: 1.5 / scale,
+				strokeWidth: cs.handleStroke,
 				listening: true
 			});
 			const [su, sv] = signs[i];
@@ -844,10 +946,10 @@ export class AnnotationRenderer {
 		const rotHandle = new Konva.Circle({
 			x: rotPx.x,
 			y: rotPx.y,
-			radius: cornerSize / 2,
+			radius: cs.cornerSize / 2,
 			fill: 'white',
 			stroke: '#ef562f',
-			strokeWidth: 1.5 / scale,
+			strokeWidth: cs.handleStroke,
 			listening: true
 		});
 		rotHandle.setAttr('cursorHint', 'grab');

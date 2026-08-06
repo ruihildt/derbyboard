@@ -137,6 +137,13 @@ export class KonvaGame {
 	 * subscription the visual layers would stay stale after an undo. */
 	private docUnsubscribe: (() => void) | null = null;
 
+	/** Reactive bridge: rebuild the selection chrome when the viewport zoom
+	 * changes (zoom buttons, reset, fit-to-track) so its stroke/handle sizes
+	 * stay constant on screen. Live wheel/pinch zoom is covered separately via
+	 * the gesture handler's zoom callback. */
+	private zoomUnsubscribe: (() => void) | null = null;
+	private lastZoom = 1;
+
 	private gestureHandler!: KonvaGestureHandler;
 
 	constructor(containerId: string, width: number, height: number) {
@@ -389,6 +396,16 @@ export class KonvaGame {
 			this.renderStepOverlays(this.getActiveStep(), get(selectedEntityId));
 		});
 
+		// Rebuild the selection chrome when the persisted zoom changes (zoom
+		// buttons, reset, fit-to-track, and the post-gesture persist). Live
+		// wheel/pinch is handled in the gesture handler's zoom callback.
+		this.zoomUnsubscribe = boardState.subscribe((s) => {
+			const z = s.viewSettings?.zoom ?? 1;
+			if (z === this.lastZoom) return;
+			this.lastZoom = z;
+			this.rescaleSelectionChrome();
+		});
+
 		// Control stage/player dragging from the resolved interaction flags
 		// (tool only): `hand` pans, `select` edits, drawing tools do neither.
 		this.interactionUnsubscribe = interaction.subscribe(({ panEnabled, entitiesEnabled }) => {
@@ -528,9 +545,17 @@ export class KonvaGame {
 		this.viewport.attach();
 
 		// Pinch-zoom (touch) + wheel-zoom (desktop), anchored at the gesture point.
+		// Refreshing the selection chrome on each step keeps its stroke/handle
+		// sizes constant on screen instead of drifting with the zoom level.
 		this.gestureHandler = new KonvaGestureHandler(
 			this.stage,
-			(point, scale) => this.viewport.zoomAt(point, scale),
+			(point, scale) => {
+				this.viewport.zoomAt(point, scale);
+				// Track the applied scale so the post-gesture persist (which
+				// writes boardState) doesn't trigger a redundant rescale.
+				this.lastZoom = this.stage.scaleX();
+				this.rescaleSelectionChrome();
+			},
 			() => this.replay.isActive(),
 			() => this.viewport.updatePersistedState()
 		);
@@ -568,6 +593,7 @@ export class KonvaGame {
 		this.toolModeUnsubscribe?.();
 		this.directionControlUnsubscribe?.();
 		this.docUnsubscribe?.();
+		this.zoomUnsubscribe?.();
 		this.playerManager?.destroy();
 		this.rotationHandleController.destroy();
 		this.trackSurfaceLayer.destroy();
@@ -1060,6 +1086,17 @@ export class KonvaGame {
 	 */
 	renderAnnotations(step: Step | undefined): void {
 		this.annotationRenderer.render(step, this.getActiveSteps());
+	}
+
+	/**
+	 * Rescales the selection chrome in place for the current zoom (cheap: no
+	 * node rebuild). Skipped while an annotation gesture (move/resize/rotate)
+	 * owns the chrome — it re-renders via renderSelection on commit, and
+	 * touching the cached nodes here mid-gesture would fight the gesture.
+	 */
+	private rescaleSelectionChrome(): void {
+		if (this.annotationGestures.isActive()) return;
+		this.annotationRenderer.rescaleSelectionChrome();
 	}
 
 	/** The active authored clip's ordered steps (empty when not authoring). */

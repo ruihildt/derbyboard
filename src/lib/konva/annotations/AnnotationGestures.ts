@@ -375,16 +375,15 @@ export class AnnotationGestures {
 		// angle rotation, both around the text-box centre in screen space.
 		if (g.label) {
 			const labelAnn = g.ann as Extract<Annotation, { kind: 'label' }>;
-			const scale = this.stage.scaleX() || 1;
 			if (g.type === 'resize') {
 				const curDist = Math.hypot(pos.x - g.label.centerPx.x, pos.y - g.label.centerPx.y) || 1;
 				const ratio = curDist / g.label.startDist;
-				const css = Math.min(
+				const next = Math.min(
 					MAX_LABEL_FONT,
 					Math.max(MIN_LABEL_FONT, g.label.baseFontSize * ratio)
 				);
-				g.label.workFontSize = css;
-				this.renderer.liveLabel(labelAnn, css / scale, g.label.baseAngle);
+				g.label.workFontSize = next;
+				this.renderer.liveLabel(labelAnn, next, g.label.baseAngle);
 			} else {
 				const a0 = Math.atan2(
 					g.label.startPx.y - g.label.centerPx.y,

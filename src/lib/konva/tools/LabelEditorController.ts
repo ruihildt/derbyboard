@@ -203,7 +203,7 @@ export class LabelEditorController {
 		}
 		const scale = this.deps.stage.scaleX() || 1;
 		const basePx = this.draftFontSizeCss ?? labelBasePx(get(labelSettings).size);
-		const fontSize = Math.max(12, basePx / scale);
+		const fontSize = Math.max(12, basePx);
 		const placementPx = this.deps.projection.projectPoint(this.draftPos.x, this.draftPos.y);
 		const pad = 4;
 		const textWidth = measureWidth(this.draftText, fontSize);
@@ -263,9 +263,8 @@ export class LabelEditorController {
 		planePos: PlanarPoint,
 		angle: number
 	): number {
-		const scale = this.deps.stage.scaleX() || 1;
 		const basePx = this.draftFontSizeCss ?? labelBasePx(get(labelSettings).size);
-		const fontSize = Math.max(12, basePx / scale);
+		const fontSize = Math.max(12, basePx);
 		const textWidth = measureWidth(text, fontSize);
 		const placementPx = this.deps.projection.projectPoint(planePos.x, planePos.y);
 		const center = { x: placementPx.x + textWidth / 2, y: placementPx.y + fontSize * 0.45 };
