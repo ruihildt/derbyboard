@@ -270,11 +270,21 @@ export class LabelEditorController {
 		const textWidth = measureWidth(text, fontSize);
 		const placementPx = this.deps.projection.projectPoint(planePos.x, planePos.y);
 		const center = { x: placementPx.x + textWidth / 2, y: placementPx.y + fontSize * 0.45 };
-		// Click → local frame (translate to centre, un-rotate).
-		const dx = clickScreen.x - center.x;
-		const dy = clickScreen.y - center.y;
-		const cos = Math.cos(-angle);
-		const sin = Math.sin(-angle);
+		// `clickScreen` is stage content-space (getPointerPosition); `center` is
+		// layer-local (projectPoint). Convert the click through planar so it
+		// shares the layer-local frame — undoing the stage pan/zoom AND the board
+		// view rotation. Without this the caret lands in the wrong character
+		// whenever the board is zoomed, panned, or rotated.
+		const clickPlane = this.deps.projection.pointerToPlane(clickScreen);
+		const clickLocal = this.deps.projection.projectPoint(clickPlane.x, clickPlane.y);
+		// The text baseline runs at the counter-rotated effective angle
+		// (m.angle − boardRotation) in layer-local space (see renderDraft), so
+		// un-rotate the click-to-centre vector by that — not the raw `angle`.
+		const effAngle = angle - (this.deps.projection.rotationDeg() * Math.PI) / 180;
+		const dx = clickLocal.x - center.x;
+		const dy = clickLocal.y - center.y;
+		const cos = Math.cos(-effAngle);
+		const sin = Math.sin(-effAngle);
 		const localX = dx * cos - dy * sin;
 		// Text left is at local -textWidth/2; clickRelX is relative to it.
 		const clickRelX = localX + textWidth / 2;

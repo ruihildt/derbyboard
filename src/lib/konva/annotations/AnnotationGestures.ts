@@ -87,15 +87,19 @@ export class AnnotationGestures {
 	 * "click-to-select then drag" from being misread as an edit. */
 	private pendingEdit: {
 		ann: Extract<Annotation, { kind: 'label' }>;
-		clickPos: PlanarPoint;
+		/** Stage content-space pointer (getPointerPosition), NOT planar. */
+		clickPos: { x: number; y: number };
 	} | null = null;
 	/** Movement (px) above which a potential double-click is treated as a drag. */
 	private static readonly EDIT_DRAG_THRESHOLD_PX = 3;
 
 	/** Wired by the owner; a double-tap on a label opens its inline editor.
-	 * `clickScreen` (stage coords) places the caret where the tap landed. */
+	 * `clickScreen` (stage content-space coords) places the caret where the tap landed. */
 	onEditLabel:
-		| ((ann: Extract<Annotation, { kind: 'label' }>, clickScreen: PlanarPoint | null) => void)
+		| ((
+				ann: Extract<Annotation, { kind: 'label' }>,
+				clickScreen: { x: number; y: number } | null
+		  ) => void)
 		| null = null;
 
 	constructor(
