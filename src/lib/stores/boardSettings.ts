@@ -18,7 +18,7 @@ export interface BoardSettings {
 	onionSkinDepth?: 1 | 2;
 	/** Whole-board view rotation in degrees, snapped to 90° steps (0/90/180/270).
 	 * Rotates the track and every drawn element as a group around the board
-	 * centre; labels and the watermark keep their upright orientation. */
+	 * centre; labels and the branding keep their upright orientation. */
 	boardRotation?: number;
 }
 

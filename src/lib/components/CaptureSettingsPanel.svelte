@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ImageOutline, VideoCameraOutline } from 'flowbite-svelte-icons';
 	import { exportSettings, type ImageScale, type VideoFps } from '$lib/stores/exportSettings';
-	import type { WatermarkSize } from '$lib/konva/Watermark';
+	import type { BrandingSize } from '$lib/konva/Branding';
 	import type { Quality } from '$lib/utils/codec';
 
 	function pill(active: boolean): string {
@@ -11,8 +11,8 @@
 	const QUALITIES: Quality[] = ['720p', '1080p', '1440p', '2160p'];
 	const FPS_OPTIONS: VideoFps[] = [30, 60];
 	const SCALE_OPTIONS: ImageScale[] = [1, 2, 3, 4];
-	const WATERMARK_SIZES: WatermarkSize[] = ['hidden', 'small', 'medium', 'large'];
-	const WATERMARK_LABELS: Record<WatermarkSize, string> = {
+	const BRANDING_SIZES: BrandingSize[] = ['hidden', 'small', 'medium', 'large'];
+	const BRANDING_LABELS: Record<BrandingSize, string> = {
 		hidden: 'Hidden',
 		small: 'Small',
 		medium: 'Medium',
@@ -24,14 +24,14 @@
 	<h2 class="mb-3 text-sm font-semibold text-gray-800">Capture settings</h2>
 
 	<section class="mb-4">
-		<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Watermark</h3>
+		<h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Branding</h3>
 		<div class="flex flex-wrap gap-1">
-			{#each WATERMARK_SIZES as size (size)}
+			{#each BRANDING_SIZES as size (size)}
 				<button
-					class={pill($exportSettings.watermark === size)}
-					onclick={() => ($exportSettings = { ...$exportSettings, watermark: size })}
+					class={pill($exportSettings.branding === size)}
+					onclick={() => ($exportSettings = { ...$exportSettings, branding: size })}
 				>
-					{WATERMARK_LABELS[size]}
+					{BRANDING_LABELS[size]}
 				</button>
 			{/each}
 		</div>

@@ -1,7 +1,7 @@
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { SceneCanvas } from 'konva/lib/Canvas.js';
 import type { KonvaGame } from '$lib/konva/KonvaGame';
-import type { WatermarkSize } from '$lib/konva/Watermark';
+import type { BrandingSize } from '$lib/konva/Branding';
 import { colors } from '$lib/constants';
 import { interpolateSample } from '../timeline/interpolate';
 import type { TimelineProject } from '../timeline/types';
@@ -15,8 +15,8 @@ export interface VideoExportOptions {
 	fps: number;
 	/** Video bitrate in bits/sec. */
 	bitrate: number;
-	/** Watermark size stamped on each frame ('hidden' = off). */
-	watermark: WatermarkSize;
+	/** Branding size stamped on each frame ('hidden' = off). */
+	branding: BrandingSize;
 	signal?: AbortSignal;
 	onProgress?: (framesRendered: number, totalFrames: number) => void;
 }
@@ -92,12 +92,12 @@ export class TimelineVideoExporter {
 			height,
 			fps,
 			bitrate,
-			watermark: watermarkSize,
+			branding: brandingSize,
 			signal,
 			onProgress
 		} = opts;
 		const stage = game.getStage();
-		const watermark = watermarkSize !== 'hidden' ? game.getWatermark() : undefined;
+		const branding = brandingSize !== 'hidden' ? game.getBranding() : undefined;
 
 		// Canonical capture dims — the export must be independent of the live
 		// window. The render loop stages the board in pure source space (identity
@@ -325,7 +325,7 @@ export class TimelineVideoExporter {
 						workCtx.restore();
 						outCtx.drawImage(workScene._canvas, 0, 0, encodeWidth, encodeHeight);
 					}
-					if (watermark) watermark.draw(outCtx, encodeWidth, encodeHeight, watermarkSize);
+					if (branding) branding.draw(outCtx, encodeWidth, encodeHeight, brandingSize);
 				}
 
 				const frame = new VideoFrame(outCanvas, {

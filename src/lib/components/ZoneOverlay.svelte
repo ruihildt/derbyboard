@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { fittedRegionRect, fitSourceToViewport, type CaptureZone } from '$lib/utils/capture';
-	import WatermarkPreview from './WatermarkPreview.svelte';
+	import BrandingPreview from './BrandingPreview.svelte';
 
 	let {
 		zone,
 		ratio = null,
 		interactive = true,
 		mode = 'board',
-		watermark = false,
+		branding = false,
 		source = undefined,
 		onchange
 	}: {
@@ -18,8 +18,8 @@
 		interactive?: boolean;
 		/** 'edit' shows resize handles; the region interior is always pass-through to the canvas. */
 		mode?: 'board' | 'edit';
-		/** Show the watermark preview inside the region. */
-		watermark?: boolean;
+		/** Show the branding preview inside the region. */
+		branding?: boolean;
 		/**
 		 * Canonical capture viewport. When set (replay/canonical mode), the box is
 		 * derived from `fittedRegionRect` (uniform fit) instead of the legacy
@@ -264,8 +264,8 @@
 			? '1px solid var(--color-primary-600)'
 			: 'none'}; transition: {animating ? 'left 0.3s ease-out, top 0.3s ease-out' : 'none'};"
 	>
-		{#if watermark}
-			<WatermarkPreview />
+		{#if branding}
+			<BrandingPreview />
 		{/if}
 		{#if interactive && mode === 'edit'}
 			<!-- Full-edge resize hit bands (the whole edge is draggable). -->

@@ -28,7 +28,7 @@
 	} from '$lib/doc/clipOps';
 	import { scopeBounds, scopeModeOf } from '$lib/doc/annotationScope';
 	import type { PlanarPoint } from '$lib/doc/types';
-	import type { WatermarkSize } from '$lib/konva/Watermark';
+	import type { BrandingSize } from '$lib/konva/Branding';
 	import type { Quality } from '$lib/utils/codec';
 	import {
 		CAPTURE_FORMATS,
@@ -195,8 +195,8 @@
 	const QUALITIES: Quality[] = ['720p', '1080p', '1440p', '2160p'];
 	const FPS_OPTIONS: VideoFps[] = [30, 60];
 	const SCALE_OPTIONS: ImageScale[] = [1, 2, 3, 4];
-	const WATERMARK_SIZES: WatermarkSize[] = ['hidden', 'small', 'medium', 'large'];
-	const WATERMARK_LABELS: Record<WatermarkSize, string> = {
+	const BRANDING_SIZES: BrandingSize[] = ['hidden', 'small', 'medium', 'large'];
+	const BRANDING_LABELS: Record<BrandingSize, string> = {
 		hidden: 'Hidden',
 		small: 'Small',
 		medium: 'Medium',
@@ -386,18 +386,16 @@
 			</div>
 		</section>
 
-		<!-- Watermark -->
+		<!-- Branding -->
 		<section class="mb-4">
-			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-				Watermark
-			</h3>
+			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Branding</h3>
 			<div class="flex flex-wrap gap-1">
-				{#each WATERMARK_SIZES as size (size)}
+				{#each BRANDING_SIZES as size (size)}
 					<button
-						class={pill($exportSettings.watermark === size)}
-						onclick={() => ($exportSettings = { ...$exportSettings, watermark: size })}
+						class={pill($exportSettings.branding === size)}
+						onclick={() => ($exportSettings = { ...$exportSettings, branding: size })}
 					>
-						{WATERMARK_LABELS[size]}
+						{BRANDING_LABELS[size]}
 					</button>
 				{/each}
 			</div>
@@ -435,7 +433,7 @@
 				</span>
 			</div>
 			<p class="mt-2 text-[11px] leading-snug text-gray-400">
-				Rotate the track and drawings in 90° steps. Labels and the watermark stay upright.
+				Rotate the track and drawings in 90° steps. Labels and the branding stay upright.
 			</p>
 		</section>
 	</div>

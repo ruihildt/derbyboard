@@ -1,5 +1,5 @@
 import type Konva from 'konva';
-import type { Watermark } from '../Watermark';
+import type { Branding } from '../Branding';
 import type { OutputSpec } from '$lib/utils/recording';
 
 /**
@@ -20,7 +20,7 @@ export interface FrameRequest {
 	output: OutputSpec;
 	/** null for full-frame recording. */
 	region: Region | null;
-	watermark?: Watermark;
+	branding?: Branding;
 }
 
 /**

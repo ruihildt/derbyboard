@@ -28,7 +28,7 @@ import { KonvaPlayerManager } from './KonvaPlayerManager';
 import { KonvaPackManager } from './KonvaPackManager';
 import { KonvaRecorder } from './KonvaRecorder';
 import { KonvaGestureHandler } from './KonvaGestureHandler';
-import { Watermark, type WatermarkSize } from './Watermark';
+import { Branding, type BrandingSize } from './Branding';
 import { BoardExporter } from './export/BoardExporter';
 import { ReplayController } from './replay/ReplayController';
 import { ViewportController } from './view/ViewportController';
@@ -938,7 +938,7 @@ export class KonvaGame {
 	}
 
 	createRecorder(): KonvaRecorder {
-		return new KonvaRecorder({ stage: this.stage, watermark: this.exporter.getWatermark() });
+		return new KonvaRecorder({ stage: this.stage, branding: this.exporter.getBranding() });
 	}
 
 	/** Exposes the stage for capture/replay modules that need to attach listeners. */
@@ -1092,18 +1092,18 @@ export class KonvaGame {
 		if (!enabled) this.setFocus(null);
 	}
 
-	exportAsImage(pixelRatio = 2, watermark: WatermarkSize = 'medium'): string {
-		return this.exporter.exportAsImage(pixelRatio, watermark);
+	exportAsImage(pixelRatio = 2, branding: BrandingSize = 'medium'): string {
+		return this.exporter.exportAsImage(pixelRatio, branding);
 	}
 
-	/** Captures a viewport sub-region as a PNG data URL (with watermark). */
-	exportZoneImage(zone: CaptureZone, pixelRatio = 2, watermark: WatermarkSize = 'medium'): string {
-		return this.exporter.exportZoneImage(zone, pixelRatio, watermark);
+	/** Captures a viewport sub-region as a PNG data URL (with branding). */
+	exportZoneImage(zone: CaptureZone, pixelRatio = 2, branding: BrandingSize = 'medium'): string {
+		return this.exporter.exportZoneImage(zone, pixelRatio, branding);
 	}
 
-	/** Shared watermark (preloaded at construction); used by image and video export. */
-	getWatermark(): Watermark {
-		return this.exporter.getWatermark();
+	/** Shared branding (preloaded at construction); used by image and video export. */
+	getBranding(): Branding {
+		return this.exporter.getBranding();
 	}
 
 	/**

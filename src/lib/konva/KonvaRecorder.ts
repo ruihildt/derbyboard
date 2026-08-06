@@ -1,6 +1,6 @@
 import type Konva from 'konva';
 import fixWebmDuration from 'fix-webm-duration';
-import type { Watermark } from './Watermark';
+import type { Branding } from './Branding';
 import {
 	BITRATE_BY_QUALITY,
 	pickRecorderCodec,
@@ -17,7 +17,7 @@ const FRAME_RATE = 30;
 
 interface KonvaRecorderConfig {
 	stage: Konva.Stage;
-	watermark?: Watermark;
+	branding?: Branding;
 }
 
 /**
@@ -161,7 +161,7 @@ export class KonvaRecorder {
 				ctx: this.outputCtx,
 				output: this.output,
 				region: this.region,
-				watermark: this.config.watermark
+				branding: this.config.branding
 			});
 		} catch (e) {
 			console.error('[KonvaRecorder] renderFrame threw', e);

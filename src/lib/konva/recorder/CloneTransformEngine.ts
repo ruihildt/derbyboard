@@ -57,7 +57,7 @@ export class CloneTransformEngine implements RecorderEngine {
 		}
 	}
 
-	renderFrame({ stage, ctx, output, region, watermark }: FrameRequest): void {
+	renderFrame({ stage, ctx, output, region, branding }: FrameRequest): void {
 		const cloneStage = this.cloneStage;
 		if (!cloneStage) return;
 
@@ -88,8 +88,8 @@ export class CloneTransformEngine implements RecorderEngine {
 			ctx.drawImage(layer.getNativeCanvasElement(), 0, 0);
 		});
 
-		if (watermark) {
-			watermark.draw(ctx, output.w, output.h);
+		if (branding) {
+			branding.draw(ctx, output.w, output.h);
 		}
 	}
 

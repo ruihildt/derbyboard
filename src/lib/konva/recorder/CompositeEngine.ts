@@ -15,7 +15,7 @@ export class CompositeEngine implements RecorderEngine {
 		// Stateless: reads the live display layer canvases directly.
 	}
 
-	renderFrame({ stage, ctx, output, region, watermark }: FrameRequest): void {
+	renderFrame({ stage, ctx, output, region, branding }: FrameRequest): void {
 		ctx.fillStyle = '#FFFFFF';
 		ctx.fillRect(0, 0, output.w, output.h);
 
@@ -40,8 +40,8 @@ export class CompositeEngine implements RecorderEngine {
 			}
 		}
 
-		if (watermark) {
-			watermark.draw(ctx, output.w, output.h);
+		if (branding) {
+			branding.draw(ctx, output.w, output.h);
 		}
 	}
 

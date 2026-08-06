@@ -26,7 +26,7 @@
 	import ReplayBar from '$lib/components/ReplayBar.svelte';
 	import RotateHint from '$lib/components/RotateHint.svelte';
 	import ZoneOverlay from '$lib/components/ZoneOverlay.svelte';
-	import WatermarkPreview from '$lib/components/WatermarkPreview.svelte';
+	import BrandingPreview from '$lib/components/BrandingPreview.svelte';
 	import Hud from '$lib/components/Hud.svelte';
 	import { captureSettings } from '$lib/stores/captureSettings';
 	import { exportSettings } from '$lib/stores/exportSettings';
@@ -206,15 +206,15 @@
 			ratio={captureRatio}
 			{interactive}
 			mode={$regionMode}
-			watermark={$exportSettings.watermark !== 'hidden'}
+			branding={$exportSettings.branding !== 'hidden'}
 			onchange={(z) => captureSettings.update((s) => ({ ...s, zone: z }))}
 		/>
-	{:else if $exportSettings.watermark !== 'hidden' && $captureSettings.format === 'full'}
-		<!-- Watermark preview for full-page capture (no selection region).
+	{:else if $exportSettings.branding !== 'hidden' && $captureSettings.format === 'full'}
+		<!-- Branding preview for full-page capture (no selection region).
 		     Framed to <main> (the canvas frame) so the logo sits at the canvas
 		     corner, not under a docked sidebar. -->
 		<div class="pointer-events-none absolute inset-0 z-20">
-			<WatermarkPreview />
+			<BrandingPreview />
 		</div>
 	{/if}
 </main>
