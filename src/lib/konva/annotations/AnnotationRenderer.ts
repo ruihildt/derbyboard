@@ -81,6 +81,16 @@ export class AnnotationRenderer {
 	) {}
 
 	/**
+	 * Current board view rotation in degrees. Labels sit on the (rotated)
+	 * annotation layer, so their positions already follow the board; their text
+	 * must stay upright, which means each label node's rotation is reduced by
+	 * this amount so the layer's rotation cancels out on screen.
+	 */
+	private get boardRotDeg(): number {
+		return this.projection.rotationDeg();
+	}
+
+	/**
 	 * Live-gesture state for rotate/resize. While set, the annotation's shapes
 	 * and the selection chrome are updated IN PLACE each frame (no node churn,
 	 * no hit-canvas repaint) instead of being destroyed and rebuilt. Cleared by
@@ -177,9 +187,12 @@ export class AnnotationRenderer {
 		if (ann.kind === 'label') {
 			const m = this.labelMetrics(ann);
 			const off = 22 / scale;
+			// Effective angle in the (rotated) layer's local space, so the knob
+			// lands above the label's on-screen top edge when the board rotates.
+			const eff = m.angle - (this.boardRotDeg * Math.PI) / 180;
 			return {
-				x: m.centerPx.x + (m.hh + off) * Math.sin(m.angle),
-				y: m.centerPx.y - (m.hh + off) * Math.cos(m.angle)
+				x: m.centerPx.x + (m.hh + off) * Math.sin(eff),
+				y: m.centerPx.y - (m.hh + off) * Math.cos(eff)
 			};
 		}
 		const xform = resolvedTransform(ann);
@@ -712,7 +725,7 @@ export class AnnotationRenderer {
 	): void {
 		const children = group.getChildren();
 		const [bg, text] = children as [Konva.Rect, Konva.Text];
-		const deg = (m.angle * 180) / Math.PI;
+		const deg = (m.angle * 180) / Math.PI - this.boardRotDeg;
 		bg.setAttrs({
 			x: m.centerPx.x,
 			y: m.centerPx.y,
@@ -754,7 +767,8 @@ export class AnnotationRenderer {
 		const chrome = this.selChrome;
 		if (!chrome) return;
 		const scale = this.stage.scaleX() || 1;
-		const deg = (m.angle * 180) / Math.PI;
+		const deg = (m.angle * 180) / Math.PI - this.boardRotDeg;
+		const eff = m.angle - (this.boardRotDeg * Math.PI) / 180;
 		const boxW = m.hw * 2;
 		const boxH = m.hh * 2;
 		chrome.box.position({ x: m.centerPx.x, y: m.centerPx.y });
@@ -762,7 +776,7 @@ export class AnnotationRenderer {
 		chrome.box.offsetX(boxW / 2);
 		chrome.box.offsetY(boxH / 2);
 		chrome.box.rotation(deg);
-		const corners = this.rotatedBoxCorners(m.centerPx, m.hw, m.hh, m.angle);
+		const corners = this.rotatedBoxCorners(m.centerPx, m.hw, m.hh, eff);
 		for (let i = 0; i < chrome.corners.length; i++) {
 			chrome.corners[i].position(corners[i] ?? { x: 0, y: 0 });
 		}
@@ -788,8 +802,8 @@ export class AnnotationRenderer {
 		if (chrome.rot) {
 			const off = 22 / scale;
 			chrome.rot.position({
-				x: m.centerPx.x + (m.hh + off) * Math.sin(m.angle),
-				y: m.centerPx.y - (m.hh + off) * Math.cos(m.angle)
+				x: m.centerPx.x + (m.hh + off) * Math.sin(eff),
+				y: m.centerPx.y - (m.hh + off) * Math.cos(eff)
 			});
 		}
 		this.controlLayer.batchDraw();
@@ -828,8 +842,11 @@ export class AnnotationRenderer {
 			centerPx = m.centerPx;
 			boxW = m.hw * 2;
 			boxH = m.hh * 2;
-			angleDeg = (m.angle * 180) / Math.PI;
-			corners = this.rotatedBoxCorners(m.centerPx, m.hw, m.hh, m.angle);
+			// Counter-rotate the chrome so the selection box stays aligned with
+			// the upright label (the control layer rotates with the board).
+			angleDeg = (m.angle * 180) / Math.PI - this.boardRotDeg;
+			const eff = m.angle - (this.boardRotDeg * Math.PI) / 180;
+			corners = this.rotatedBoxCorners(m.centerPx, m.hw, m.hh, eff);
 		} else {
 			const xform = resolvedTransform(ann);
 			corners = boxCorners(ann, xform).map((p) => this.projection.projectPoint(p.x, p.y));

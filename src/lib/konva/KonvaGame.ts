@@ -148,6 +148,15 @@ export class KonvaGame {
 	private zoomUnsubscribe: (() => void) | null = null;
 	private lastZoom = 1;
 
+	/** Reactive bridge: rotate every content layer + counter-rotate labels when
+	 * the persisted board view rotation changes (hand-tool panel). */
+	private rotationUnsubscribe: (() => void) | null = null;
+	private lastRotation = 0;
+	/** Every layer whose content rotates as a group with the board. Labels live
+	 * on the annotation layer and are counter-rotated per-node (see
+	 * AnnotationRenderer) so their text stays upright. */
+	private rotatableLayers: Konva.Layer[] = [];
+
 	private gestureHandler!: KonvaGestureHandler;
 
 	constructor(containerId: string, width: number, height: number) {
@@ -229,11 +238,29 @@ export class KonvaGame {
 		// 9. Direction control (knob + guide line) — above everything.
 		this.stage.add(this.controlLayer);
 
+		// Every content layer rotates together with the board view rotation.
+		this.rotatableLayers = [
+			this.trackSurfaceLayer,
+			this.engagementZoneLayer,
+			this.trackLinesLayer,
+			this.pathLayer,
+			this.trailLayer,
+			this.ghostLayer,
+			this.playersLayer,
+			this.annotationLayer,
+			this.controlLayer
+		];
+
 		// Shared collaborators: projection (stage↔planar), trails, onion skin.
 		this.projection = new BoardProjection(this.stage, () => ({
 			width: this.width,
 			height: this.height
 		}));
+
+		// Apply the persisted board rotation now that the projection exists so
+		// the first paint is already rotated (no flash). Layers are rotated and
+		// the projection's rotation is synced for screen↔planar input math.
+		this.applyBoardRotation(get(boardSettings).boardRotation ?? 0);
 		this.trailRenderer = new TrailRenderer(this.trailLayer, this.projection, () =>
 			this.stage.scaleX()
 		);
@@ -414,6 +441,19 @@ export class KonvaGame {
 			if (z === this.lastZoom) return;
 			this.lastZoom = z;
 			this.rescaleSelectionChrome();
+		});
+
+		// Rotate every content layer when the persisted board rotation changes,
+		// then re-render annotations so label text/chrome are counter-rotated
+		// to stay upright (positions already follow the rotated layer).
+		this.rotationUnsubscribe = boardSettings.subscribe((s) => {
+			const deg = s.boardRotation ?? 0;
+			if (deg === this.lastRotation) return;
+			this.applyBoardRotation(deg);
+			if (!this.replay.isActive()) {
+				this.renderAnnotations(this.getActiveStep());
+				this.rescaleSelectionChrome();
+			}
 		});
 
 		// Control stage/player dragging from the resolved interaction flags
@@ -605,6 +645,7 @@ export class KonvaGame {
 		this.directionControlUnsubscribe?.();
 		this.docUnsubscribe?.();
 		this.zoomUnsubscribe?.();
+		this.rotationUnsubscribe?.();
 		this.playerManager?.destroy();
 		this.rotationHandleController.destroy();
 		this.trackSurfaceLayer.destroy();
@@ -738,6 +779,10 @@ export class KonvaGame {
 		this.trackLinesLayer.batchDraw();
 		this.engagementZoneLayer.batchDraw();
 		this.playersLayer.batchDraw();
+
+		// The board centre (width/2, height/2) may have moved on resize, so
+		// re-stamp the layer rotation pivot/position to keep it anchored.
+		this.applyBoardRotation(this.lastRotation);
 	}
 
 	// Increase zoom level within MAX_ZOOM limit
@@ -818,6 +863,27 @@ export class KonvaGame {
 	 */
 	private applyZoneVisible() {
 		this.packManager.setZoneVisible(this.zoneVisible);
+	}
+
+	/**
+	 * Rotates every content layer around the board centre by `deg` (identity at
+	 * 0). Each layer is given offset = position = centre with the given
+	 * rotation, which composes to "rotate around the centre" while leaving the
+	 * stage pan/zoom (applied on top) untouched. The projection's rotation is
+	 * kept in sync so screen↔planar input/HUD math matches the rotated content.
+	 */
+	private applyBoardRotation(deg: number): void {
+		this.lastRotation = deg;
+		this.projection.setRotation(deg);
+		const { width, height } = this.viewport.size;
+		const cx = width / 2;
+		const cy = height / 2;
+		for (const layer of this.rotatableLayers) {
+			layer.offset({ x: cx, y: cy });
+			layer.position({ x: cx, y: cy });
+			layer.rotation(deg);
+		}
+		this.stage.batchDraw();
 	}
 
 	resetBoard() {

@@ -16,6 +16,10 @@ export interface BoardSettings {
 	pathOverlay?: 'off' | 'all' | 'selected';
 	onionSkin?: boolean;
 	onionSkinDepth?: 1 | 2;
+	/** Whole-board view rotation in degrees, snapped to 90° steps (0/90/180/270).
+	 * Rotates the track and every drawn element as a group around the board
+	 * centre; labels and the watermark keep their upright orientation. */
+	boardRotation?: number;
 }
 
 export const boardSettings = persisted<BoardSettings>('derbyboard-board-settings', {
@@ -27,5 +31,6 @@ export const boardSettings = persisted<BoardSettings>('derbyboard-board-settings
 	pathsVisible: true,
 	pathOverlay: 'off',
 	onionSkin: false,
-	onionSkinDepth: 1
+	onionSkinDepth: 1,
+	boardRotation: 0
 });

@@ -229,14 +229,6 @@
 		});
 	}
 
-	// Re-center (animated) whenever the recording zone mode is toggled.
-	let prevMode = untrack(() => mode);
-	$effect(() => {
-		if (mode === prevMode || !interactive) return;
-		prevMode = mode;
-		centerZone();
-	});
-
 	// Re-center when the zone format changes too — this is the action available
 	// while edit mode is off (board mode), so centering triggers then as well.
 	let prevRatio = untrack(() => ratio);

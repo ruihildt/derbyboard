@@ -13,10 +13,27 @@ import type { PlanarPoint } from '$lib/doc/types';
  * projection stays correct across board resizes without an explicit update.
  */
 export class BoardProjection {
+	/** Whole-board view rotation in degrees (0/90/180/270), applied around the
+	 * stage centre. The layers themselves are rotated to match (see
+	 * KonvaGame.applyBoardRotation); this value only governs the inverse maps
+	 * (screen→planar input, planar→screen DOM HUD) so pointer/drag math and the
+	 * floating HUDs stay aligned with the rotated content. */
+	private boardRotationDeg = 0;
+
 	constructor(
 		private stage: Konva.Stage,
 		private getViewportSize: () => { width: number; height: number }
 	) {}
+
+	/** Sets the board view rotation (degrees). Identity at 0. */
+	setRotation(deg: number): void {
+		this.boardRotationDeg = deg;
+	}
+
+	/** Current board view rotation in degrees. */
+	rotationDeg(): number {
+		return this.boardRotationDeg;
+	}
 
 	/**
 	 * Stage-space centre of the board content (track centring offset). All
@@ -40,15 +57,26 @@ export class BoardProjection {
 	 * Without this, a zoomed/panned board places drawn points off the cursor
 	 * (radially toward the transform's origin), which reads as a consistent
 	 * angular offset.
+	 *
+	 * The board view rotation (set on every content layer) is then undone here
+	 * too, so drawing/dragging lands on the planar point actually under the
+	 * cursor even when the board is rotated 90/180/270°.
 	 */
 	pointerToPlane(pos: { x: number; y: number }): PlanarPoint {
 		const center = this.stageCenter();
 		const scale = this.stage.scaleX();
-		const contentX = (pos.x - this.stage.x()) / scale;
-		const contentY = (pos.y - this.stage.y()) / scale;
+		const parentX = (pos.x - this.stage.x()) / scale;
+		const parentY = (pos.y - this.stage.y()) / scale;
+		// Undo the layer rotation: parent-space point → layer-local (content)
+		// point by rotating −θ around the centre.
+		const a = (-this.boardRotationDeg * Math.PI) / 180;
+		const cos = Math.cos(a);
+		const sin = Math.sin(a);
+		const dx = parentX - center.x;
+		const dy = parentY - center.y;
 		return {
-			x: (contentX - center.x) / TRACK_SCALE,
-			y: (contentY - center.y) / TRACK_SCALE
+			x: (dx * cos - dy * sin) / TRACK_SCALE,
+			y: (dx * sin + dy * cos) / TRACK_SCALE
 		};
 	}
 
@@ -63,15 +91,25 @@ export class BoardProjection {
 
 	/**
 	 * Projects a planar world-metre point to viewport (screen) pixels through
-	 * the current stage pan/zoom. Used by the DOM HUD overlays, which track
-	 * positions per frame but compute everything else reactively.
+	 * the current stage pan/zoom AND the board view rotation. Used by the DOM
+	 * HUD overlays, which track positions per frame but compute everything else
+	 * reactively.
 	 */
 	planeToScreen(p: PlanarPoint): { x: number; y: number } {
 		const center = this.stageCenter();
 		const scale = this.stage.scaleX();
+		// Layer-local offset from centre, then apply the board rotation so the
+		// HUD tracks the rotated content.
+		const lx = p.x * TRACK_SCALE;
+		const ly = p.y * TRACK_SCALE;
+		const a = (this.boardRotationDeg * Math.PI) / 180;
+		const cos = Math.cos(a);
+		const sin = Math.sin(a);
+		const parentX = center.x + lx * cos - ly * sin;
+		const parentY = center.y + lx * sin + ly * cos;
 		return {
-			x: this.stage.x() + (center.x + p.x * TRACK_SCALE) * scale,
-			y: this.stage.y() + (center.y + p.y * TRACK_SCALE) * scale
+			x: this.stage.x() + parentX * scale,
+			y: this.stage.y() + parentY * scale
 		};
 	}
 

@@ -15,6 +15,7 @@
 		type LabelSize
 	} from '$lib/stores/labelSettings';
 	import { exportSettings, type ImageScale, type VideoFps } from '$lib/stores/exportSettings';
+	import { boardSettings } from '$lib/stores/boardSettings';
 	import { selectedAnnotationId } from '$lib/stores/selection';
 	import { boardDoc } from '$lib/doc/store';
 	import { authoringSession } from '$lib/stores/session';
@@ -43,6 +44,7 @@
 	);
 	let isLabel = $derived($toolMode === 'label');
 	let isSelect = $derived($toolMode === 'select');
+	let isHand = $derived($toolMode === 'hand');
 
 	// The selected annotation (if any) when the select tool is armed.
 	let selectedAnn = $derived(
@@ -180,6 +182,16 @@
 		selectedAnnotationId.set(null);
 	}
 
+	/** Rotates the whole board (track + drawings) by `delta` degrees, snapped
+	 * to 90° steps and wrapped into [0, 360). KonvaGame subscribes to the
+	 * setting and applies the view rotation. */
+	function rotateBoard(delta: number) {
+		const cur = $boardSettings.boardRotation ?? 0;
+		let next = (cur + delta) % 360;
+		if (next < 0) next += 360;
+		boardSettings.update((s) => ({ ...s, boardRotation: next }));
+	}
+
 	const QUALITIES: Quality[] = ['720p', '1080p', '1440p', '2160p'];
 	const FPS_OPTIONS: VideoFps[] = [30, 60];
 	const SCALE_OPTIONS: ImageScale[] = [1, 2, 3, 4];
@@ -195,20 +207,6 @@
 
 {#if captureMode}
 	<div class="pointer-events-auto w-60 rounded-2xl bg-white p-3 shadow-lg shadow-black/10">
-		<!-- Zone format (shared) -->
-		<section class="mb-4">
-			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-				Zone format
-			</h3>
-			<div class="flex flex-wrap gap-1">
-				{#each CAPTURE_FORMATS as f (f)}
-					<button class={pill($captureSettings.format === f)} onclick={() => setFormat(f)}>
-						{FORMAT_LABELS_SHORT[f]}
-					</button>
-				{/each}
-			</div>
-		</section>
-
 		<!-- Resolution: video qualities or image scale -->
 		{#if captureMode === 'video'}
 			<section class="mb-4">
@@ -263,23 +261,6 @@
 				</div>
 			</section>
 		{/if}
-
-		<!-- Watermark (shared) -->
-		<section>
-			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-				Watermark
-			</h3>
-			<div class="flex flex-wrap gap-1">
-				{#each WATERMARK_SIZES as size (size)}
-					<button
-						class={pill($exportSettings.watermark === size)}
-						onclick={() => ($exportSettings = { ...$exportSettings, watermark: size })}
-					>
-						{WATERMARK_LABELS[size]}
-					</button>
-				{/each}
-			</div>
-		</section>
 	</div>
 {:else if isLabel}
 	<div class="pointer-events-auto w-60 rounded-2xl bg-white p-3 shadow-lg shadow-black/10">
@@ -387,6 +368,75 @@
 					<span>Delete</span>
 				</button>
 			</div>
+		</section>
+	</div>
+{:else if isHand}
+	<div class="pointer-events-auto w-60 rounded-2xl bg-white p-3 shadow-lg shadow-black/10">
+		<!-- Zone format -->
+		<section class="mb-4">
+			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+				Zone format
+			</h3>
+			<div class="flex flex-wrap gap-1">
+				{#each CAPTURE_FORMATS as f (f)}
+					<button class={pill($captureSettings.format === f)} onclick={() => setFormat(f)}>
+						{FORMAT_LABELS_SHORT[f]}
+					</button>
+				{/each}
+			</div>
+		</section>
+
+		<!-- Watermark -->
+		<section class="mb-4">
+			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+				Watermark
+			</h3>
+			<div class="flex flex-wrap gap-1">
+				{#each WATERMARK_SIZES as size (size)}
+					<button
+						class={pill($exportSettings.watermark === size)}
+						onclick={() => ($exportSettings = { ...$exportSettings, watermark: size })}
+					>
+						{WATERMARK_LABELS[size]}
+					</button>
+				{/each}
+			</div>
+		</section>
+
+		<!-- Board rotation -->
+		<section>
+			<h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+				Board rotation
+			</h3>
+			<div class="flex items-center gap-2">
+				<button
+					type="button"
+					class="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100"
+					onclick={() => rotateBoard(-90)}
+					aria-label="Rotate 90° counter-clockwise"
+					title="Rotate 90° counter-clockwise"
+				>
+					<svg
+						class="h-5 w-5"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.8"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M3 8a9 9 0 1 1-2 5" />
+						<path d="M3 4v4h4" />
+					</svg>
+				</button>
+				<span class="min-w-[3rem] text-center text-sm font-semibold text-gray-700">
+					{$boardSettings.boardRotation ?? 0}°
+				</span>
+			</div>
+			<p class="mt-2 text-[11px] leading-snug text-gray-400">
+				Rotate the track and drawings in 90° steps. Labels and the watermark stay upright.
+			</p>
 		</section>
 	</div>
 {/if}

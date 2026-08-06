@@ -211,7 +211,9 @@ export class LabelEditorController {
 		const bgH = fontSize * 1.4;
 		// Centre of the text box (the rotate pivot), matching AnnotationRenderer.
 		const centerPx = { x: placementPx.x + textWidth / 2, y: placementPx.y + fontSize * 0.45 };
-		const deg = (this.draftAngle * 180) / Math.PI;
+		// Counter-rotate by the board view rotation so the draft stays upright
+		// on the (rotated) annotation layer, matching committed labels.
+		const deg = (this.draftAngle * 180) / Math.PI - this.deps.projection.rotationDeg();
 
 		// Text: drawn centred on centerPx (offset = half text box) then rotated.
 		this.textNode.setAttrs({
