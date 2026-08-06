@@ -6,7 +6,8 @@ import {
 	buildArcLength,
 	sampleAtArcLength,
 	pathTangentAt,
-	clampNodeToBudget
+	clampNodeToBudget,
+	pointInPolygon
 } from './pathMath';
 import type { PlanarPoint } from '$lib/doc/types';
 import { fromTrack, toTrack } from '$lib/track/trackFrame';
@@ -335,5 +336,40 @@ describe('pathMath — clampNodeToBudget', () => {
 		const out = clampNodeToBudget(m(0, 0), m(10, 0), m(5, 5), 5);
 		expect(out.x).toBeCloseTo(5, 5);
 		expect(out.y).toBeCloseTo(0, 5);
+	});
+});
+
+describe('pathMath — pointInPolygon', () => {
+	const m = (x: number, y: number) => ({ x, y });
+	// A unit square loop (closed implicitly last→first).
+	const square = [m(0, 0), m(4, 0), m(4, 4), m(0, 4)];
+
+	it('returns true for a point inside the polygon', () => {
+		expect(pointInPolygon(m(2, 2), square)).toBe(true);
+	});
+
+	it('returns false for a point outside the polygon', () => {
+		expect(pointInPolygon(m(5, 5), square)).toBe(false);
+		expect(pointInPolygon(m(-1, 2), square)).toBe(false);
+	});
+
+	it('matches every player in a lasso enclosing several', () => {
+		// Three "players": two inside the square, one outside.
+		const players = [m(1, 1), m(3, 3), m(10, 10)];
+		const inside = players.filter((p) => pointInPolygon(p, square));
+		expect(inside).toEqual([m(1, 1), m(3, 3)]);
+	});
+
+	it('handles a concave polygon', () => {
+		// An arrowhead: (0,0)→(4,2)→(0,4)→(1,2)→close. The notch at (1,2)
+		// cuts out the centre-left, so (0.5,2) is outside while (3,2) is in.
+		const concave = [m(0, 0), m(4, 2), m(0, 4), m(1, 2)];
+		expect(pointInPolygon(m(3, 2), concave)).toBe(true);
+		expect(pointInPolygon(m(0.5, 2), concave)).toBe(false);
+	});
+
+	it('returns false for fewer than 3 vertices', () => {
+		expect(pointInPolygon(m(0, 0), [m(0, 0), m(1, 1)])).toBe(false);
+		expect(pointInPolygon(m(0, 0), [])).toBe(false);
 	});
 });

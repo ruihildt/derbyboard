@@ -27,7 +27,7 @@
 	import { StepPlayback, SPEEDS } from '$lib/recording/authored/stepPlayback.svelte';
 	import { authoringSession } from '$lib/stores/session';
 	import { toolMode } from '$lib/stores/toolMode';
-	import { selectedEntityId } from '$lib/stores/selection';
+	import { selectedEntityIds } from '$lib/stores/selection';
 
 	let { game }: { game: KonvaGame } = $props();
 
@@ -150,11 +150,11 @@
 	$effect(() => {
 		void $boardDoc;
 		void $toolMode;
-		void $selectedEntityId;
+		void $selectedEntityIds;
 		if (!game) return;
 		if (!pb.player) {
 			const step = getActiveStep();
-			game.renderStepOverlays(step, $selectedEntityId);
+			game.renderStepOverlays(step, $selectedEntityIds);
 		} else {
 			// During playback, re-render paths for the current step so the
 			// selected entity's path updates immediately on selection change.

@@ -68,13 +68,13 @@ export class PathRenderer {
 	 */
 	renderPaths(
 		step: Step | undefined,
-		selectedEntityId: string | null,
+		selectedEntityIds: string[],
 		prevStep?: Step | undefined,
 		nextStep?: Step | undefined
 	): void {
 		// During replay, the path layer is managed by renderPathFrame (called
 		// from renderSampleTransform). Bail out so the StepStrip Svelte
-		// $effect (which fires when selectedEntityId is cleared on replay
+		// $effect (which fires when the selection is cleared on replay
 		// start) can't destroyChildren and wipe the paths just drawn.
 		if (this.isReplayMode()) return;
 
@@ -83,12 +83,18 @@ export class PathRenderer {
 		this.clearHandles();
 
 		const editable = get(toolMode) === 'select';
+		const selected = new Set(selectedEntityIds);
+		// Editing handles only make sense for one path at a time, so they are
+		// shown only in a single selection (the primary); a multi-selection
+		// still renders every selected path's line, just without drag nodes.
+		const single = selected.size === 1;
 
-		// Adjacent-step (ghost) paths for the selected entity, drawn first so
-		// they sit behind the active step. In Select they get editing nodes too.
-		if (selectedEntityId) {
-			this.renderGhostPath(prevStep, selectedEntityId, editable, 'prev');
-			this.renderGhostPath(nextStep, selectedEntityId, editable, 'next');
+		// Adjacent-step (ghost) paths for each selected entity, drawn first so
+		// they sit behind the active step. In Select a single selection gets
+		// editing nodes too.
+		for (const id of selectedEntityIds) {
+			this.renderGhostPath(prevStep, id, editable && single, 'prev');
+			this.renderGhostPath(nextStep, id, editable && single, 'next');
 		}
 
 		if (!step?.paths) {
@@ -101,20 +107,19 @@ export class PathRenderer {
 		const overlayMode = get(boardSettings).pathOverlay ?? 'off';
 
 		for (const path of step.paths) {
+			const isSelected = selected.has(path.entityId);
 			const shouldRender =
-				path.entityId === selectedEntityId ||
-				overlayMode === 'all' ||
-				(overlayMode === 'selected' && path.entityId === selectedEntityId);
+				isSelected || overlayMode === 'all' || (overlayMode === 'selected' && isSelected);
 
 			if (!shouldRender) continue;
 
-			// Handles only for the selected entity's own path on the active step.
+			// Handles only for the single selected entity's own path.
 			this.renderPathGeometry(
 				step,
 				path,
 				entityColorFor(path.entityId),
 				'current',
-				editable && path.entityId === selectedEntityId
+				editable && single && isSelected
 			);
 		}
 
@@ -125,7 +130,7 @@ export class PathRenderer {
 			s?.paths?.map((p) => ({ id: p.id, entityId: p.entityId, points: p.points }));
 		this.currentPathFrame = {
 			paths: step.paths.map((p) => ({ id: p.id, entityId: p.entityId, points: p.points })),
-			selectedEntityId,
+			selectedEntityId: selectedEntityIds.length ? selectedEntityIds[0] : null,
 			prevPaths: toEntries(prevStep),
 			nextPaths: toEntries(nextStep)
 		};

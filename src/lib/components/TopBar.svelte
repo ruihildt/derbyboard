@@ -61,6 +61,7 @@
 	const tools: { id: DrawTool; label: string; icon: string }[] = [
 		{ id: 'hand', label: 'Pan (hand)', icon: '' },
 		{ id: 'select', label: 'Select', icon: '' },
+		{ id: 'lasso', label: 'Lasso select', icon: '' },
 		{ id: 'drawPath', label: 'Draw movement path', icon: '' },
 		{ id: 'pen', label: 'Freehand pen', icon: '✏' },
 		{ id: 'arrow', label: 'Arrow', icon: '→' },
@@ -142,6 +143,25 @@
 										aria-hidden="true"
 									>
 										<path d="M5.5 2.5v15l3.2-3 2.3 5 1.8-.8-2.3-5 4.5 0z" />
+									</svg>
+								{:else if tool.id === 'lasso'}
+									<!-- Dashed marquee glyph: the Lasso select tool. -->
+									<svg
+										class="h-[18px] w-[18px]"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.8"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-dasharray="3 3"
+										aria-hidden="true"
+									>
+										<path d="M4 8V6a2 2 0 0 1 2-2h2" />
+										<path d="M16 4h2a2 2 0 0 1 2 2v2" />
+										<path d="M20 16v2a2 2 0 0 1-2 2h-2" />
+										<path d="M8 20H6a2 2 0 0 1-2-2v-2" />
+										<circle cx="12" cy="12" r="2.4" />
 									</svg>
 								{:else if tool.id === 'hand'}
 									<!-- Open-hand glyph: the dedicated Pan tool. -->

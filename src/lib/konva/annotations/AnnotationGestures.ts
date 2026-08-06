@@ -5,7 +5,7 @@ import { TRACK_SCALE } from '$lib/constants';
 import { toolMode } from '$lib/stores/toolMode';
 import {
 	selectedAnnotationId,
-	selectedEntityId,
+	setEntitySelection,
 	directionControlActive
 } from '$lib/stores/selection';
 import { boardDoc } from '$lib/doc/store';
@@ -184,7 +184,7 @@ export class AnnotationGestures {
 		// Auto-select first (rebuilds the chrome), then start the move from the
 		// current pointer so there's no jump. Mutual exclusion clears the entity.
 		selectedAnnotationId.set(p.annId);
-		selectedEntityId.set(null);
+		setEntitySelection([]);
 		directionControlActive.set(false);
 		this.start('move', ann);
 		return true;

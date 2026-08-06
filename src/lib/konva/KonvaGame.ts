@@ -4,8 +4,10 @@ import Konva from 'konva';
 import { boardState } from '$lib/stores/konvaBoardState';
 import {
 	selectedEntityId,
+	selectedEntityIds,
 	selectedAnnotationId,
-	directionControlActive
+	directionControlActive,
+	setEntitySelection
 } from '$lib/stores/selection';
 import { boardSettings } from '$lib/stores/boardSettings';
 import { authoringSession } from '$lib/stores/session';
@@ -120,6 +122,8 @@ export class KonvaGame {
 
 	/** Reactive bridge from the selection store to the rotation handle render. */
 	private selectionUnsubscribe: (() => void) | null = null;
+	/** Reactive bridge from the multi-select store to the halo render. */
+	private selectionIdsUnsubscribe: (() => void) | null = null;
 	/** Reactive bridge from the annotation selection store to the ring render. */
 	private annotationSelectionUnsubscribe: (() => void) | null = null;
 	private directionControlUnsubscribe: (() => void) | null = null;
@@ -168,7 +172,8 @@ export class KonvaGame {
 			isReplayMode: () => this.replay.isActive(),
 			getPlayerManager: () => this.playerManager,
 			onRebuild: () => this.rebuildTrackAndPlayers(),
-			onOverlaysChanged: () => this.renderStepOverlays(this.getActiveStep(), get(selectedEntityId)),
+			onOverlaysChanged: () =>
+				this.renderStepOverlays(this.getActiveStep(), get(selectedEntityIds)),
 			onReplayResize: () => this.replay.handleResize()
 		});
 
@@ -272,7 +277,7 @@ export class KonvaGame {
 			pathLayer: this.pathLayer,
 			annotationLayer: this.annotationLayer,
 			getActiveStep: () => this.getActiveStep(),
-			onAfterCommit: (step) => this.renderStepOverlays(step, get(selectedEntityId))
+			onAfterCommit: (step) => this.renderStepOverlays(step, get(selectedEntityIds))
 		});
 		this.drawingTools.attach();
 		// Inline label editor: the label tool delegates placement to it (direct
@@ -289,7 +294,9 @@ export class KonvaGame {
 		this.selectionController = new SelectionController({
 			stage: this.stage,
 			isReplayMode: () => this.replay.isActive(),
-			consumeClickSuppression: () => this.annotationGestures.consumeClickSuppression(),
+			consumeClickSuppression: () =>
+				this.annotationGestures.consumeClickSuppression() ||
+				this.drawingTools.consumeClickSuppression(),
 			focusTap: {
 				isArmed: () => this.focusTapEnabled,
 				hasCallback: () => this.focusTapCallback !== null,
@@ -358,11 +365,14 @@ export class KonvaGame {
 			}
 		});
 
-		// Reactively show/hide/move the rotation handle when selection changes.
-		// Without this, tapping an entity set the store but never rendered the
-		// handle (the manual direction control was effectively invisible).
-		this.selectionUnsubscribe = selectedEntityId.subscribe((id) => {
-			this.playerManager.setSelection(id);
+		// Halos (one per selected player) follow the multi-select set.
+		this.selectionIdsUnsubscribe = selectedEntityIds.subscribe((ids) => {
+			this.playerManager.setSelections(ids);
+		});
+
+		// The rotation knob / guide line follow the single primary selection
+		// (one focused player within the set, even when many are highlighted).
+		this.selectionUnsubscribe = selectedEntityId.subscribe(() => {
 			this.updateRotationHandle();
 		});
 
@@ -393,7 +403,7 @@ export class KonvaGame {
 		// and paths don't stay stale after history navigation.
 		this.docUnsubscribe = boardDoc.subscribe(() => {
 			if (this.replay.isActive() || this.authored.isActive()) return;
-			this.renderStepOverlays(this.getActiveStep(), get(selectedEntityId));
+			this.renderStepOverlays(this.getActiveStep(), get(selectedEntityIds));
 		});
 
 		// Rebuild the selection chrome when the persisted zoom changes (zoom
@@ -437,7 +447,7 @@ export class KonvaGame {
 				if (target.hasName('playerGroup')) {
 					const player = target.getAttr('player') as { id?: string } | undefined;
 					if (player?.id && player.id !== get(selectedEntityId)) {
-						selectedEntityId.set(player.id);
+						setEntitySelection([player.id]);
 						directionControlActive.set(false);
 						selectedAnnotationId.set(null);
 					}
@@ -589,6 +599,7 @@ export class KonvaGame {
 		this.annotationGestures.destroy();
 		this.labelEditor.destroy();
 		this.selectionUnsubscribe?.();
+		this.selectionIdsUnsubscribe?.();
 		this.annotationSelectionUnsubscribe?.();
 		this.toolModeUnsubscribe?.();
 		this.directionControlUnsubscribe?.();
@@ -1071,11 +1082,11 @@ export class KonvaGame {
 	 */
 	renderPaths(
 		step: Step | undefined,
-		selectedEntityId: string | null,
+		selectedEntityIds: string[],
 		prevStep?: Step | undefined,
 		nextStep?: Step | undefined
 	): void {
-		this.pathRenderer.renderPaths(step, selectedEntityId, prevStep, nextStep);
+		this.pathRenderer.renderPaths(step, selectedEntityIds, prevStep, nextStep);
 	}
 
 	/**
@@ -1140,9 +1151,9 @@ export class KonvaGame {
 		boardSettings.update((s) => ({ ...s, pathOverlay: mode }));
 		// Re-render paths with new overlay mode
 		const step = this.getActiveStep();
-		const selectedId = get(selectedEntityId);
+		const selectedIds = get(selectedEntityIds);
 		const { prevStep, nextStep } = this.getAdjacentSteps();
-		this.renderPaths(step, selectedId, prevStep, nextStep);
+		this.renderPaths(step, selectedIds, prevStep, nextStep);
 	}
 
 	/**
@@ -1165,11 +1176,11 @@ export class KonvaGame {
 	 * Public render entry used by the UI.
 	 * Renders all step-attached overlays for the given active step.
 	 */
-	renderStepOverlays(step: Step | undefined, selectedEntityId: string | null): void {
+	renderStepOverlays(step: Step | undefined, selectedEntityIds: string[]): void {
 		const settings = get(boardSettings);
 
 		const { prevStep, nextStep } = this.getAdjacentSteps();
-		this.renderPaths(step, selectedEntityId, prevStep, nextStep);
+		this.renderPaths(step, selectedEntityIds, prevStep, nextStep);
 		this.renderAnnotations(step);
 
 		if (settings.onionSkin && !this.authored.isActive()) {

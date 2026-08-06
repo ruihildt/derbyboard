@@ -46,7 +46,7 @@ export const VIEW_TOOLS: DrawTool[] = ['select', 'hand'];
  * which removes an annotation by tapping it (annotations only; never players
  * or movement paths).
  */
-export const ANNOTATION_TOOLS: DrawTool[] = ['pen', 'arrow', 'zone', 'label', 'erase'];
+export const ANNOTATION_TOOLS: DrawTool[] = ['pen', 'arrow', 'zone', 'lasso', 'label', 'erase'];
 
 /**
  * Step-scoped authoring tools, admitted only by Staged: `drawPath` (movement

@@ -3,9 +3,11 @@ import type Konva from 'konva';
 
 import { toolMode } from '$lib/stores/toolMode';
 import {
+	selectedEntityIds,
 	selectedEntityId,
 	selectedAnnotationId,
-	directionControlActive
+	directionControlActive,
+	setEntitySelection
 } from '$lib/stores/selection';
 import { deleteAnnotation, deletePath } from '$lib/doc/clipOps';
 import type { Step } from '$lib/doc/types';
@@ -24,7 +26,7 @@ export interface SelectionDeps {
 	renderAnnotations: (step: Step | undefined) => void;
 	renderPaths: (
 		step: Step | undefined,
-		selectedEntityId: string | null,
+		selectedEntityIds: string[],
 		prevStep: Step | undefined,
 		nextStep: Step | undefined
 	) => void;
@@ -37,6 +39,8 @@ export interface SelectionDeps {
  *    (knob + dashed guide line)
  *  - click another skater → select that one, direction control OFF
  *  - click empty canvas → deselect, direction control OFF
+ *  - Ctrl/Cmd+Click a skater in Select mode → toggle it in/out of the
+ *    multi-selection set (additive), keeping the existing primary focus
  *  - erase tool: tap an annotation or an active-step path to delete it
  *  - focus/dim mode: taps toggle entities into the focus set instead
  * Single click resolves immediately (no delay): a double-click simply
@@ -77,7 +81,7 @@ export class SelectionController {
 				if (active && pathHit.stepId === active.id) {
 					deletePath(active.id, pathHit.pathId);
 					const { prevStep, nextStep } = this.deps.getAdjacentSteps();
-					this.deps.renderPaths(active, get(selectedEntityId), prevStep, nextStep);
+					this.deps.renderPaths(active, get(selectedEntityIds), prevStep, nextStep);
 				}
 			}
 			return;
@@ -90,9 +94,25 @@ export class SelectionController {
 				this.deps.focusTap.notify(id);
 				return;
 			}
+			// Ctrl/Cmd+Click in Select mode toggles the player into/out of the
+			// multi-selection set (additive) instead of replacing it.
+			if (get(toolMode) === 'select' && this.isAdditiveClick(e)) {
+				const current = get(selectedEntityIds);
+				const has = current.includes(id);
+				const next = has ? current.filter((x) => x !== id) : [...current, id];
+				// Keep the current primary while it's still selected; otherwise
+				// fall back to the last remaining member (or null if emptied).
+				const primary = get(selectedEntityId);
+				const nextPrimary =
+					primary && next.includes(primary) ? primary : (next[next.length - 1] ?? null);
+				setEntitySelection(next, nextPrimary);
+				directionControlActive.set(false);
+				selectedAnnotationId.set(null);
+				return;
+			}
 			// Single-select: select the entity, direction control inactive.
 			// Mutual exclusion: selecting a skater clears any mark.
-			selectedEntityId.set(id);
+			setEntitySelection([id]);
 			directionControlActive.set(false);
 			selectedAnnotationId.set(null);
 
@@ -105,21 +125,30 @@ export class SelectionController {
 				if (hasPath) toolMode.set('select');
 			}
 		} else {
+			// Ctrl/Cmd+Click on empty canvas keeps the current selection.
+			if (get(toolMode) === 'select' && this.isAdditiveClick(e)) return;
 			const annId = annotationIdFromEvent(e);
 			if (annId && get(toolMode) === 'select') {
 				// Select the annotation; mutual exclusion clears the entity.
-				selectedEntityId.set(null);
+				setEntitySelection([]);
 				selectedAnnotationId.set(annId);
 				directionControlActive.set(false);
 				e.cancelBubble = true;
 			} else {
 				// Any other non-skater click (empty canvas, track lines, …) or a
 				// non-select tool: deselect everything and exit direction mode.
-				selectedEntityId.set(null);
+				setEntitySelection([]);
 				selectedAnnotationId.set(null);
 				directionControlActive.set(false);
 			}
 		}
+	}
+
+	/** True when the click carries Ctrl (Windows/Linux) or Cmd (macOS), which
+	 * selects additively. Touch events carry no modifier key. */
+	private isAdditiveClick(e: Konva.KonvaEventObject<unknown>): boolean {
+		const native = e.evt as MouseEvent | undefined;
+		return !!native && (native.ctrlKey || native.metaKey);
 	}
 
 	private handleDoubleClick(e: Konva.KonvaEventObject<unknown>): void {
@@ -128,11 +157,11 @@ export class SelectionController {
 		if (get(toolMode) === 'hand') return; // hand is a pan surface only
 		const id = playerIdFromEvent(e);
 		if (id) {
-			selectedEntityId.set(id);
+			setEntitySelection([id]);
 			directionControlActive.set(true);
 			selectedAnnotationId.set(null);
 		} else {
-			selectedEntityId.set(null);
+			setEntitySelection([]);
 			directionControlActive.set(false);
 			selectedAnnotationId.set(null);
 		}

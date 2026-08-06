@@ -130,6 +130,33 @@ export function clampNodeToBudget(
 	return { x: p.x + (anchor.x - p.x) * hi, y: p.y + (anchor.y - p.y) * hi };
 }
 
+/**
+ * Ray-casting point-in-polygon test in planar metre space. Returns true when
+ * `p` lies strictly inside the polygon `poly` (a closed loop implied by
+ * connecting the last vertex back to the first). Needs at least 3 vertices.
+ * Used by the lasso tool to find the players enclosed by a freehand loop.
+ *
+ * The `+ 1e-12` guards a divide-by-zero on horizontal edges (yi === yj); it
+ * is far below planar resolution so it never flips a real result.
+ */
+export function pointInPolygon(p: PlanarPoint, poly: PlanarPoint[]): boolean {
+	const n = poly.length;
+	if (n < 3) return false;
+	let inside = false;
+	for (let i = 0, j = n - 1; i < n; j = i++) {
+		const xi = poly[i].x;
+		const yi = poly[i].y;
+		const xj = poly[j].x;
+		const yj = poly[j].y;
+		const crosses = yi > p.y !== yj > p.y;
+		if (crosses) {
+			const xAtY = ((xj - xi) * (p.y - yi)) / (yj - yi + 1e-12) + xi;
+			if (p.x < xAtY) inside = !inside;
+		}
+	}
+	return inside;
+}
+
 function perpendicularDistance(
 	pt: PlanarPoint,
 	lineStart: PlanarPoint,

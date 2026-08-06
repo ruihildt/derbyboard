@@ -10,7 +10,7 @@ import {
 } from '$lib/doc/clipOps';
 import { AuthoredPlayer } from '$lib/recording/authored/AuthoredPlayer';
 import { nearestStepAt, buildTimeline, STEP_DURATION_MS } from '$lib/track/tween';
-import { selectedEntityId } from '$lib/stores/selection';
+import { selectedEntityIds } from '$lib/stores/selection';
 
 export const SPEEDS = [0.25, 0.5, 0.75, 1];
 
@@ -74,7 +74,7 @@ export class StepPlayback {
 		const prevStep = stepIdx > 0 ? steps[stepIdx - 1] : undefined;
 		const nextStep = stepIdx < steps.length - 1 ? steps[stepIdx + 1] : undefined;
 		const game = this.getGame();
-		game.renderPaths(step, get(selectedEntityId), prevStep, nextStep);
+		game.renderPaths(step, get(selectedEntityIds), prevStep, nextStep);
 		game.renderAnnotations(step);
 	}
 
@@ -202,7 +202,7 @@ export class StepPlayback {
 		navigateToStep(i, false);
 		// Update path overlays to show this step's paths + adjacent context.
 		const step = this.getSteps()[i];
-		if (step) this.getGame().renderStepOverlays(step, get(selectedEntityId));
+		if (step) this.getGame().renderStepOverlays(step, get(selectedEntityIds));
 
 		this.player = new AuthoredPlayer({
 			game: this.getGame(),
@@ -251,7 +251,7 @@ export class StepPlayback {
 			loadStepArrivalOntoBoard(stepIdx);
 			navigateToStep(stepIdx, false);
 			const step = steps[stepIdx];
-			if (step) this.getGame().renderStepOverlays(step, get(selectedEntityId));
+			if (step) this.getGame().renderStepOverlays(step, get(selectedEntityIds));
 		}
 	}
 

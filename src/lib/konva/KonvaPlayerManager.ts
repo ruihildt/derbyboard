@@ -27,8 +27,9 @@ export class KonvaPlayerManager {
 	private docUnsubscribe: (() => void) | null = null;
 	/** Whether the facing marker (brace) is drawn. Driven by board settings. */
 	private headingVisible = true;
-	/** Currently selected entity id (drives the red selection halo). */
-	private selectedId: string | null = null;
+	/** Currently selected entity ids (drive the red selection halos). Empty
+	 * set (or null) means none. */
+	private selectedIds: Set<string> | null = null;
 
 	constructor(layer: Konva.Layer) {
 		this.layer = layer;
@@ -377,24 +378,21 @@ export class KonvaPlayerManager {
 	}
 
 	/**
-	 * Sets the single selected entity, showing a red halo on it and clearing the
-	 * halo on everyone else. `null` clears selection.
+	 * Sets the selected entities, showing a red halo on each and clearing the
+	 * halo on everyone else. An empty array clears selection. Selected players
+	 * are hoisted above their peers so their halos and facing markers read on
+	 * top of overlapping players.
 	 */
-	setSelection(id: string | null): void {
-		this.selectedId = id;
-		for (const p of this.teamPlayers) p.setSelected(p.id === id);
-		for (const p of this.skatingOfficials) p.setSelected(p.id === id);
-		// Bring the selected entity above its peers so its dotted halo and
-		// facing marker read on top of overlapping players.
-		if (id) {
-			const sel = this.findTeamPlayerById(id) ?? this.findOfficialById(id);
-			sel?.getNode().moveToTop();
+	setSelections(ids: string[]): void {
+		this.selectedIds = ids.length > 0 ? new Set(ids) : null;
+		const set = this.selectedIds;
+		for (const p of this.teamPlayers) p.setSelected(set ? set.has(p.id) : false);
+		for (const p of this.skatingOfficials) p.setSelected(set ? set.has(p.id) : false);
+		if (set) {
+			for (const p of this.teamPlayers) if (set.has(p.id)) p.getNode().moveToTop();
+			for (const p of this.skatingOfficials) if (set.has(p.id)) p.getNode().moveToTop();
 		}
 		this.layer.batchDraw();
-	}
-
-	getSelectedId(): string | null {
-		return this.selectedId;
 	}
 
 	/**

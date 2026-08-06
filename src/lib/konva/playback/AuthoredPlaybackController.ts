@@ -2,7 +2,11 @@ import { get } from 'svelte/store';
 import type Konva from 'konva';
 
 import { interaction } from '$lib/stores/interaction';
-import { selectedEntityId, directionControlActive } from '$lib/stores/selection';
+import {
+	selectedEntityId,
+	directionControlActive,
+	setEntitySelection
+} from '$lib/stores/selection';
 import { poseStore } from '$lib/doc/poses';
 import { tweenSteps, easeInOutCubic } from '$lib/track/tween';
 import type { EntityPose } from '$lib/doc/types';
@@ -79,7 +83,7 @@ export class AuthoredPlaybackController {
 		this.deps.trailRenderer.clear();
 		this.deps.clearFocusState();
 		this.deps.playerManager.setFocus(null);
-		selectedEntityId.set(null);
+		setEntitySelection([]);
 		directionControlActive.set(false);
 		this.deps.updateRotationHandle();
 	}

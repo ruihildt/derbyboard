@@ -7,6 +7,7 @@ export type DrawTool =
 	| 'pen' // freehand stroke annotation
 	| 'arrow' // straight arrow (two taps / drag)
 	| 'zone' // freehand closed blob
+	| 'lasso' // freehand closed loop that selects every player inside it
 	| 'label' // tap to place a text label, then type it inline on the canvas
 	| 'gap' // two-point gap marker (drag or two taps)
 	| 'erase' // tap an annotation to delete it

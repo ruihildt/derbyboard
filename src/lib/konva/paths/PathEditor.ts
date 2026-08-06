@@ -1,7 +1,7 @@
 import { get } from 'svelte/store';
 
 import { TRACK_SCALE } from '$lib/constants';
-import { selectedEntityId } from '$lib/stores/selection';
+import { selectedEntityId, selectedEntityIds } from '$lib/stores/selection';
 import { setEntityPath } from '$lib/doc/clipOps';
 import type { EntityPath, PlanarPoint, Step } from '$lib/doc/types';
 import type { BoardProjection } from './projection';
@@ -90,7 +90,7 @@ export class PathEditor {
 
 		const active = this.steps.getActiveStep();
 		const { prevStep, nextStep } = this.steps.getAdjacentSteps();
-		this.renderer.renderPaths(active, get(selectedEntityId), prevStep, nextStep);
+		this.renderer.renderPaths(active, get(selectedEntityIds), prevStep, nextStep);
 	}
 
 	/**

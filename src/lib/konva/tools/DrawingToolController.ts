@@ -2,9 +2,10 @@ import { get } from 'svelte/store';
 import Konva from 'konva';
 
 import { toolMode, isDrawingTool } from '$lib/stores/toolMode';
-import { selectedEntityId } from '$lib/stores/selection';
+import { selectedEntityId, setEntitySelection } from '$lib/stores/selection';
 import { addAnnotation, setEntityPath } from '$lib/doc/clipOps';
-import { simplify } from '$lib/track/pathMath';
+import { simplify, pointInPolygon } from '$lib/track/pathMath';
+import { poseStore } from '$lib/doc/poses';
 import { MAX_PATH_LENGTH_M, MAX_PATH_POINTS } from '$lib/track/tween';
 import type { Annotation, PlanarPoint, Step } from '$lib/doc/types';
 import { entityColorFor } from '../entityColors';
@@ -74,6 +75,11 @@ export class DrawingToolController {
 	private gapPreview: Konva.Line | null = null;
 	private rafId: number | null = null;
 	private pathLengthAccum = 0; // running arc-length for path cap enforcement
+	/** Timestamp of the last gesture end, so the owner can swallow the
+	 * `click`/`tap` the browser fires right after `pointerup` — without it
+	 * that click reaches the selection handler and clears a selection just
+	 * made on commit (notably the lasso's multi-select). */
+	private lastCommitAt = 0;
 
 	/** Late-bound by the owner; the label tool starts an inline edit through it. */
 	private labelEditor: LabelEditor | null = null;
@@ -89,6 +95,19 @@ export class DrawingToolController {
 	attach(): void {
 		const { stage } = this.deps;
 		stage.on('pointerdown', (e) => this.handlePointerDown(e));
+	}
+
+	/**
+	 * Returns true (once) when a click lands within 400ms of a draw-gesture end,
+	 * so the owner can swallow it instead of letting the selection handler
+	 * clear a selection just made on commit (e.g. the lasso's multi-select).
+	 */
+	consumeClickSuppression(): boolean {
+		if (this.lastCommitAt && Date.now() - this.lastCommitAt < 400) {
+			this.lastCommitAt = 0;
+			return true;
+		}
+		return false;
 	}
 
 	/** Helper to create an annotation. Annotations are always board-wide on
@@ -138,7 +157,7 @@ export class DrawingToolController {
 			} else {
 				this.drawingPoints = [{ x: planePos.x, y: planePos.y }];
 			}
-		} else if (tool === 'pen' || tool === 'zone' || tool === 'arrow') {
+		} else if (tool === 'pen' || tool === 'zone' || tool === 'arrow' || tool === 'lasso') {
 			this.drawingPoints = [{ x: planePos.x, y: planePos.y }];
 		} else if (tool === 'gap') {
 			this.firstAnchor = { x: planePos.x, y: planePos.y };
@@ -156,14 +175,26 @@ export class DrawingToolController {
 		// Create preview for freehand tools. The preview is always an OPEN
 		// stroke — the zone tool only closes/fills on release, so while
 		// drawing it reads as a freehand outline, not a forming zone.
-		if (tool === 'pen' || tool === 'drawPath' || tool === 'zone' || tool === 'arrow') {
+		if (
+			tool === 'pen' ||
+			tool === 'drawPath' ||
+			tool === 'zone' ||
+			tool === 'arrow' ||
+			tool === 'lasso'
+		) {
 			this.previewLine = new Konva.Line({
 				points: projection.projectSmoothed(this.drawingPoints, false).flatMap((p) => [p.x, p.y]),
-				stroke: tool === 'drawPath' ? entityColorFor(get(selectedEntityId) ?? '') : '#e11d48',
+				stroke:
+					tool === 'drawPath'
+						? entityColorFor(get(selectedEntityId) ?? '')
+						: tool === 'lasso'
+							? '#2563eb'
+							: '#e11d48',
 				strokeWidth: 2,
 				lineCap: 'round',
 				lineJoin: 'round',
 				tension: 0,
+				dash: tool === 'lasso' ? [6, 6] : undefined,
 				opacity: 0.5,
 				listening: false
 			});
@@ -186,7 +217,13 @@ export class DrawingToolController {
 
 			const planePos = projection.pointerToPlane(pos);
 
-			if (tool === 'pen' || tool === 'drawPath' || tool === 'zone' || tool === 'arrow') {
+			if (
+				tool === 'pen' ||
+				tool === 'drawPath' ||
+				tool === 'zone' ||
+				tool === 'arrow' ||
+				tool === 'lasso'
+			) {
 				// Enforce path-length cap for movement paths. Don't early-return
 				// (that would skip `rafId = null` and freeze all further drawing).
 				let acceptPoint = true;
@@ -258,6 +295,14 @@ export class DrawingToolController {
 			this.rafId = null;
 		}
 
+		// Arm click suppression for any real gesture (had points / an anchor).
+		// The browser fires a `click`/`tap` immediately after `pointerup`; for
+		// tools that change selection on commit (the lasso) that trailing click
+		// would otherwise deselect. SelectionController consumes it.
+		if (this.drawingPoints.length > 0 || this.firstAnchor) {
+			this.lastCommitAt = Date.now();
+		}
+
 		// Clear preview (surgical — renderAnnotations rebuilds the layer next)
 		if (this.previewLine) {
 			this.previewLine.destroy();
@@ -312,6 +357,31 @@ export class DrawingToolController {
 					style: { color: '#e11d48', width: 2 }
 				});
 			}
+		} else if (tool === 'lasso' && this.drawingPoints.length >= 3) {
+			// Draw the same closed loop as the zone tool, but instead of laying a
+			// mark, select every player whose effective pose lies inside it. Works
+			// in Live (no step) too: poses come from the pose store, not a step.
+			const simplified = simplify(this.drawingPoints, 0.15);
+			if (simplified.length >= 3) {
+				const all = poseStore.effectiveAll();
+				const matched = all
+					.filter(({ pose }) => pointInPolygon({ x: pose.x, y: pose.y }, simplified))
+					.map(({ entity }) => entity.id);
+				// Primary = the matched player nearest the loop's centroid, so the
+				// rotation handle / single-drag have a sensible focus in the set.
+				const cx = simplified.reduce((s, p) => s + p.x, 0) / simplified.length;
+				const cy = simplified.reduce((s, p) => s + p.y, 0) / simplified.length;
+				const primary = all
+					.filter(({ entity }) => matched.includes(entity.id))
+					.reduce(
+						(best, cur) => {
+							const d = (cur.pose.x - cx) ** 2 + (cur.pose.y - cy) ** 2;
+							return d < best.d ? { id: cur.entity.id, d } : best;
+						},
+						{ id: matched[0] ?? '', d: Infinity }
+					).id;
+				setEntitySelection(matched, primary || null);
+			}
 		} else if (tool === 'gap' && this.firstAnchor) {
 			const pos = stage.getPointerPosition();
 			if (pos) {
@@ -337,7 +407,7 @@ export class DrawingToolController {
 		// (pen / drawPath) stay armed for repeated strokes, and the label tool
 		// stays armed during typing — it returns to Select on commit inside its
 		// inline editor (see LabelEditorController).
-		if (tool === 'arrow' || tool === 'zone' || tool === 'gap') {
+		if (tool === 'arrow' || tool === 'zone' || tool === 'gap' || tool === 'lasso') {
 			toolMode.set('select');
 		}
 
