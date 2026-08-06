@@ -91,7 +91,7 @@ export class AnnotationRenderer {
 	private selChrome: {
 		box: Konva.Rect;
 		edges: Konva.Rect[];
-		corners: Konva.Circle[];
+		corners: Konva.Rect[];
 		rot: Konva.Circle | null;
 	} | null = null;
 	/** The selection-chrome group on the control layer (cached so the move
@@ -752,8 +752,8 @@ export class AnnotationRenderer {
 			offsetX: boxW / 2,
 			offsetY: boxH / 2,
 			rotation: angleDeg,
-			stroke: '#0ea5e9',
-			strokeWidth: 2 / scale,
+			stroke: '#ef562f',
+			strokeWidth: 1 / scale,
 			fill: 'rgba(0,0,0,0)',
 			listening: true
 		});
@@ -804,22 +804,30 @@ export class AnnotationRenderer {
 			edge.on('pointerdown', (e) => this.onGestureStart?.('resize', ann, e, def.su, def.sv));
 		}
 
-		// Four corner resize handles (circles). boxCorners order: ++, -+, --, +-.
+		// Four corner resize handles (small rounded squares). boxCorners order:
+		// ++, -+, --, +-.
 		const signs: Array<[number, number]> = [
 			[1, 1],
 			[-1, 1],
 			[-1, -1],
 			[1, -1]
 		];
-		const cornerHandles: Konva.Circle[] = [];
+		const cornerSize = Math.max(7, 8 / scale);
+		const cornerRadius = Math.min(1.5, cornerSize * 0.2);
+		const cornerHandles: Konva.Rect[] = [];
 		corners.forEach((c, i) => {
-			const handle = new Konva.Circle({
+			const handle = new Konva.Rect({
 				x: c.x,
 				y: c.y,
-				radius: Math.max(6, 8 / scale),
+				width: cornerSize,
+				height: cornerSize,
+				offsetX: cornerSize / 2,
+				offsetY: cornerSize / 2,
+				rotation: angleDeg,
+				cornerRadius,
 				fill: 'white',
-				stroke: '#0ea5e9',
-				strokeWidth: 2 / scale,
+				stroke: '#ef562f',
+				strokeWidth: 1.5 / scale,
 				listening: true
 			});
 			const [su, sv] = signs[i];
@@ -832,14 +840,14 @@ export class AnnotationRenderer {
 			handle.on('pointerdown', (e) => this.onGestureStart?.('resize', ann, e, su, sv));
 		});
 
-		// Rotation handle: centred above the top edge.
+		// Rotation handle: centred above the top edge; diameter matches a corner.
 		const rotHandle = new Konva.Circle({
 			x: rotPx.x,
 			y: rotPx.y,
-			radius: Math.max(6, 8 / scale),
+			radius: cornerSize / 2,
 			fill: 'white',
-			stroke: '#0ea5e9',
-			strokeWidth: 2 / scale,
+			stroke: '#ef562f',
+			strokeWidth: 1.5 / scale,
 			listening: true
 		});
 		rotHandle.setAttr('cursorHint', 'grab');
